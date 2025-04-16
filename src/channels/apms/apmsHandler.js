@@ -1,10 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const transactionManager = require('../../core/transactionManager');
-const apiKeyAuth = require('../../middleware/auth'); // Importa el middleware
+const paymentSchema = require('../../validators/paymentValidator');
 
-router.post('/payments', apiKeyAuth, async (req, res) => {
+router.post('/payments', async (req, res) => {
   try {
+    const { error } = paymentSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
     const tx = req.body;
     tx.channel = "apms";
     const result = await transactionManager.process(tx);
