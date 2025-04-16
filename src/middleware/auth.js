@@ -1,8 +1,11 @@
-const express = require('express');
-const router = express.Router();
-const { getAllTransactions } = require('../controllers/transactionController');
-const apiKeyAuth = require('../middleware/auth');
+require('dotenv').config();
 
-router.get('/', apiKeyAuth, getAllTransactions);
+function apiKeyAuth(req, res, next) {
+  const apiKey = req.header('x-api-key');
+  if (!apiKey || apiKey !== process.env.API_KEY) {
+    return res.status(403).json({ message: 'Acceso denegado. API key inválida o ausente.' });
+  }
+  next();
+}
 
-module.exports = router;
+module.exports = apiKeyAuth;
