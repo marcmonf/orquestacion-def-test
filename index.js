@@ -14,6 +14,9 @@ mongoose.connect(process.env.MONGO_URI, {
 app.use(express.json());
 app.use('/apms', apmsRouter);
 app.use('/webhooks', webhookReceiver);
+const transactionsRouter = require('./routes/transactions');
+app.use('/transactions', transactionsRouter);
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Pasarela escuchando en puerto ${PORT}`));
