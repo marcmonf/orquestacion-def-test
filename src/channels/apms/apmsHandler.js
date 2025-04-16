@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const transactionManager = require('../../core/transactionManager');
+const apiKeyAuth = require('../../middleware/auth'); // Importa el middleware
 
-router.post('/payments', async (req, res) => {
+router.post('/payments', apiKeyAuth, async (req, res) => {
   try {
     const tx = req.body;
     tx.channel = "apms";
