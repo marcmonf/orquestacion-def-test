@@ -14,7 +14,7 @@ mongoose.connect(process.env.MONGO_URI, {
 app.use(express.json());
 app.use('/apms', apmsRouter);
 app.use('/webhooks', webhookReceiver);
-const transactionsRouter = require('./routes/transactions');
+const transactionsRouter = require('./src/routes/transactions');
 app.use('/transactions', transactionsRouter);
 
 
