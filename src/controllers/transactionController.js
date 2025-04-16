@@ -1,11 +1,15 @@
-const mongoose = require('mongoose');
+const Transaction = require('../models/Transaction');
 
-const transactionSchema = new mongoose.Schema({
-  paymentMethod: String,
-  amount: Number,
-  currency: String,
-  status: String,
-  createdAt: { type: Date, default: Date.now }
-});
+const getAllTransactions = async (req, res) => {
+  try {
+    const transactions = await Transaction.find().sort({ createdAt: -1 });
+    res.status(200).json(transactions);
+  } catch (error) {
+    console.error('Error al obtener transacciones:', error);
+    res.status(500).json({ message: 'Error al obtener transacciones' });
+  }
+};
 
-module.exports = mongoose.model('Transaction', transactionSchema);
+module.exports = {
+  getAllTransactions
+};
