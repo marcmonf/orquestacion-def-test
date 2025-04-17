@@ -12,6 +12,7 @@ const webhookSchema = Joi.object({
   timestamp: Joi.date().iso().required()
 });
 
+// POST /webhooks - Recibe y guarda eventos
 router.post('/', async (req, res) => {
   const { error } = webhookSchema.validate(req.body);
 
@@ -20,7 +21,6 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Guardar el evento en MongoDB
     const event = new WebhookEvent(req.body);
     await event.save();
 
@@ -29,6 +29,17 @@ router.post('/', async (req, res) => {
   } catch (err) {
     console.error('Error al guardar el webhook:', err);
     res.status(500).json({ error: 'Error interno al guardar el webhook' });
+  }
+});
+
+// GET /webhooks - Lista todos los eventos guardados
+router.get('/', async (req, res) => {
+  try {
+    const events = await WebhookEvent.find().sort({ timestamp: -1 });
+    res.status(200).json(events);
+  } catch (err) {
+    console.error('Error al obtener los webhooks:', err);
+    res.status(500).json({ error: 'Error al recuperar los eventos de webhook' });
   }
 });
 
