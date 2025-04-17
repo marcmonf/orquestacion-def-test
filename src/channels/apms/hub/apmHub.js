@@ -1,8 +1,8 @@
-const bizum = require('../connectors/bizumConnector');
-const blik = require('../connectors/blikConnector');
+const bizum = require('./connectors/bizumConnector');
+const blik = require('./connectors/blikConnector');
 // Puedes añadir más APMs aquí:
-// const twint = require('../connectors/twintConnector');
-// const mbway = require('../connectors/mbwayConnector');
+// const twint = require('./connectors/twintConnector');
+// const mbway = require('./connectors/mbwayConnector');
 
 const apmHub = async (tx) => {
   switch (tx.method) {
