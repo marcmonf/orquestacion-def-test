@@ -5,6 +5,7 @@ const simulator = require('../integrations/simulatorConnector');
 const backupSim = require('../integrations/backupSimConnector');
 const webhookService = require('./webhookService');
 const storage = require('../storage/transactionService');
+const { saveApmTransaction } = require('../storage/apmTransactionService'); // Nuevo
 const apmHub = require('../channels/apms/hub/apmHub');
 
 exports.process = async function (tx) {
@@ -34,31 +35,43 @@ exports.process = async function (tx) {
             return { status: 'error', message: 'Todos los procesadores fallaron' };
           }
         }
+
+        // 3.a Guardar transacción con tarjeta
+        const fullCardTx = {
+          ...tx,
+          paymentId: response.transactionId,
+          status: response.status,
+          authCode: response.authCode,
+          processor: response.processor,
+          fallbackUsed: response.fallbackUsed || false,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        await storage.saveTransaction(fullCardTx);
         break;
 
       case 'bizum':
       case 'blik':
-        // 2.b Procesamiento de APMs vía hub
+        // 2.b Procesamiento APM vía hub
         response = await apmHub(tx);
+
+        // 3.b Guardar transacción APM
+        const fullApmTx = {
+          ...tx,
+          paymentId: response.transactionId,
+          status: response.status,
+          authCode: response.authCode,
+          processor: response.processor,
+          fallbackUsed: false,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        await saveApmTransaction(fullApmTx);
         break;
 
       default:
         return { status: 'error', message: `Método de pago no soportado: ${tx.method}` };
     }
-
-    // 3. Enriquecer transacción
-    const fullTx = {
-      ...tx,
-      paymentId: response.transactionId,
-      status: response.status,
-      authCode: response.authCode,
-      processor: response.processor,
-      fallbackUsed: response.fallbackUsed || false,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    await storage.saveTransaction(fullTx);
 
     // 4. Webhook al merchant
     if (tx.callbackUrl) {
