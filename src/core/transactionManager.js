@@ -5,6 +5,7 @@ const simulator = require('../integrations/simulatorConnector');
 const backupSim = require('../integrations/backupSimConnector');
 const webhookService = require('./webhookService');
 const storage = require('../storage/transactionService');
+const apmHub = require('../channels/apms/hub/apmHub'); // Nuevo
 
 exports.process = async function (tx) {
   try {
@@ -14,27 +15,32 @@ exports.process = async function (tx) {
       return { status: 'rejected', reason: validation.reason };
     }
 
-    // 2. Routing: seleccionar el procesador principal
-    const selectedProcessor = routingEngine.route(tx);
     let response;
 
-    try {
-      // 3. Intentar procesar con el procesador principal
-      response = await simulator.process(tx);
-    } catch (err) {
-      console.warn(`Error con procesador principal (${selectedProcessor}): ${err.message}`);
-
-      // 4. Si falla, intentar con el procesador de respaldo
+    // 2. Procesamiento por tipo de método
+    if (tx.method === 'card') {
+      // 3. Routing: seleccionar el procesador principal
+      const selectedProcessor = routingEngine.route(tx);
       try {
-        response = await backupSim.process(tx);
-        response.fallbackUsed = true; // indicar que se usó el fallback
-      } catch (fallbackErr) {
-        console.error("Error con el procesador de respaldo:", fallbackErr.message);
-        return { status: 'error', message: 'Todos los procesadores fallaron' };
+        response = await simulator.process(tx);
+      } catch (err) {
+        console.warn(`Error con procesador principal (${selectedProcessor}): ${err.message}`);
+
+        // 4. Si falla, intentar con el procesador de respaldo
+        try {
+          response = await backupSim.process(tx);
+          response.fallbackUsed = true;
+        } catch (fallbackErr) {
+          console.error("Error con el procesador de respaldo:", fallbackErr.message);
+          return { status: 'error', message: 'Todos los procesadores fallaron' };
+        }
       }
+    } else {
+      // 5. Procesamiento de métodos APM
+      response = await apmHub(tx);
     }
 
-    // 5. Enriquecer la transacción y guardarla
+    // 6. Enriquecer la transacción y guardarla
     const fullTx = {
       ...tx,
       paymentId: response.transactionId,
@@ -48,7 +54,7 @@ exports.process = async function (tx) {
 
     await storage.saveTransaction(fullTx);
 
-    // 6. Enviar webhook al merchant si existe callbackUrl
+    // 7. Enviar webhook al merchant si existe callbackUrl
     if (tx.callbackUrl) {
       await webhookService.sendToMerchant(tx.callbackUrl, {
         merchantId: tx.merchantId,
@@ -60,7 +66,6 @@ exports.process = async function (tx) {
       });
     }
 
-    // 7. Retornar respuesta final
     return response;
   } catch (error) {
     console.error("Error en Core Engine:", error);
