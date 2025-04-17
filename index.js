@@ -1,9 +1,13 @@
 const express = require('express');
 const app = express();
-const apmsRouter = require('./src/channels/apms/apmsHandler');
-const webhookReceiver = require('./src/webhooks/webhookReceiver');
 const mongoose = require('mongoose');
 require('dotenv').config();
+
+// Importar rutas
+const apmsRouter = require('./src/channels/apms/apmsHandler');
+const webhookReceiver = require('./src/webhooks/webhookReceiver');
+const transactionsRouter = require('./src/routes/transactions');
+const webhooksRouter = require('./src/routes/webhooks'); // <-- Nueva ruta para GET filtrado
 
 // Conexión a MongoDB
 mongoose.connect(process.env.MONGO_URI, {
@@ -25,10 +29,11 @@ const validateApiKey = (req, res, next) => {
 
 // Rutas protegidas
 app.use('/apms', validateApiKey, apmsRouter);
-app.use('/transactions', validateApiKey, require('./src/routes/transactions'));
+app.use('/transactions', validateApiKey, transactionsRouter);
 
-// Webhooks sin protección (suelen ser públicos)
-app.use('/webhooks', webhookReceiver);
+// Rutas públicas
+app.use('/webhooks', webhookReceiver);     // POST /webhooks
+app.use('/webhooks', webhooksRouter);      // GET /webhooks (con filtros)
 
 // Inicio del servidor
 const PORT = process.env.PORT || 3000;
