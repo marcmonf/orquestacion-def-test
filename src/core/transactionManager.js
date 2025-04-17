@@ -5,7 +5,7 @@ const simulator = require('../integrations/simulatorConnector');
 const backupSim = require('../integrations/backupSimConnector');
 const webhookService = require('./webhookService');
 const storage = require('../storage/transactionService');
-const apmHub = require('../channels/apms/hub/apmHub'); // Nuevo
+const apmHub = require('../channels/apms/hub/apmHub');
 
 exports.process = async function (tx) {
   try {
@@ -18,29 +18,35 @@ exports.process = async function (tx) {
     let response;
 
     // 2. Procesamiento por tipo de método
-    if (tx.method === 'card') {
-      // 3. Routing: seleccionar el procesador principal
-      const selectedProcessor = routingEngine.route(tx);
-      try {
-        response = await simulator.process(tx);
-      } catch (err) {
-        console.warn(`Error con procesador principal (${selectedProcessor}): ${err.message}`);
-
-        // 4. Si falla, intentar con el procesador de respaldo
+    switch (tx.method) {
+      case 'card':
+        // 2.a Routing hacia procesador principal
+        const selectedProcessor = routingEngine.route(tx);
         try {
-          response = await backupSim.process(tx);
-          response.fallbackUsed = true;
-        } catch (fallbackErr) {
-          console.error("Error con el procesador de respaldo:", fallbackErr.message);
-          return { status: 'error', message: 'Todos los procesadores fallaron' };
+          response = await simulator.process(tx);
+        } catch (err) {
+          console.warn(`Error con procesador principal (${selectedProcessor}): ${err.message}`);
+          try {
+            response = await backupSim.process(tx);
+            response.fallbackUsed = true;
+          } catch (fallbackErr) {
+            console.error("Error con el procesador de respaldo:", fallbackErr.message);
+            return { status: 'error', message: 'Todos los procesadores fallaron' };
+          }
         }
-      }
-    } else {
-      // 5. Procesamiento de métodos APM
-      response = await apmHub(tx);
+        break;
+
+      case 'bizum':
+      case 'blik':
+        // 2.b Procesamiento de APMs vía hub
+        response = await apmHub(tx);
+        break;
+
+      default:
+        return { status: 'error', message: `Método de pago no soportado: ${tx.method}` };
     }
 
-    // 6. Enriquecer la transacción y guardarla
+    // 3. Enriquecer transacción
     const fullTx = {
       ...tx,
       paymentId: response.transactionId,
@@ -54,7 +60,7 @@ exports.process = async function (tx) {
 
     await storage.saveTransaction(fullTx);
 
-    // 7. Enviar webhook al merchant si existe callbackUrl
+    // 4. Webhook al merchant
     if (tx.callbackUrl) {
       await webhookService.sendToMerchant(tx.callbackUrl, {
         merchantId: tx.merchantId,
@@ -66,6 +72,7 @@ exports.process = async function (tx) {
       });
     }
 
+    // 5. Respuesta final
     return response;
   } catch (error) {
     console.error("Error en Core Engine:", error);
