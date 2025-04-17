@@ -1,5 +1,6 @@
 const Token = require('../models/Token');
 const crypto = require('crypto');
+const tokenSchema = require('../validators/tokenValidator'); // Usamos el validador correcto
 
 // Función auxiliar para generar token aleatorio
 const generateToken = () => {
@@ -7,15 +8,17 @@ const generateToken = () => {
 };
 
 const tokenizeCard = async (req, res) => {
-  const { pan, expiry } = req.body;
-
-  if (!pan || !expiry) {
-    return res.status(400).json({ error: 'Faltan datos de tarjeta' });
+  const { error } = tokenSchema.validate(req.body); // Validación con Joi
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
   }
+
+  const { cardNumber, expiryMonth, expiryYear, cvv } = req.body;
 
   try {
     const token = generateToken();
-    const newToken = new Token({ token, pan, expiry });
+    const expiry = `${expiryMonth}/${expiryYear}`; // Unificamos expiry
+    const newToken = new Token({ token, pan: cardNumber, expiry });
     await newToken.save();
 
     return res.status(201).json({ token });
