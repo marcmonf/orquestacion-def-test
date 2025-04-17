@@ -1,12 +1,12 @@
-const { v4: uuidv4 } = require('uuid');
-
-exports.process = async (tx) => {
-  // Simulación básica de procesamiento APM
-  return {
-    status: 'approved',
-    transactionId: 'bizum_' + uuidv4().slice(0, 12),
-    authCode: Math.floor(100000 + Math.random() * 900000).toString(),
-    processor: 'bizum-simulator',
-    timestamp: new Date().toISOString()
-  };
+// src/channels/apms/hub/connectors/bizumConnector.js
+module.exports = {
+  process: async (tx) => {
+    return {
+      status: 'approved',
+      transactionId: `tx_${Math.random().toString(36).substring(2, 15)}`,
+      authCode: Math.floor(100000 + Math.random() * 900000).toString(),
+      processor: 'bizum',
+      timestamp: new Date().toISOString()
+    };
+  }
 };
