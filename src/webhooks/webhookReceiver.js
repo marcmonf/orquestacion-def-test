@@ -1,19 +1,25 @@
 const express = require('express');
 const router = express.Router();
-const webhookSchema = require('../validators/webhookValidator');
+const Joi = require('joi');
 
-router.post('/', async (req, res) => {
+// Esquema de validación
+const webhookSchema = Joi.object({
+  paymentId: Joi.string().required(),
+  status: Joi.string().required(),
+  authCode: Joi.string().required(),
+  processor: Joi.string().required(),
+  timestamp: Joi.date().iso().required()
+});
+
+router.post('/', (req, res) => {
   const { error } = webhookSchema.validate(req.body);
-  
+
   if (error) {
-    console.error("Payload de webhook inválido:", error.details);
-    return res.status(400).json({ error: "Datos de webhook inválidos" });
+    return res.status(400).json({ error: 'Datos de webhook inválidos' });
   }
 
-  // Aquí procesaríamos el webhook (puedes ampliarlo más adelante)
-  console.log("Webhook recibido y válido:", req.body);
-
-  return res.status(200).json({ message: "Webhook recibido correctamente" });
+  console.log('Webhook recibido:', req.body);
+  res.status(200).json({ message: 'Webhook recibido correctamente' });
 });
 
 module.exports = router;
