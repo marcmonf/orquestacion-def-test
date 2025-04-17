@@ -2,7 +2,7 @@ const routingEngine = require('./routingEngine');
 const fraudEngine = require('./fraudEngine');
 const tokenService = require('./tokenService');
 const simulator = require('../integrations/simulatorConnector');
-const backupSim = require('../integrations/backupSimConnector'); // nuevo procesador de respaldo
+const backupSim = require('../integrations/backupSimConnector');
 const webhookService = require('./webhookService');
 const storage = require('../storage/transactionService');
 
@@ -14,28 +14,27 @@ exports.process = async function (tx) {
       return { status: 'rejected', reason: validation.reason };
     }
 
-    // 2. Routing: elegir el procesador principal
+    // 2. Routing: seleccionar el procesador principal
     const selectedProcessor = routingEngine.route(tx);
-
     let response;
 
     try {
-      // 3. Intentar con el procesador principal
+      // 3. Intentar procesar con el procesador principal
       response = await simulator.process(tx);
     } catch (err) {
       console.warn(`Error con procesador principal (${selectedProcessor}): ${err.message}`);
 
-      // 4. Fallback si falla el principal
+      // 4. Si falla, intentar con el procesador de respaldo
       try {
         response = await backupSim.process(tx);
-        response.fallbackUsed = true;
+        response.fallbackUsed = true; // indicar que se usó el fallback
       } catch (fallbackErr) {
         console.error("Error con el procesador de respaldo:", fallbackErr.message);
         return { status: 'error', message: 'Todos los procesadores fallaron' };
       }
     }
 
-    // 5. Enriquecer transacción con los datos recibidos
+    // 5. Enriquecer la transacción y guardarla
     const fullTx = {
       ...tx,
       paymentId: response.transactionId,
@@ -49,7 +48,7 @@ exports.process = async function (tx) {
 
     await storage.saveTransaction(fullTx);
 
-    // 6. Webhook al merchant si hay callback
+    // 6. Enviar webhook al merchant si existe callbackUrl
     if (tx.callbackUrl) {
       await webhookService.sendToMerchant(tx.callbackUrl, {
         merchantId: tx.merchantId,
@@ -61,6 +60,7 @@ exports.process = async function (tx) {
       });
     }
 
+    // 7. Retornar respuesta final
     return response;
   } catch (error) {
     console.error("Error en Core Engine:", error);
