@@ -17,7 +17,6 @@ const getAllTransactions = async (req, res) => {
     } = req.query;
 
     const query = {};
-
     if (merchantId) query.merchantId = merchantId;
     if (status) query.status = status;
     if (method) query.method = method;
@@ -37,12 +36,7 @@ const getAllTransactions = async (req, res) => {
         .limit(parseInt(limit))
     ]);
 
-    res.status(200).json({
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total,
-      transactions
-    });
+    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
   } catch (error) {
     logger.error('Error al obtener transacciones:', error);
     res.status(500).json({ message: 'Error al obtener transacciones' });
@@ -110,14 +104,28 @@ const updateTransaction = async (req, res) => {
   }
 };
 
+// DELETE /transactions/:paymentId - Eliminar una transacción
+const deleteTransaction = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const deleted = await Transaction.findOneAndDelete({ paymentId });
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Transacción no encontrada' });
+    }
+
+    logger.info(`Transacción eliminada: ${paymentId}`);
+    res.status(200).json({ message: 'Transacción eliminada' });
+  } catch (err) {
+    logger.error('Error al eliminar transacción:', err);
+    res.status(500).json({ error: 'Error al eliminar transacción' });
+  }
+};
+
 module.exports = {
   getAllTransactions,
   createTransaction,
   getTransactionById,
-  updateTransaction
-};
-module.exports = {
-  getAllTransactions,
-  createTransaction,
-  getTransactionById
+  updateTransaction,
+  deleteTransaction
 };
