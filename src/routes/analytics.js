@@ -1,3 +1,5 @@
+// src/routes/analytics.js
+
 const express = require('express');
 const router = express.Router();
 const Transaction = require('../models/Transaction');
@@ -10,11 +12,22 @@ router.get('/summary', async (req, res) => {
     const rejectedTxs = await Transaction.countDocuments({ status: 'rejected' });
     const fallbackTxs = await Transaction.countDocuments({ fallbackUsed: true });
 
+    const totalVolumeAgg = await Transaction.aggregate([
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]);
+    const totalVolume = totalVolumeAgg[0]?.total || 0;
+
+    const approvalRate = totalTxs > 0 ? (approvedTxs / totalTxs) * 100 : 0;
+    const fallbackRate = totalTxs > 0 ? (fallbackTxs / totalTxs) * 100 : 0;
+
     res.status(200).json({
       total: totalTxs,
+      totalVolume,
       approved: approvedTxs,
       rejected: rejectedTxs,
-      fallbackUsed: fallbackTxs
+      approvalRate: `${approvalRate.toFixed(2)}%`,
+      fallbackUsed: fallbackTxs,
+      fallbackRate: `${fallbackRate.toFixed(2)}%`
     });
   } catch (err) {
     console.error('Error en analytics summary:', err);
