@@ -6,7 +6,11 @@ const {
   createTransaction,
   getTransactionById,
   updateTransaction,
-  deleteTransaction
+  deleteTransaction,
+  getTransactionVolume,
+  getApprovalRate,
+  getAverageMSC,
+  getTransactionSummary
 } = require('../controllers/transactionController');
 const logger = require('../utils/logger');
 
@@ -57,6 +61,47 @@ router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
   } catch (err) {
     logger.error('Error en DELETE /transactions/:paymentId:', err);
     res.status(500).json({ error: 'Error al eliminar transacción' });
+  }
+});
+
+// ANALÍTICAS
+// GET /transactions/analytics/volume
+router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
+  try {
+    await getTransactionVolume(req, res);
+  } catch (err) {
+    logger.error('Error en GET /transactions/analytics/volume:', err);
+    res.status(500).json({ error: 'Error al obtener volumen de transacciones' });
+  }
+});
+
+// GET /transactions/analytics/approval-rate
+router.get('/analytics/approval-rate', apiKeyAuth, async (req, res) => {
+  try {
+    await getApprovalRate(req, res);
+  } catch (err) {
+    logger.error('Error en GET /transactions/analytics/approval-rate:', err);
+    res.status(500).json({ error: 'Error al obtener tasa de aprobación' });
+  }
+});
+
+// GET /transactions/analytics/average-msc
+router.get('/analytics/average-msc', apiKeyAuth, async (req, res) => {
+  try {
+    await getAverageMSC(req, res);
+  } catch (err) {
+    logger.error('Error en GET /transactions/analytics/average-msc:', err);
+    res.status(500).json({ error: 'Error al obtener MSC promedio' });
+  }
+});
+
+// GET /transactions/analytics/summary
+router.get('/analytics/summary', apiKeyAuth, async (req, res) => {
+  try {
+    await getTransactionSummary(req, res);
+  } catch (err) {
+    logger.error('Error en GET /transactions/analytics/summary:', err);
+    res.status(500).json({ error: 'Error al obtener resumen de métricas' });
   }
 });
 
