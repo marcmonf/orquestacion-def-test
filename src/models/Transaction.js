@@ -1,23 +1,23 @@
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
-  paymentId: { type: String, required: true, unique: true },
-  merchantId: { type: String, required: true },
-  amount: { type: Number, required: true },
-  currency: { type: String, required: true },
-  method: { type: String, required: true },
-  status: { type: String, required: true },
-  authCode: { type: String },
-  processor: { type: String },
-  fallbackUsed: { type: Boolean, default: false },
-  phone: { type: String },
-  apmReference: { type: String },
-  apmExtraData: { type: Object },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  paymentId:     { type: String, required: true, unique: true },
+  merchantId:    { type: String, required: true },
+  amount:        { type: Number, required: true },
+  currency:      { type: String, required: true },
+  method:        { type: String, required: true },
+  status:        { type: String, required: true },
+  authCode:      { type: String },
+  processor:     { type: String },
+  fallbackUsed:  { type: Boolean, default: false },
+  phone:         { type: String },
+  apmReference:  { type: String },
+  apmExtraData:  { type: Object },
+  createdAt:     { type: Date, default: Date.now },
+  updatedAt:     { type: Date, default: Date.now }
 });
 
-// Índices recomendados
+// Índices para optimizar búsquedas
 transactionSchema.index({ merchantId: 1 });
 transactionSchema.index({ createdAt: -1 });
 transactionSchema.index({ method: 1 });
