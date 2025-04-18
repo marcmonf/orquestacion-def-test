@@ -65,7 +65,7 @@ router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
 });
 
 // ANALÍTICAS
-// GET /transactions/analytics/volume
+// GET /transactions/analytics/volume - Volumen total de transacciones aprobadas
 router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   try {
     await getTransactionVolume(req, res);
@@ -75,7 +75,7 @@ router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   }
 });
 
-// GET /transactions/analytics/approval-rate
+// GET /transactions/analytics/approval-rate - Tasa de aprobación
 router.get('/analytics/approval-rate', apiKeyAuth, async (req, res) => {
   try {
     await getApprovalRate(req, res);
@@ -85,7 +85,7 @@ router.get('/analytics/approval-rate', apiKeyAuth, async (req, res) => {
   }
 });
 
-// GET /transactions/analytics/average-msc
+// GET /transactions/analytics/average-msc - MSC promedio
 router.get('/analytics/average-msc', apiKeyAuth, async (req, res) => {
   try {
     await getAverageMSC(req, res);
@@ -95,7 +95,7 @@ router.get('/analytics/average-msc', apiKeyAuth, async (req, res) => {
   }
 });
 
-// GET /transactions/analytics/summary
+// GET /transactions/analytics/summary - Resumen de métricas
 router.get('/analytics/summary', apiKeyAuth, async (req, res) => {
   try {
     await getTransactionSummary(req, res);
