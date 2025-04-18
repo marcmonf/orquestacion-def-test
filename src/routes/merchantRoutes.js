@@ -30,7 +30,7 @@ router.post('/', async (req, res) => {
     await newMerchant.save();
     res.status(201).json({ message: 'Merchant creado', merchant: newMerchant });
   } catch (err) {
-    console.error('Error al crear merchant:', err);
+    console.error('Error al crear merchant:', err.message, err.stack);
     res.status(500).json({ error: 'Error al crear merchant' });
   }
 });
