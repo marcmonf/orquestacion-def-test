@@ -5,7 +5,8 @@ const {
   getAllTransactions,
   createTransaction,
   getTransactionById,
-  updateTransaction
+  updateTransaction,
+  deleteTransaction
 } = require('../controllers/transactionController');
 const logger = require('../utils/logger');
 
@@ -46,6 +47,16 @@ router.put('/:paymentId', apiKeyAuth, async (req, res) => {
   } catch (err) {
     logger.error('Error en PUT /transactions/:paymentId:', err);
     res.status(500).json({ error: 'Error al actualizar transacción' });
+  }
+});
+
+// DELETE /transactions/:paymentId - Eliminar transacción existente
+router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
+  try {
+    await deleteTransaction(req, res);
+  } catch (err) {
+    logger.error('Error en DELETE /transactions/:paymentId:', err);
+    res.status(500).json({ error: 'Error al eliminar transacción' });
   }
 });
 
