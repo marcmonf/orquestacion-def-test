@@ -32,6 +32,8 @@ const validateApiKey = (req, res, next) => {
 app.use('/apms', validateApiKey, apmsRouter);
 app.use('/transactions', validateApiKey, transactionsRouter);
 app.use('/tokens', validateApiKey, tokenRoutes); // <-- NUEVA RUTA PROTEGIDA
+const analyticsRouter = require('./src/routes/analytics');
+app.use('/analytics', validateApiKey, analyticsRouter); // <-- NUEVA RUTA PROTEGIDA
 
 // Rutas públicas
 app.use('/webhooks', webhookReceiver);     // POST /webhooks
