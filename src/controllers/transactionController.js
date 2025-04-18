@@ -7,13 +7,9 @@ const transactionSchema = require('../validators/transactionValidator');
 const getAllTransactions = async (req, res) => {
   try {
     const {
-      merchantId,
-      status,
-      method,
-      fromDate,
-      toDate,
-      page = 1,
-      limit = 20
+      merchantId, status, method,
+      fromDate, toDate,
+      page = 1, limit = 20
     } = req.query;
 
     const query = {};
@@ -27,7 +23,6 @@ const getAllTransactions = async (req, res) => {
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
     const [total, transactions] = await Promise.all([
       Transaction.countDocuments(query),
       Transaction.find(query)
@@ -122,10 +117,47 @@ const deleteTransaction = async (req, res) => {
   }
 };
 
+// GET /transactions/metrics/summary - Métricas globales
+const getSummaryMetrics = async (req, res) => {
+  try {
+    const total = await Transaction.countDocuments();
+    const approved = await Transaction.countDocuments({ status: 'approved' });
+    const declined = await Transaction.countDocuments({ status: 'declined' });
+
+    res.status(200).json({
+      totalTransactions: total,
+      approvedTransactions: approved,
+      declinedTransactions: declined,
+      approvalRate: total ? ((approved / total) * 100).toFixed(2) + '%' : '0%'
+    });
+  } catch (err) {
+    logger.error('Error al obtener métricas:', err);
+    res.status(500).json({ error: 'Error al obtener métricas' });
+  }
+};
+
+// GET /transactions/metrics/volume - Volumen total de transacciones
+const getVolumeMetrics = async (req, res) => {
+  try {
+    const result = await Transaction.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: null, totalVolume: { $sum: '$amount' } } }
+    ]);
+
+    const volume = result[0]?.totalVolume || 0;
+    res.status(200).json({ totalVolume: volume });
+  } catch (err) {
+    logger.error('Error al obtener volumen:', err);
+    res.status(500).json({ error: 'Error al obtener volumen de transacciones' });
+  }
+};
+
 module.exports = {
   getAllTransactions,
   createTransaction,
   getTransactionById,
   updateTransaction,
-  deleteTransaction
+  deleteTransaction,
+  getSummaryMetrics,
+  getVolumeMetrics
 };
