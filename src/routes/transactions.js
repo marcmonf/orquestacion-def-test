@@ -65,6 +65,7 @@ router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
 });
 
 // ANALÍTICAS
+
 // GET /transactions/analytics/volume - Volumen total de transacciones aprobadas
 router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   try {
