@@ -27,16 +27,31 @@ const updateSchema = Joi.object({
   active: Joi.boolean()
 }).min(1);
 
-// GET /merchants - listar con filtros
+// GET /merchants - listar con filtros y búsqueda avanzada
 router.get('/', async (req, res) => {
   try {
-    const { country, group, region, branch, merchantId } = req.query;
+    const { globalGroup, country, group, region, branch, merchantId, search, active } = req.query;
     const query = {};
+
+    if (globalGroup) query.globalGroup = globalGroup;
     if (country) query.country = country;
     if (group) query.group = group;
     if (region) query.region = region;
     if (branch) query.branch = branch;
     if (merchantId) query.merchantId = merchantId;
+    if (active !== undefined) query.active = active === 'true';
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [
+        { name: regex },
+        { merchantId: regex },
+        { branch: regex },
+        { group: regex },
+        { region: regex },
+        { country: regex }
+      ];
+    }
 
     const merchants = await MerchantHierarchy.find(query).sort({ merchantId: 1 });
     res.status(200).json(merchants);
