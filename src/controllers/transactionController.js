@@ -69,7 +69,25 @@ const createTransaction = async (req, res) => {
   }
 };
 
+// GET /transactions/:paymentId - Obtener una transacción por ID
+const getTransactionById = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const transaction = await Transaction.findOne({ paymentId });
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transacción no encontrada' });
+    }
+
+    res.status(200).json(transaction);
+  } catch (err) {
+    logger.error('Error al obtener transacción por ID:', err);
+    res.status(500).json({ error: 'Error al obtener transacción' });
+  }
+};
+
 module.exports = {
   getAllTransactions,
-  createTransaction
+  createTransaction,
+  getTransactionById
 };
