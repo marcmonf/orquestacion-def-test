@@ -1,6 +1,7 @@
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 
+// GET /transactions - Obtener transacciones con filtros y paginación
 const getAllTransactions = async (req, res) => {
   try {
     const {
@@ -25,6 +26,7 @@ const getAllTransactions = async (req, res) => {
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
+
     const [total, transactions] = await Promise.all([
       Transaction.countDocuments(query),
       Transaction.find(query)
