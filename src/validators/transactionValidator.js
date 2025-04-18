@@ -1,7 +1,7 @@
 const Joi = require('joi');
 
 const transactionSchema = Joi.object({
-  paymentId: Joi.string().required(),
+  paymentId: Joi.string().optional(),
   amount: Joi.number().positive().required(),
   currency: Joi.string().length(3).required(),
   method: Joi.string().required(), // Ej: card, bizum, blik, etc.
