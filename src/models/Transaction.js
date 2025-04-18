@@ -1,23 +1,27 @@
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
-  paymentId: { type: String, required: true },
+  paymentId: { type: String, required: true, unique: true },
   merchantId: { type: String, required: true },
   amount: { type: Number, required: true },
   currency: { type: String, required: true },
-  method: { type: String, required: true }, // card, bizum, blik, mbway...
-  status: { type: String, required: true }, // approved, declined, pending, etc.
+  method: { type: String, required: true },
+  status: { type: String, required: true },
   authCode: { type: String },
   processor: { type: String },
   fallbackUsed: { type: Boolean, default: false },
-
-  // Campos opcionales para APMs
-  phone: { type: String },               // MB WAY
-  apmReference: { type: String },        // ID o código generado por el APM
-  apmExtraData: { type: Object },        // Para extensiones o metadatos adicionales del APM
-
+  phone: { type: String },
+  apmReference: { type: String },
+  apmExtraData: { type: Object },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
+
+// Índices recomendados
+transactionSchema.index({ merchantId: 1 });
+transactionSchema.index({ createdAt: -1 });
+transactionSchema.index({ method: 1 });
+transactionSchema.index({ status: 1 });
+transactionSchema.index({ paymentId: 1 }, { unique: true });
 
 module.exports = mongoose.models.Transaction || mongoose.model('Transaction', transactionSchema);
