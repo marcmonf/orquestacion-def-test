@@ -1,12 +1,14 @@
 const Transaction = require('../models/Transaction');
+const logger = require('../utils/logger');
 
-const getAllTransactions = async (req, res) => {
+// Obtener todas las transacciones ordenadas por fecha descendente
+const getAllTransactions = async () => {
   try {
     const transactions = await Transaction.find().sort({ createdAt: -1 });
-    res.status(200).json(transactions);
+    return transactions;
   } catch (error) {
-    console.error('Error al obtener transacciones:', error);
-    res.status(500).json({ message: 'Error al obtener transacciones' });
+    logger.error('Error al obtener transacciones:', error);
+    throw new Error('Error al obtener transacciones');
   }
 };
 
