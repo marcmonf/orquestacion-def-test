@@ -52,6 +52,7 @@ exports.process = async function (tx) {
 
       case 'bizum':
       case 'blik':
+      case 'mbway':
         // 2.b Procesamiento APM vía hub
         response = await apmHub(tx);
 
