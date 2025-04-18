@@ -1,4 +1,5 @@
 const Joi = require('joi');
+const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const transactionSchema = require('../validators/transactionValidator');
@@ -47,7 +48,11 @@ const createTransaction = async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const newTransaction = new Transaction(value);
+    const newTransaction = new Transaction({
+      ...value,
+      paymentId: value.paymentId || uuidv4()
+    });
+
     await newTransaction.save();
 
     logger.info(`Transacción creada: ${newTransaction.paymentId}`);
