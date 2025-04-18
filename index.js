@@ -7,8 +7,10 @@ require('dotenv').config();
 const apmsRouter = require('./src/channels/apms/apmsHandler');
 const webhookReceiver = require('./src/webhooks/webhookReceiver');
 const transactionsRouter = require('./src/routes/transactions');
-const webhooksRouter = require('./src/routes/webhooks'); // <-- GET filtrado
-const tokenRoutes = require('./src/tokens/tokenRoutes'); // <-- NUEVO
+const webhooksRouter = require('./src/routes/webhooks');
+const tokenRoutes = require('./src/tokens/tokenRoutes');
+const analyticsRouter = require('./src/routes/analytics');
+const merchantRoutes = require('./src/routes/merchantRoutes'); // <-- NUEVA RUTA
 
 // Conexión a MongoDB
 mongoose.connect(process.env.MONGO_URI, {
@@ -31,13 +33,13 @@ const validateApiKey = (req, res, next) => {
 // Rutas protegidas
 app.use('/apms', validateApiKey, apmsRouter);
 app.use('/transactions', validateApiKey, transactionsRouter);
-app.use('/tokens', validateApiKey, tokenRoutes); // <-- NUEVA RUTA PROTEGIDA
-const analyticsRouter = require('./src/routes/analytics');
-app.use('/analytics', validateApiKey, analyticsRouter); // <-- NUEVA RUTA PROTEGIDA
+app.use('/tokens', validateApiKey, tokenRoutes);
+app.use('/analytics', validateApiKey, analyticsRouter);
+app.use('/merchants', validateApiKey, merchantRoutes); // <-- NUEVA RUTA PROTEGIDA
 
 // Rutas públicas
-app.use('/webhooks', webhookReceiver);     // POST /webhooks
-app.use('/webhooks', webhooksRouter);      // GET /webhooks (con filtros)
+app.use('/webhooks', webhookReceiver);
+app.use('/webhooks', webhooksRouter);
 
 // Inicio del servidor
 const PORT = process.env.PORT || 3000;
