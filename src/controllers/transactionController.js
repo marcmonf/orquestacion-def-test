@@ -86,6 +86,36 @@ const getTransactionById = async (req, res) => {
   }
 };
 
+// PUT /transactions/:paymentId - Actualizar una transacción
+const updateTransaction = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const updates = req.body;
+
+    const transaction = await Transaction.findOneAndUpdate(
+      { paymentId },
+      { $set: updates },
+      { new: true }
+    );
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transacción no encontrada' });
+    }
+
+    logger.info(`Transacción actualizada: ${paymentId}`);
+    res.status(200).json({ message: 'Transacción actualizada', transaction });
+  } catch (err) {
+    logger.error('Error al actualizar transacción:', err);
+    res.status(500).json({ error: 'Error al actualizar transacción' });
+  }
+};
+
+module.exports = {
+  getAllTransactions,
+  createTransaction,
+  getTransactionById,
+  updateTransaction
+};
 module.exports = {
   getAllTransactions,
   createTransaction,
