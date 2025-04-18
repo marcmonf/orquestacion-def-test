@@ -4,7 +4,8 @@ const apiKeyAuth = require('../middleware/auth');
 const {
   getAllTransactions,
   createTransaction,
-  getTransactionById
+  getTransactionById,
+  updateTransaction
 } = require('../controllers/transactionController');
 const logger = require('../utils/logger');
 
@@ -35,6 +36,16 @@ router.post('/', apiKeyAuth, async (req, res) => {
   } catch (err) {
     logger.error('Error en POST /transactions:', err);
     res.status(500).json({ error: 'Error al crear transacción' });
+  }
+});
+
+// PUT /transactions/:paymentId - Actualizar transacción existente
+router.put('/:paymentId', apiKeyAuth, async (req, res) => {
+  try {
+    await updateTransaction(req, res);
+  } catch (err) {
+    logger.error('Error en PUT /transactions/:paymentId:', err);
+    res.status(500).json({ error: 'Error al actualizar transacción' });
   }
 });
 
