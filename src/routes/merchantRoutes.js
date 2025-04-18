@@ -1,6 +1,19 @@
 const express = require('express');
 const router = express.Router();
+const Joi = require('joi');
 const MerchantHierarchy = require('../models/MerchantHierarchy');
+
+// Esquema de validación con Joi
+const merchantSchema = Joi.object({
+  globalGroup: Joi.string().required(),
+  country: Joi.string().required(),
+  group: Joi.string().required(),
+  branch: Joi.string().required(),
+  region: Joi.string().required(),
+  merchantId: Joi.string().required(),
+  name: Joi.string().optional(),
+  active: Joi.boolean().optional()
+});
 
 // GET /merchants - listar con filtros
 router.get('/', async (req, res) => {
@@ -22,15 +35,19 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /merchants - añadir merchant manualmente
+// POST /merchants - añadir merchant manualmente con validación
 router.post('/', async (req, res) => {
   try {
-    const data = req.body;
-    const newMerchant = new MerchantHierarchy(data);
+    const { error, value } = merchantSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const newMerchant = new MerchantHierarchy(value);
     await newMerchant.save();
     res.status(201).json({ message: 'Merchant creado', merchant: newMerchant });
   } catch (err) {
-    console.error('Error al crear merchant:', err.message, err.stack);
+    console.error('Error al crear merchant:', err);
     res.status(500).json({ error: 'Error al crear merchant' });
   }
 });
