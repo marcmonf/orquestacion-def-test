@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Joi = require('joi');
 const MerchantHierarchy = require('../models/MerchantHierarchy');
+const logger = require('../utils/logger');
 
 // Esquema de validación para creación
 const merchantSchema = Joi.object({
@@ -64,14 +65,10 @@ router.get('/', async (req, res) => {
       MerchantHierarchy.find(query).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit))
     ]);
 
-    res.status(200).json({
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total,
-      merchants
-    });
+    logger.info(`Consulta de merchants - Página ${page}, Filtros: ${JSON.stringify(query)}`);
+    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, merchants });
   } catch (err) {
-    console.error('Error al obtener merchants:', err);
+    logger.error(`Error al obtener merchants: ${err.message}`);
     res.status(500).json({ error: 'Error al obtener merchants' });
   }
 });
@@ -84,9 +81,11 @@ router.post('/', async (req, res) => {
 
     const newMerchant = new MerchantHierarchy(value);
     await newMerchant.save();
+
+    logger.info(`Merchant creado - ID: ${newMerchant.merchantId}`);
     res.status(201).json({ message: 'Merchant creado', merchant: newMerchant });
   } catch (err) {
-    console.error('Error al crear merchant:', err);
+    logger.error(`Error al crear merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al crear merchant' });
   }
 });
@@ -103,9 +102,11 @@ router.put('/:merchantId', async (req, res) => {
       { new: true }
     );
     if (!merchant) return res.status(404).json({ error: 'Merchant no encontrado' });
+
+    logger.info(`Merchant actualizado - ID: ${merchant.merchantId}`);
     res.status(200).json({ message: 'Merchant actualizado', merchant });
   } catch (err) {
-    console.error('Error al actualizar merchant:', err);
+    logger.error(`Error al actualizar merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al actualizar merchant' });
   }
 });
@@ -115,9 +116,11 @@ router.delete('/:merchantId', async (req, res) => {
   try {
     const deleted = await MerchantHierarchy.findOneAndDelete({ merchantId: req.params.merchantId });
     if (!deleted) return res.status(404).json({ error: 'Merchant no encontrado' });
+
+    logger.info(`Merchant eliminado - ID: ${req.params.merchantId}`);
     res.status(200).json({ message: 'Merchant eliminado' });
   } catch (err) {
-    console.error('Error al eliminar merchant:', err);
+    logger.error(`Error al eliminar merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al eliminar merchant' });
   }
 });
