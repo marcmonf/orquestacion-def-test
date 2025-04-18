@@ -27,10 +27,15 @@ const updateSchema = Joi.object({
   active: Joi.boolean()
 }).min(1);
 
-// GET /merchants - listar con filtros y búsqueda avanzada
+// GET /merchants - listar con filtros, búsqueda y paginación
 router.get('/', async (req, res) => {
   try {
-    const { globalGroup, country, group, region, branch, merchantId, search, active } = req.query;
+    const {
+      globalGroup, country, group, region, branch,
+      merchantId, search, active,
+      page = 1, limit = 20
+    } = req.query;
+
     const query = {};
 
     if (globalGroup) query.globalGroup = globalGroup;
@@ -53,8 +58,18 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const merchants = await MerchantHierarchy.find(query).sort({ merchantId: 1 });
-    res.status(200).json(merchants);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [total, merchants] = await Promise.all([
+      MerchantHierarchy.countDocuments(query),
+      MerchantHierarchy.find(query).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit))
+    ]);
+
+    res.status(200).json({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      merchants
+    });
   } catch (err) {
     console.error('Error al obtener merchants:', err);
     res.status(500).json({ error: 'Error al obtener merchants' });
