@@ -1,5 +1,7 @@
+const Joi = require('joi');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
+const transactionSchema = require('../validators/transactionValidator');
 
 // GET /transactions - Obtener transacciones con filtros y paginación
 const getAllTransactions = async (req, res) => {
@@ -47,6 +49,27 @@ const getAllTransactions = async (req, res) => {
   }
 };
 
+// POST /transactions - Crear nueva transacción
+const createTransaction = async (req, res) => {
+  try {
+    const { error, value } = transactionSchema.validate(req.body);
+    if (error) {
+      logger.warn('Validación fallida en creación de transacción:', error.details[0].message);
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const newTransaction = new Transaction(value);
+    await newTransaction.save();
+
+    logger.info(`Transacción creada: ${newTransaction.paymentId}`);
+    res.status(201).json({ message: 'Transacción creada', transaction: newTransaction });
+  } catch (err) {
+    logger.error('Error al crear transacción:', err);
+    res.status(500).json({ message: 'Error al crear transacción' });
+  }
+};
+
 module.exports = {
-  getAllTransactions
+  getAllTransactions,
+  createTransaction
 };
