@@ -4,7 +4,6 @@ const dotenv = require('dotenv');
 const errorHandler = require('./src/middleware/errorHandler');
 
 dotenv.config();
-
 const app = express();
 
 // Conexión a MongoDB
@@ -18,7 +17,7 @@ mongoose.connect(process.env.MONGO_URI, {
 // Middleware global
 app.use(express.json());
 
-// Middleware para validar API Key
+// Middleware de API Key
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   if (!apiKey || apiKey !== process.env.API_KEY) {
@@ -34,14 +33,17 @@ app.use('/tokens', validateApiKey, require('./src/tokens/tokenRoutes'));
 app.use('/analytics', validateApiKey, require('./src/routes/analytics'));
 app.use('/merchants', validateApiKey, require('./src/routes/merchantRoutes'));
 
-// Rutas públicas (webhooks)
+// Ruta temporal de prueba para forzar errores
+app.use('/test', require('./src/routes/testRoutes'));
+
+// Rutas públicas
 app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 app.use('/webhooks', require('./src/routes/webhooks'));
 
-// Middleware global de manejo de errores (al final)
+// Middleware global de errores (último siempre)
 app.use(errorHandler);
 
-// Inicio del servidor
+// Lanzar servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Pasarela escuchando en puerto ${PORT}`);
