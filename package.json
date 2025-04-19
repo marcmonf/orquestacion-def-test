@@ -13,5 +13,7 @@
     "joi": "^17.9.2",
     "uuid": "^9.0.0",
     "winston": "^3.10.0"
+    "express-rate-limit": "^6.7.0"
+
   }
 }
