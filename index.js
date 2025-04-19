@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const errorHandler = require('./src/middlewares/errorHandler');
+const errorHandler = require('./src/middleware/errorHandler');
 
 dotenv.config();
 
