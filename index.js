@@ -1,27 +1,24 @@
 const express = require('express');
-const app = express();
 const mongoose = require('mongoose');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const errorHandler = require('./src/middlewares/errorHandler');
 
-// Importar rutas
-const apmsRouter = require('./src/channels/apms/apmsHandler');
-const webhookReceiver = require('./src/webhooks/webhookReceiver');
-const transactionsRouter = require('./src/routes/transactions');
-const webhooksRouter = require('./src/routes/webhooks');
-const tokenRoutes = require('./src/tokens/tokenRoutes');
-const analyticsRouter = require('./src/routes/analytics');
-const merchantRoutes = require('./src/routes/merchantRoutes'); // <-- NUEVA RUTA
+dotenv.config();
+
+const app = express();
 
 // Conexión a MongoDB
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
-}).then(() => console.log("MongoDB conectado"))
-  .catch(err => console.error("Error de conexión MongoDB:", err));
+})
+.then(() => console.log('MongoDB conectado'))
+.catch(err => console.error('Error de conexión MongoDB:', err));
 
+// Middleware global
 app.use(express.json());
 
-// Middleware para validar la API Key
+// Middleware para validar API Key
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   if (!apiKey || apiKey !== process.env.API_KEY) {
@@ -31,16 +28,21 @@ const validateApiKey = (req, res, next) => {
 };
 
 // Rutas protegidas
-app.use('/apms', validateApiKey, apmsRouter);
-app.use('/transactions', validateApiKey, transactionsRouter);
-app.use('/tokens', validateApiKey, tokenRoutes);
-app.use('/analytics', validateApiKey, analyticsRouter);
-app.use('/merchants', validateApiKey, merchantRoutes); // <-- NUEVA RUTA PROTEGIDA
+app.use('/apms', validateApiKey, require('./src/channels/apms/apmsHandler'));
+app.use('/transactions', validateApiKey, require('./src/routes/transactions'));
+app.use('/tokens', validateApiKey, require('./src/tokens/tokenRoutes'));
+app.use('/analytics', validateApiKey, require('./src/routes/analytics'));
+app.use('/merchants', validateApiKey, require('./src/routes/merchantRoutes'));
 
-// Rutas públicas
-app.use('/webhooks', webhookReceiver);
-app.use('/webhooks', webhooksRouter);
+// Rutas públicas (webhooks)
+app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
+app.use('/webhooks', require('./src/routes/webhooks'));
+
+// Middleware global de manejo de errores (al final)
+app.use(errorHandler);
 
 // Inicio del servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Pasarela escuchando en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Pasarela escuchando en puerto ${PORT}`);
+});
