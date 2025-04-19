@@ -2,15 +2,17 @@ const rateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
 
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 5, // Solo 5 peticiones por minuto para probar
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 200, // Máximo 200 peticiones por IP en ese intervalo
   message: {
     error: 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.'
   },
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, // Devuelve info de rate limit en headers estándar
+  legacyHeaders: false,  // Desactiva headers heredados (X-RateLimit-*)
   handler: (req, res, next, options) => {
-    logger.warn(`Rate limit excedido en ${req.method} ${req.originalUrl} desde IP ${req.ip}`);
+    logger.warn(`Rate limit excedido en ${req.method} ${req.originalUrl} desde IP ${req.ip}`, {
+      timestamp: new Date().toISOString()
+    });
     res.status(options.statusCode).json(options.message);
   }
 });
