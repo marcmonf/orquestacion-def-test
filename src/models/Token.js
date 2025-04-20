@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
 
 const tokenSchema = new mongoose.Schema({
-  token:        { type: String, required: true, unique: true },
-  pan:          { type: String, required: true },
-  expiryMonth:  { type: String, required: true },
-  expiryYear:   { type: String, required: true },
-  holderName:   { type: String, required: true },
+  token:         { type: String, required: true, unique: true },
+  pan:           { type: String, required: true },
+  expiryMonth:   { type: String, required: true },
+  expiryYear:    { type: String, required: true },
+  cardholderName:{ type: String, required: true }
 }, {
   timestamps: true // Crea automáticamente createdAt y updatedAt
 });
