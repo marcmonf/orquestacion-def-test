@@ -23,7 +23,10 @@ module.exports = {
     transactionNotFound: 'Transaction not found.',
     transactionUpdated: 'Transaction successfully updated.',
     transactionDeleted: 'Transaction successfully deleted.',
-    validationError: 'Validation error.'
+    validationError: 'Validation error.',
+
+    // Error handler
+    unexpectedError: 'An unexpected error occurred on the server.'
   },
 
   es: {
@@ -48,7 +51,10 @@ module.exports = {
     transactionNotFound: 'Transacción no encontrada.',
     transactionUpdated: 'Transacción actualizada correctamente.',
     transactionDeleted: 'Transacción eliminada correctamente.',
-    validationError: 'Error de validación.'
+    validationError: 'Error de validación.',
+
+    // Error handler
+    unexpectedError: 'Ocurrió un error inesperado en el servidor.'
   },
 
   fr: {
@@ -68,11 +74,14 @@ module.exports = {
     holderNameTooShort: 'cardholderName doit comporter au moins 2 caractères.',
     holderNameTooLong: 'cardholderName ne doit pas dépasser 64 caractères.',
 
-    // Transacciones
+    // Transactions
     transactionCreated: 'Transaction créée avec succès.',
     transactionNotFound: 'Transaction introuvable.',
     transactionUpdated: 'Transaction mise à jour avec succès.',
     transactionDeleted: 'Transaction supprimée avec succès.',
-    validationError: 'Erreur de validation.'
+    validationError: 'Erreur de validation.',
+
+    // Error handler
+    unexpectedError: 'Une erreur inattendue est survenue sur le serveur.'
   }
 };
