@@ -17,12 +17,12 @@ const tokenizeCard = async (req, res) => {
 
   try {
     const token = generateToken();
-    const expiry = `${expiryMonth}/${expiryYear}`;
 
     const newToken = new Token({
       token,
       pan: cardNumber,
-      expiry,
+      expiryMonth,
+      expiryYear,
       cardholderName
     });
 
@@ -46,7 +46,8 @@ const getCardData = async (req, res) => {
 
     return res.status(200).json({
       pan: record.pan,
-      expiry: record.expiry,
+      expiryMonth: record.expiryMonth,
+      expiryYear: record.expiryYear,
       cardholderName: record.cardholderName
     });
   } catch (err) {
