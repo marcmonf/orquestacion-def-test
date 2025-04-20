@@ -47,7 +47,11 @@ const createTransaction = async (req, res) => {
     });
 
     await newTransaction.save();
-    logger.info('Transacción creada', { paymentId: newTransaction.paymentId, amount: newTransaction.amount, method: newTransaction.method });
+    logger.info('Transacción creada', {
+      paymentId: newTransaction.paymentId,
+      amount: newTransaction.amount,
+      method: newTransaction.method
+    });
     res.status(201).json({ message: 'Transacción creada', transaction: newTransaction });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
