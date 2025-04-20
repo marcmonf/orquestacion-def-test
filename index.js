@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const errorHandler = require('./src/middleware/errorHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
-
+const rateLimiterTokens = require('./src/middleware/rateLimiterTokens'); // <-- NUEVO
 
 dotenv.config();
 const app = express();
@@ -31,10 +31,9 @@ const validateApiKey = (req, res, next) => {
 // Rutas protegidas
 app.use('/apms', validateApiKey, rateLimiter, require('./src/channels/apms/apmsHandler'));
 app.use('/transactions', validateApiKey, rateLimiter, require('./src/routes/transactions'));
-app.use('/tokens', validateApiKey, rateLimiter, require('./src/tokens/tokenRoutes'));
+app.use('/tokens', validateApiKey, rateLimiterTokens, require('./src/tokens/tokenRoutes')); // <-- RATE LIMIT ESPECÍFICO
 app.use('/analytics', validateApiKey, rateLimiter, require('./src/routes/analytics'));
 app.use('/merchants', validateApiKey, rateLimiter, require('./src/routes/merchantRoutes'));
-
 
 // Ruta temporal de prueba para forzar errores
 app.use('/test', require('./src/routes/testRoutes'));
