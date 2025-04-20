@@ -28,7 +28,7 @@ const getAllTransactions = async (req, res) => {
     res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
   } catch (error) {
     logger.error('Error al obtener transacciones', { error: error.message });
-    res.status(500).json({ message: 'Error al obtener transacciones' });
+    res.status(500).json({ message: res.getMessage('transactions.fetch.error') });
   }
 };
 
@@ -52,10 +52,14 @@ const createTransaction = async (req, res) => {
       amount: newTransaction.amount,
       method: newTransaction.method
     });
-    res.status(201).json({ message: 'Transacción creada', transaction: newTransaction });
+
+    res.status(201).json({
+      message: res.getMessage('transactions.create.success'),
+      transaction: newTransaction
+    });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
-    res.status(500).json({ message: 'Error al crear transacción' });
+    res.status(500).json({ message: res.getMessage('transactions.create.error') });
   }
 };
 
@@ -66,14 +70,14 @@ const getTransactionById = async (req, res) => {
     const transaction = await Transaction.findOne({ paymentId });
     if (!transaction) {
       logger.warn('Transacción no encontrada', { paymentId });
-      return res.status(404).json({ error: 'Transacción no encontrada' });
+      return res.status(404).json({ error: res.getMessage('transactions.notFound') });
     }
 
     logger.info('Transacción obtenida por ID', { paymentId });
     res.status(200).json(transaction);
   } catch (err) {
     logger.error('Error al obtener transacción', { error: err.message });
-    res.status(500).json({ error: 'Error al obtener transacción' });
+    res.status(500).json({ error: res.getMessage('transactions.fetch.error') });
   }
 };
 
@@ -86,14 +90,17 @@ const updateTransaction = async (req, res) => {
 
     if (!transaction) {
       logger.warn('Transacción no encontrada para actualizar', { paymentId });
-      return res.status(404).json({ error: 'Transacción no encontrada' });
+      return res.status(404).json({ error: res.getMessage('transactions.notFound') });
     }
 
     logger.info('Transacción actualizada', { paymentId, updates });
-    res.status(200).json({ message: 'Transacción actualizada', transaction });
+    res.status(200).json({
+      message: res.getMessage('transactions.update.success'),
+      transaction
+    });
   } catch (err) {
     logger.error('Error al actualizar transacción', { error: err.message });
-    res.status(500).json({ error: 'Error al actualizar transacción' });
+    res.status(500).json({ error: res.getMessage('transactions.update.error') });
   }
 };
 
@@ -105,14 +112,14 @@ const deleteTransaction = async (req, res) => {
 
     if (!deleted) {
       logger.warn('Transacción no encontrada para eliminar', { paymentId });
-      return res.status(404).json({ error: 'Transacción no encontrada' });
+      return res.status(404).json({ error: res.getMessage('transactions.notFound') });
     }
 
     logger.info('Transacción eliminada', { paymentId });
-    res.status(200).json({ message: 'Transacción eliminada' });
+    res.status(200).json({ message: res.getMessage('transactions.delete.success') });
   } catch (err) {
     logger.error('Error al eliminar transacción', { error: err.message });
-    res.status(500).json({ error: 'Error al eliminar transacción' });
+    res.status(500).json({ error: res.getMessage('transactions.delete.error') });
   }
 };
 
@@ -128,7 +135,7 @@ const getTransactionVolume = async (req, res) => {
     res.status(200).json({ totalVolume });
   } catch (err) {
     logger.error('Error al obtener volumen', { error: err.message });
-    res.status(500).json({ error: 'Error al obtener volumen' });
+    res.status(500).json({ error: res.getMessage('transactions.volume.error') });
   }
 };
 
@@ -142,7 +149,7 @@ const getApprovalRate = async (req, res) => {
     res.status(200).json({ approvalRate: `${rate}%` });
   } catch (err) {
     logger.error('Error al obtener tasa aprobación', { error: err.message });
-    res.status(500).json({ error: 'Error al obtener tasa de aprobación' });
+    res.status(500).json({ error: res.getMessage('transactions.approvalRate.error') });
   }
 };
 
@@ -158,7 +165,7 @@ const getAverageMSC = async (req, res) => {
     res.status(200).json({ averageMSC });
   } catch (err) {
     logger.error('Error al obtener MSC promedio', { error: err.message });
-    res.status(500).json({ error: 'Error al obtener MSC promedio' });
+    res.status(500).json({ error: res.getMessage('transactions.averageMsc.error') });
   }
 };
 
@@ -184,7 +191,7 @@ const getTransactionSummary = async (req, res) => {
     });
   } catch (err) {
     logger.error('Error al obtener resumen de métricas', { error: err.message });
-    res.status(500).json({ error: 'Error al obtener resumen de métricas' });
+    res.status(500).json({ error: res.getMessage('transactions.summary.error') });
   }
 };
 
