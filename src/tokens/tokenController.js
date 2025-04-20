@@ -2,23 +2,18 @@ const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 
-// Función auxiliar para generar un token aleatorio
-const generateToken = () => {
-  return crypto.randomBytes(16).toString('hex');
-};
+const generateToken = () => crypto.randomBytes(16).toString('hex');
 
-// POST /tokens - Tokenizar una tarjeta
 const tokenizeCard = async (req, res) => {
   const { error } = tokenSchema.validate(req.body);
   if (error) {
-    return res.status(400).json({ error: error.details[0].message });
+    return res.status(400).json({ error: res.getMessage(error.details[0].message) });
   }
 
   const { cardNumber, expiryMonth, expiryYear, cvv, cardholderName } = req.body;
 
   try {
     const token = generateToken();
-
     const newToken = new Token({
       token,
       pan: cardNumber,
@@ -32,18 +27,17 @@ const tokenizeCard = async (req, res) => {
     return res.status(201).json({ token });
   } catch (err) {
     console.error('Error al tokenizar tarjeta:', err);
-    return res.status(500).json({ error: 'Error interno al tokenizar' });
+    return res.status(500).json({ error: res.getMessage('error.tokenize') });
   }
 };
 
-// GET /tokens/:token - Recuperar datos de tarjeta por token
 const getCardData = async (req, res) => {
   const { token } = req.params;
 
   try {
     const record = await Token.findOne({ token });
     if (!record) {
-      return res.status(404).json({ error: 'Token no encontrado' });
+      return res.status(404).json({ error: res.getMessage('token.not.found') });
     }
 
     return res.status(200).json({
@@ -54,7 +48,7 @@ const getCardData = async (req, res) => {
     });
   } catch (err) {
     console.error('Error al recuperar tarjeta:', err);
-    return res.status(500).json({ error: 'Error interno' });
+    return res.status(500).json({ error: res.getMessage('error.retrieve.token') });
   }
 };
 
