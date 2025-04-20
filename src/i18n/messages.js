@@ -81,6 +81,14 @@ module.exports = {
     transactionDeleted: 'Transaction supprimée avec succès.',
     validationError: 'Erreur de validation.',
 
+    //Rate Limiter
+
+    rateLimitExceeded: {
+  en: 'Too many requests. Please try again later.',
+  es: 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.',
+  fr: 'Trop de requêtes depuis cette adresse IP. Veuillez réessayer plus tard.'
+}
+
     // Error handler
     unexpectedError: 'Une erreur inattendue est survenue sur le serveur.'
   }
