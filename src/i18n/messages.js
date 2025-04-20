@@ -1,10 +1,14 @@
-// src/i18n/messages.js
-
 module.exports = {
   en: {
     internalError: 'Internal server error.',
     invalidApiKey: 'Invalid or missing API key.',
     rateLimitExceeded: 'Too many requests from this IP. Please try again later.',
+
+    // Rate Limiting
+    rateLimit: {
+      tokens: 'Too many token requests. Please try again later.',
+      webhooks: 'Too many incoming webhook requests. Please try again later.'
+    },
 
     // Tokens
     tokenNotFound: 'Token not found.',
@@ -34,6 +38,12 @@ module.exports = {
     invalidApiKey: 'Clave API inválida o ausente.',
     rateLimitExceeded: 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.',
 
+    // Rate Limiting
+    rateLimit: {
+      tokens: 'Demasiadas solicitudes de token. Intenta nuevamente más tarde.',
+      webhooks: 'Demasiadas peticiones entrantes al endpoint de webhooks. Intenta más tarde.'
+    },
+
     // Tokens
     tokenNotFound: 'Token no encontrado.',
     cardTokenized: 'Tarjeta tokenizada correctamente.',
@@ -61,6 +71,12 @@ module.exports = {
     internalError: 'Erreur interne du serveur.',
     invalidApiKey: 'Clé API invalide ou manquante.',
     rateLimitExceeded: 'Trop de requêtes depuis cette IP. Veuillez réessayer plus tard.',
+
+    // Rate Limiting
+    rateLimit: {
+      tokens: 'Trop de requêtes de jetons. Veuillez réessayer plus tard.',
+      webhooks: 'Trop de requêtes entrantes vers le point de terminaison des webhooks. Veuillez réessayer plus tard.'
+    },
 
     // Tokens
     tokenNotFound: 'Jeton introuvable.',
