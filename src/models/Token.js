@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 
 const tokenSchema = new mongoose.Schema({
-  token: { type: String, required: true, unique: true },
-  pan: { type: String, required: true },
-  expiry: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
+  token:        { type: String, required: true, unique: true },
+  pan:          { type: String, required: true },
+  expiryMonth:  { type: String, required: true },
+  expiryYear:   { type: String, required: true },
+  holderName:   { type: String, required: true },
 }, {
-  timestamps: true
+  timestamps: true // Crea automáticamente createdAt y updatedAt
 });
 
-module.exports = mongoose.model('Token', tokenSchema);
+module.exports = mongoose.models.Token || mongoose.model('Token', tokenSchema);
