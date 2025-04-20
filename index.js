@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const errorHandler = require('./src/middleware/errorHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
-const rateLimiterTokens = require('./src/middleware/rateLimiterTokens'); // <-- NUEVO
+const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
+const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks'); // NUEVO
 
 dotenv.config();
 const app = express();
@@ -31,18 +32,18 @@ const validateApiKey = (req, res, next) => {
 // Rutas protegidas
 app.use('/apms', validateApiKey, rateLimiter, require('./src/channels/apms/apmsHandler'));
 app.use('/transactions', validateApiKey, rateLimiter, require('./src/routes/transactions'));
-app.use('/tokens', validateApiKey, rateLimiterTokens, require('./src/tokens/tokenRoutes')); // <-- RATE LIMIT ESPECÍFICO
+app.use('/tokens', validateApiKey, rateLimiterTokens, require('./src/tokens/tokenRoutes')); // LIMITER específico
 app.use('/analytics', validateApiKey, rateLimiter, require('./src/routes/analytics'));
 app.use('/merchants', validateApiKey, rateLimiter, require('./src/routes/merchantRoutes'));
 
-// Ruta temporal de prueba para forzar errores
+// Ruta temporal de prueba
 app.use('/test', require('./src/routes/testRoutes'));
 
-// Rutas públicas
-app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
-app.use('/webhooks', require('./src/routes/webhooks'));
+// Rutas públicas (con limiter específico para webhooks)
+app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
+app.use('/webhooks', require('./src/webhooks/webhookReceiver')); // sin rate limit si solo escucha
 
-// Middleware global de errores (último siempre)
+// Middleware de errores
 app.use(errorHandler);
 
 // Lanzar servidor
