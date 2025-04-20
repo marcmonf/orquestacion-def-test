@@ -2,11 +2,12 @@ const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 
-// Función auxiliar para generar token aleatorio
+// Función auxiliar para generar un token aleatorio
 const generateToken = () => {
   return crypto.randomBytes(16).toString('hex');
 };
 
+// POST /tokens - Tokenizar una tarjeta
 const tokenizeCard = async (req, res) => {
   const { error } = tokenSchema.validate(req.body);
   if (error) {
@@ -35,6 +36,7 @@ const tokenizeCard = async (req, res) => {
   }
 };
 
+// GET /tokens/:token - Recuperar datos de tarjeta por token
 const getCardData = async (req, res) => {
   const { token } = req.params;
 
