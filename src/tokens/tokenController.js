@@ -7,7 +7,10 @@ const generateToken = () => crypto.randomBytes(16).toString('hex');
 const tokenizeCard = async (req, res) => {
   const { error } = tokenSchema.validate(req.body);
   if (error) {
-    return res.status(400).json({ error: res.getMessage(error.details[0].message) });
+    return res.status(400).json({
+      success: false,
+      message: res.getMessage(req.headers['accept-language'], error.details[0].message)
+    });
   }
 
   const { cardNumber, expiryMonth, expiryYear, cvv, cardholderName } = req.body;
@@ -24,10 +27,17 @@ const tokenizeCard = async (req, res) => {
 
     await newToken.save();
 
-    return res.status(201).json({ token });
+    return res.status(201).json({
+      success: true,
+      token,
+      message: res.getMessage(req.headers['accept-language'], 'token.created')
+    });
   } catch (err) {
     console.error('Error al tokenizar tarjeta:', err);
-    return res.status(500).json({ error: res.getMessage('error.tokenize') });
+    return res.status(500).json({
+      success: false,
+      message: res.getMessage(req.headers['accept-language'], 'error.tokenize')
+    });
   }
 };
 
@@ -37,10 +47,14 @@ const getCardData = async (req, res) => {
   try {
     const record = await Token.findOne({ token });
     if (!record) {
-      return res.status(404).json({ error: res.getMessage('token.not.found') });
+      return res.status(404).json({
+        success: false,
+        message: res.getMessage(req.headers['accept-language'], 'token.not.found')
+      });
     }
 
     return res.status(200).json({
+      success: true,
       pan: record.pan,
       expiryMonth: record.expiryMonth,
       expiryYear: record.expiryYear,
@@ -48,7 +62,10 @@ const getCardData = async (req, res) => {
     });
   } catch (err) {
     console.error('Error al recuperar tarjeta:', err);
-    return res.status(500).json({ error: res.getMessage('error.retrieve.token') });
+    return res.status(500).json({
+      success: false,
+      message: res.getMessage(req.headers['accept-language'], 'error.retrieve.token')
+    });
   }
 };
 
