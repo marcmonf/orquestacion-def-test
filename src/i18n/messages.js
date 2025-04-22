@@ -30,7 +30,15 @@ module.exports = {
     'transaction.not.found': 'Transaction not found.',
     'transaction.updated': 'Transaction successfully updated.',
     'transaction.deleted': 'Transaction successfully deleted.',
-    'transaction.validation': 'Validation error.'
+    'transaction.validation': 'Validation error.',
+    'transaction.fetch.error': 'Error fetching transactions.',
+    'transaction.create.error': 'Error creating transaction.',
+    'transaction.update.error': 'Error updating transaction.',
+    'transaction.delete.error': 'Error deleting transaction.',
+    'transaction.analytics.volume.error': 'Error calculating transaction volume.',
+    'transaction.analytics.approvalRate.error': 'Error calculating approval rate.',
+    'transaction.analytics.averageMsc.error': 'Error calculating average MSC.',
+    'transaction.analytics.summary.error': 'Error generating transaction summary.'
   },
 
   es: {
@@ -64,7 +72,15 @@ module.exports = {
     'transaction.not.found': 'Transacción no encontrada.',
     'transaction.updated': 'Transacción actualizada correctamente.',
     'transaction.deleted': 'Transacción eliminada correctamente.',
-    'transaction.validation': 'Error de validación.'
+    'transaction.validation': 'Error de validación.',
+    'transaction.fetch.error': 'Error al obtener las transacciones.',
+    'transaction.create.error': 'Error al crear la transacción.',
+    'transaction.update.error': 'Error al actualizar la transacción.',
+    'transaction.delete.error': 'Error al eliminar la transacción.',
+    'transaction.analytics.volume.error': 'Error al calcular el volumen de transacciones.',
+    'transaction.analytics.approvalRate.error': 'Error al calcular la tasa de aprobación.',
+    'transaction.analytics.averageMsc.error': 'Error al calcular el MSC promedio.',
+    'transaction.analytics.summary.error': 'Error al generar el resumen de transacciones.'
   },
 
   fr: {
@@ -98,6 +114,14 @@ module.exports = {
     'transaction.not.found': 'Transaction introuvable.',
     'transaction.updated': 'Transaction mise à jour avec succès.',
     'transaction.deleted': 'Transaction supprimée avec succès.',
-    'transaction.validation': 'Erreur de validation.'
+    'transaction.validation': 'Erreur de validation.',
+    'transaction.fetch.error': 'Erreur lors de la récupération des transactions.',
+    'transaction.create.error': 'Erreur lors de la création de la transaction.',
+    'transaction.update.error': 'Erreur lors de la mise à jour de la transaction.',
+    'transaction.delete.error': 'Erreur lors de la suppression de la transaction.',
+    'transaction.analytics.volume.error': 'Erreur lors du calcul du volume des transactions.',
+    'transaction.analytics.approvalRate.error': "Erreur lors du calcul du taux d'approbation.",
+    'transaction.analytics.averageMsc.error': "Erreur lors du calcul du MSC moyen.",
+    'transaction.analytics.summary.error': 'Erreur lors de la génération du résumé des transactions.'
   }
 };
