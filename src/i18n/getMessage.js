@@ -1,22 +1,20 @@
-// src/i18n/getMessage.js
 const messages = require('./messages');
 
 /**
- * Devuelve un mensaje traducido a partir del idioma y la clave.
- * Si no encuentra el idioma o la clave, recurre al inglés como fallback.
+ * Devuelve un mensaje traducido según idioma y clave.
+ * Si la clave o idioma no existe, cae en inglés. Si aún así no hay clave, devuelve 'Unknown error'.
  * 
- * @param {string} langHeader - Encabezado Accept-Language (ej: 'es-ES,es;q=0.9')
- * @param {string} key - Clave del mensaje deseado (ej: 'card.required')
- * @returns {string} Mensaje traducido
+ * @param {string} lang - Idioma ('es', 'en', 'fr')
+ * @param {string} key - Clave del mensaje deseado
+ * @returns {string}
  */
-function getMessage(langHeader, key) {
-  const language = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
+function getMessage(lang, key) {
+  const language = lang?.trim().toLowerCase() || 'en';
 
   if (messages[language]?.[key]) {
     return messages[language][key];
   }
 
-  // Fallback a inglés si no existe el idioma o la clave
   return messages['en'][key] || 'Unknown error';
 }
 
