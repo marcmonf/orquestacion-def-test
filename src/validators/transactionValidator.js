@@ -1,91 +1,85 @@
 const Joi = require('joi');
 
+const currentYear = new Date().getFullYear();
+
 const transactionSchema = Joi.object({
   paymentId: Joi.string().optional(),
 
-  amount: Joi.number().positive().required()
-    .custom((value, helpers) => {
-      if (typeof value !== 'number') {
-        return helpers.error('transaction.amount.base');
-      }
-      if (value <= 0) {
-        return helpers.error('transaction.amount.positive');
-      }
-      return value;
+  amount: Joi.number()
+    .positive()
+    .required()
+    .messages({
+      'number.base': 'transaction.invalid.amount',
+      'number.positive': 'transaction.invalid.amount',
+      'any.required': 'transaction.invalid.amount'
     }),
 
-  currency: Joi.string().length(3).required()
-    .custom((value, helpers) => {
-      if (typeof value !== 'string') {
-        return helpers.error('transaction.currency.base');
-      }
-      if (value.length !== 3) {
-        return helpers.error('transaction.currency.length');
-      }
-      return value;
+  currency: Joi.string()
+    .length(3)
+    .required()
+    .messages({
+      'string.base': 'transaction.invalid.currency',
+      'string.length': 'transaction.invalid.currency',
+      'any.required': 'transaction.invalid.currency'
     }),
 
-  method: Joi.string().required()
-    .custom((value, helpers) => {
-      if (typeof value !== 'string') {
-        return helpers.error('transaction.method.base');
-      }
-      return value;
+  method: Joi.string()
+    .required()
+    .messages({
+      'string.base': 'transaction.invalid.method',
+      'any.required': 'transaction.invalid.method'
     }),
 
-  status: Joi.string().valid('approved', 'declined', 'pending').required()
-    .custom((value, helpers) => {
-      const valid = ['approved', 'declined', 'pending'];
-      if (!valid.includes(value)) {
-        return helpers.error('transaction.status.only');
-      }
-      return value;
+  status: Joi.string()
+    .valid('approved', 'declined', 'pending')
+    .required()
+    .messages({
+      'any.only': 'transaction.invalid.status',
+      'any.required': 'transaction.invalid.status'
     }),
 
-  merchantId: Joi.string().required()
-    .custom((value, helpers) => {
-      if (typeof value !== 'string') {
-        return helpers.error('transaction.merchantId.base');
-      }
-      return value;
+  merchantId: Joi.string()
+    .required()
+    .messages({
+      'string.base': 'transaction.invalid.merchantId',
+      'any.required': 'transaction.invalid.merchantId'
     }),
 
   userId: Joi.string().optional(),
   reference: Joi.string().optional(),
 
-  cardholderName: Joi.string().min(2).max(64).required()
-    .custom((value, helpers) => {
-      if (typeof value !== 'string') {
-        return helpers.error('transaction.cardholderName.base');
-      }
-      if (value.length < 2) {
-        return helpers.error('transaction.cardholderName.min');
-      }
-      if (value.length > 64) {
-        return helpers.error('transaction.cardholderName.max');
-      }
-      return value;
+  cardholderName: Joi.string()
+    .min(2)
+    .max(64)
+    .required()
+    .messages({
+      'string.base': 'transaction.invalid.cardholderName',
+      'string.min': 'transaction.invalid.cardholderName',
+      'string.max': 'transaction.invalid.cardholderName',
+      'any.required': 'transaction.invalid.cardholderName'
     }),
 
-  expiryMonth: Joi.string().pattern(/^(0[1-9]|1[0-2])$/).required()
-    .custom((value, helpers) => {
-      if (!/^(0[1-9]|1[0-2])$/.test(value)) {
-        return helpers.error('transaction.expiryMonth.pattern');
-      }
-      return value;
+  expiryMonth: Joi.string()
+    .pattern(/^(0[1-9]|1[0-2])$/)
+    .required()
+    .messages({
+      'string.pattern.base': 'transaction.invalid.expiryMonth',
+      'any.required': 'transaction.invalid.expiryMonth'
     }),
 
-  expiryYear: Joi.string().pattern(/^\d{4}$/).required()
+  expiryYear: Joi.string()
+    .pattern(/^\d{4}$/)
+    .required()
     .custom((value, helpers) => {
-      const currentYear = new Date().getFullYear();
-      if (!/^\d{4}$/.test(value)) {
-        return helpers.error('transaction.expiryYear.pattern');
-      }
       if (parseInt(value) < currentYear) {
-        return helpers.error('transaction.expiryYear.invalid');
+        return helpers.error('transaction.invalid.expiryYear.tooLow');
       }
       return value;
-    }),
+    })
+    .messages({
+      'string.pattern.base': 'transaction.invalid.expiryYear',
+      'any.required': 'transaction.invalid.expiryYear'
+    })
 });
 
 module.exports = transactionSchema;
