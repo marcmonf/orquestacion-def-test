@@ -38,7 +38,8 @@ module.exports = {
     'transaction.analytics.volume.error': 'Error calculating transaction volume.',
     'transaction.analytics.approvalRate.error': 'Error calculating approval rate.',
     'transaction.analytics.averageMsc.error': 'Error calculating average MSC.',
-    'transaction.analytics.summary.error': 'Error generating transaction summary.'
+    'transaction.analytics.summary.error': 'Error generating transaction summary.',
+    'transaction.invalid.amount': 'Amount must be a positive number.'
   },
 
   es: {
@@ -80,7 +81,8 @@ module.exports = {
     'transaction.analytics.volume.error': 'Error al calcular el volumen de transacciones.',
     'transaction.analytics.approvalRate.error': 'Error al calcular la tasa de aprobación.',
     'transaction.analytics.averageMsc.error': 'Error al calcular el MSC promedio.',
-    'transaction.analytics.summary.error': 'Error al generar el resumen de transacciones.'
+    'transaction.analytics.summary.error': 'Error al generar el resumen de transacciones.',
+    'transaction.invalid.amount': 'El monto debe ser un número positivo.'
   },
 
   fr: {
@@ -122,6 +124,7 @@ module.exports = {
     'transaction.analytics.volume.error': 'Erreur lors du calcul du volume des transactions.',
     'transaction.analytics.approvalRate.error': "Erreur lors du calcul du taux d'approbation.",
     'transaction.analytics.averageMsc.error': "Erreur lors du calcul du MSC moyen.",
-    'transaction.analytics.summary.error': 'Erreur lors de la génération du résumé des transactions.'
+    'transaction.analytics.summary.error': 'Erreur lors de la génération du résumé des transactions.',
+    'transaction.invalid.amount': 'Le montant doit être un nombre positif.'
   }
 };
