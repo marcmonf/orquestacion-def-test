@@ -30,7 +30,7 @@ const getAllTransactions = async (req, res) => {
     logger.error('Error al obtener transacciones', { error: error.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.fetch.error')
+      message: res.getMessage('transaction.fetch.error')
     });
   }
 };
@@ -42,7 +42,7 @@ const createTransaction = async (req, res) => {
     logger.warn('Validación fallida en creación', { details: error.details[0].message });
     return res.status(400).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], error.details[0].message)
+      message: res.getMessage(error.details[0].message)
     });
   }
 
@@ -61,14 +61,14 @@ const createTransaction = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.created'),
+      message: res.getMessage('transaction.created'),
       transaction: newTransaction
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.create.error')
+      message: res.getMessage('transaction.create.error')
     });
   }
 };
@@ -82,7 +82,7 @@ const getTransactionById = async (req, res) => {
       logger.warn('Transacción no encontrada', { paymentId });
       return res.status(404).json({
         success: false,
-        message: res.getMessage(req.headers['accept-language'], 'transaction.not.found')
+        message: res.getMessage('transaction.not.found')
       });
     }
 
@@ -92,7 +92,7 @@ const getTransactionById = async (req, res) => {
     logger.error('Error al obtener transacción', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.fetch.error')
+      message: res.getMessage('transaction.fetch.error')
     });
   }
 };
@@ -108,21 +108,21 @@ const updateTransaction = async (req, res) => {
       logger.warn('Transacción no encontrada para actualizar', { paymentId });
       return res.status(404).json({
         success: false,
-        message: res.getMessage(req.headers['accept-language'], 'transaction.not.found')
+        message: res.getMessage('transaction.not.found')
       });
     }
 
     logger.info('Transacción actualizada', { paymentId, updates });
     res.status(200).json({
       success: true,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.updated'),
+      message: res.getMessage('transaction.updated'),
       transaction
     });
   } catch (err) {
     logger.error('Error al actualizar transacción', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.update.error')
+      message: res.getMessage('transaction.update.error')
     });
   }
 };
@@ -137,20 +137,20 @@ const deleteTransaction = async (req, res) => {
       logger.warn('Transacción no encontrada para eliminar', { paymentId });
       return res.status(404).json({
         success: false,
-        message: res.getMessage(req.headers['accept-language'], 'transaction.not.found')
+        message: res.getMessage('transaction.not.found')
       });
     }
 
     logger.info('Transacción eliminada', { paymentId });
     res.status(200).json({
       success: true,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.deleted')
+      message: res.getMessage('transaction.deleted')
     });
   } catch (err) {
     logger.error('Error al eliminar transacción', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.delete.error')
+      message: res.getMessage('transaction.delete.error')
     });
   }
 };
@@ -170,7 +170,7 @@ const getTransactionVolume = async (req, res) => {
     logger.error('Error al obtener volumen', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.analytics.volume.error')
+      message: res.getMessage('transaction.analytics.volume.error')
     });
   }
 };
@@ -186,7 +186,7 @@ const getApprovalRate = async (req, res) => {
     logger.error('Error al obtener tasa aprobación', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.analytics.approvalRate.error')
+      message: res.getMessage('transaction.analytics.approvalRate.error')
     });
   }
 };
@@ -204,7 +204,7 @@ const getAverageMSC = async (req, res) => {
     logger.error('Error al obtener MSC promedio', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.analytics.averageMsc.error')
+      message: res.getMessage('transaction.analytics.averageMsc.error')
     });
   }
 };
@@ -232,7 +232,7 @@ const getTransactionSummary = async (req, res) => {
     logger.error('Error al obtener resumen de métricas', { error: err.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'transaction.analytics.summary.error')
+      message: res.getMessage('transaction.analytics.summary.error')
     });
   }
 };
