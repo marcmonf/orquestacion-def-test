@@ -9,7 +9,7 @@ const tokenizeCard = async (req, res) => {
   if (error) {
     return res.status(400).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], error.details[0].message)
+      message: res.getMessage(error.details[0].message)
     });
   }
 
@@ -30,13 +30,13 @@ const tokenizeCard = async (req, res) => {
     return res.status(201).json({
       success: true,
       token,
-      message: res.getMessage(req.headers['accept-language'], 'token.created')
+      message: res.getMessage('token.created')
     });
   } catch (err) {
     console.error('Error al tokenizar tarjeta:', err);
     return res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'error.tokenize')
+      message: res.getMessage('token.error')
     });
   }
 };
@@ -49,7 +49,7 @@ const getCardData = async (req, res) => {
     if (!record) {
       return res.status(404).json({
         success: false,
-        message: res.getMessage(req.headers['accept-language'], 'token.not.found')
+        message: res.getMessage('token.not.found')
       });
     }
 
@@ -64,7 +64,7 @@ const getCardData = async (req, res) => {
     console.error('Error al recuperar tarjeta:', err);
     return res.status(500).json({
       success: false,
-      message: res.getMessage(req.headers['accept-language'], 'error.retrieve.token')
+      message: res.getMessage('token.error')
     });
   }
 };
