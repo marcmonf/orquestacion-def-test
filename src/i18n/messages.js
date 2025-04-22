@@ -40,6 +40,17 @@ module.exports = {
     'transaction.analytics.averageMsc.error': 'Error calculating average MSC.',
     'transaction.analytics.summary.error': 'Error generating transaction summary.',
     'transaction.invalid.amount': 'Amount must be a positive number.'
+
+    // Invalid transactions
+
+'transaction.invalid.currency': 'Currency must be a 3-letter string.',
+'transaction.invalid.method': 'Payment method must be a valid string.',
+'transaction.invalid.status': 'Status must be one of: approved, declined or pending.',
+'transaction.invalid.merchantId': 'Merchant ID must be a valid string.',
+'transaction.invalid.cardholderName': 'Cardholder name must be between 2 and 64 characters.',
+'transaction.invalid.expiryMonth': 'Expiry month must be a value between 01 and 12.',
+'transaction.invalid.expiryYear': 'Expiry year must be a 4-digit number.',
+'transaction.invalid.expiryYear.tooLow': 'Expiry year cannot be in the past.',
   },
 
   es: {
@@ -83,6 +94,17 @@ module.exports = {
     'transaction.analytics.averageMsc.error': 'Error al calcular el MSC promedio.',
     'transaction.analytics.summary.error': 'Error al generar el resumen de transacciones.',
     'transaction.invalid.amount': 'El monto debe ser un número positivo.'
+
+  // Invalid Transactions
+
+'transaction.invalid.currency': 'La moneda debe ser un string de 3 letras.',
+'transaction.invalid.method': 'El método de pago debe ser un texto válido.',
+'transaction.invalid.status': 'El estado debe ser uno de: approved, declined o pending.',
+'transaction.invalid.merchantId': 'El ID del comercio debe ser un texto válido.',
+'transaction.invalid.cardholderName': 'El nombre del titular debe tener entre 2 y 64 caracteres.',
+'transaction.invalid.expiryMonth': 'El mes de vencimiento debe estar entre 01 y 12.',
+'transaction.invalid.expiryYear': 'El año de vencimiento debe tener 4 dígitos.',
+'transaction.invalid.expiryYear.tooLow': 'El año de vencimiento no puede ser menor al actual.',
   },
 
   fr: {
@@ -126,5 +148,15 @@ module.exports = {
     'transaction.analytics.averageMsc.error': "Erreur lors du calcul du MSC moyen.",
     'transaction.analytics.summary.error': 'Erreur lors de la génération du résumé des transactions.',
     'transaction.invalid.amount': 'Le montant doit être un nombre positif.'
+
+    // Invalid transactions
+'transaction.invalid.currency': 'La devise doit être une chaîne de 3 lettres.',
+'transaction.invalid.method': 'Le mode de paiement doit être une chaîne valide.',
+'transaction.invalid.status': 'Le statut doit être : approved, declined ou pending.',
+'transaction.invalid.merchantId': "L'identifiant du marchand doit être une chaîne valide.",
+'transaction.invalid.cardholderName': 'Le nom du titulaire doit comporter entre 2 et 64 caractères.',
+'transaction.invalid.expiryMonth': 'Le mois d’expiration doit être compris entre 01 et 12.',
+'transaction.invalid.expiryYear': "L'année d’expiration doit comporter 4 chiffres.",
+'transaction.invalid.expiryYear.tooLow': "L'année d’expiration ne peut pas être inférieure à l’année actuelle.",
   }
 };
