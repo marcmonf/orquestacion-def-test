@@ -1,3 +1,4 @@
+// ✅ getMessage.js
 const messages = require('./messages');
 
 /**
@@ -15,3 +16,5 @@ function getMessage(lang, key) {
   }
   return messages['en'][key] || 'Unknown error';
 }
+
+module.exports = getMessage;
