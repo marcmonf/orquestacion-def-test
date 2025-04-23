@@ -1,7 +1,7 @@
 const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
-const { encryptPan, decryptPan } = require('../utils/cryptoUtils'); // <== añadido
+const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -18,7 +18,7 @@ const tokenizeCard = async (req, res) => {
 
   try {
     const token = generateToken();
-    const encryptedPan = encryptPan(cardNumber); // <== cifrado
+    const encryptedPan = encryptPan(cardNumber);
 
     const newToken = new Token({
       token,
@@ -56,7 +56,7 @@ const getCardData = async (req, res) => {
       });
     }
 
-    const decryptedPan = decryptPan(record.pan); // <== descifrado
+    const decryptedPan = decryptPan(record.pan);
 
     return res.status(200).json({
       success: true,
