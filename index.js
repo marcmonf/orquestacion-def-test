@@ -30,7 +30,9 @@ app.use(i18n);
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   if (!apiKey || apiKey !== process.env.API_KEY) {
-    return res.status(403).json({ error: req.t('apiKeyInvalid') });
+    return res.status(403).json({
+      error: res.getMessage('error.invalidApiKey')
+    });
   }
   next();
 };
