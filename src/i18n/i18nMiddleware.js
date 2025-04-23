@@ -1,4 +1,4 @@
-// src/i18n/i18nMiddleware.js
+// ✅ i18nMiddleware.js
 const getMessage = require('./getMessage');
 
 const i18nMiddleware = (req, res, next) => {
