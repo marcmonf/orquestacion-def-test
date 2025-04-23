@@ -3,6 +3,7 @@ const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
+const { isValidPanAndCvv } = require('../utils/cardUtils'); // ✅ nuevo
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -15,7 +16,15 @@ const tokenizeCard = async (req, res) => {
     });
   }
 
-  const { cardNumber, expiryMonth, expiryYear, cardholderName } = req.body;
+  const { cardNumber, expiryMonth, expiryYear, cardholderName, cvv } = req.body;
+
+  // ✅ Validación adicional por esquema
+  if (!isValidPanAndCvv(cardNumber, cvv)) {
+    return res.status(400).json({
+      success: false,
+      message: res.getMessage('token.invalid.cardNumberOrCvv')
+    });
+  }
 
   try {
     const token = generateToken();
