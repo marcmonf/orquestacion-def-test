@@ -3,7 +3,8 @@ const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
-const { isValidPanAndCvv } = require('../utils/cardUtils'); // ✅ nuevo
+const { isValidPanAndCvv } = require('../utils/cardUtils');
+const logger = require('../utils/logger'); // ✅ para trazabilidad
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -18,7 +19,6 @@ const tokenizeCard = async (req, res) => {
 
   const { cardNumber, expiryMonth, expiryYear, cardholderName, cvv } = req.body;
 
-  // ✅ Validación adicional por esquema
   if (!isValidPanAndCvv(cardNumber, cvv)) {
     return res.status(400).json({
       success: false,
@@ -56,6 +56,16 @@ const tokenizeCard = async (req, res) => {
 
 const getCardData = async (req, res) => {
   const { token } = req.params;
+
+  // ✅ Logging de trazabilidad
+  logger.info('Acceso a token recuperado', {
+    ip: req.ip,
+    method: req.method,
+    endpoint: req.originalUrl,
+    tokenRequested: token,
+    userAgent: req.headers['user-agent'],
+    timestamp: new Date().toISOString()
+  });
 
   try {
     const record = await Token.findOne({ token });
