@@ -1,6 +1,7 @@
 const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
+const { encryptPan, decryptPan } = require('../utils/cryptoUtils'); // <== añadido
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -9,17 +10,19 @@ const tokenizeCard = async (req, res) => {
   if (error) {
     return res.status(400).json({
       success: false,
-      message: res.getMessage(error.details[0].message)
+      message: res.getMessage(req.headers['accept-language'], error.details[0].message)
     });
   }
 
-  const { cardNumber, expiryMonth, expiryYear, cvv, cardholderName } = req.body;
+  const { cardNumber, expiryMonth, expiryYear, cardholderName } = req.body;
 
   try {
     const token = generateToken();
+    const encryptedPan = encryptPan(cardNumber); // <== cifrado
+
     const newToken = new Token({
       token,
-      pan: cardNumber,
+      pan: encryptedPan,
       expiryMonth,
       expiryYear,
       cardholderName
@@ -30,13 +33,13 @@ const tokenizeCard = async (req, res) => {
     return res.status(201).json({
       success: true,
       token,
-      message: res.getMessage('token.created')
+      message: res.getMessage(req.headers['accept-language'], 'token.created')
     });
   } catch (err) {
     console.error('Error al tokenizar tarjeta:', err);
     return res.status(500).json({
       success: false,
-      message: res.getMessage('token.error')
+      message: res.getMessage(req.headers['accept-language'], 'token.error')
     });
   }
 };
@@ -49,13 +52,15 @@ const getCardData = async (req, res) => {
     if (!record) {
       return res.status(404).json({
         success: false,
-        message: res.getMessage('token.not.found')
+        message: res.getMessage(req.headers['accept-language'], 'token.not.found')
       });
     }
 
+    const decryptedPan = decryptPan(record.pan); // <== descifrado
+
     return res.status(200).json({
       success: true,
-      pan: record.pan,
+      pan: decryptedPan,
       expiryMonth: record.expiryMonth,
       expiryYear: record.expiryYear,
       cardholderName: record.cardholderName
@@ -64,7 +69,7 @@ const getCardData = async (req, res) => {
     console.error('Error al recuperar tarjeta:', err);
     return res.status(500).json({
       success: false,
-      message: res.getMessage('token.error')
+      message: res.getMessage(req.headers['accept-language'], 'token.error')
     });
   }
 };
