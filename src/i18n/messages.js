@@ -25,6 +25,7 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName must have at least 2 characters.',
     'token.invalid.cardholderName.tooLong': 'cardholderName must not exceed 64 characters.',
     'token.invalid.cardNumberOrCvv': 'Invalid card number or CVV combination for the detected scheme.',
+    'token.invalid.cardNumberOrCvv': 'Card number and CVV do not match expected format for the detected card scheme.',
 
     // Transactions
     'transaction.created': 'Transaction successfully created.',
@@ -77,6 +78,7 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName debe tener al menos 2 caracteres.',
     'token.invalid.cardholderName.tooLong': 'cardholderName no puede superar los 64 caracteres.',
     'token.invalid.cardNumberOrCvv': 'Combinación de número de tarjeta y CVV inválida para el esquema detectado.',
+    'token.invalid.cardNumberOrCvv': 'El número de tarjeta y el CVV no coinciden con el formato esperado para el esquema detectado.',
 
     // Transacciones
     'transaction.created': 'Transacción creada correctamente.',
@@ -129,6 +131,7 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName doit comporter au moins 2 caractères.',
     'token.invalid.cardholderName.tooLong': 'cardholderName ne doit pas dépasser 64 caractères.',
     'token.invalid.cardNumberOrCvv': 'Combinaison de numéro de carte et CVV invalide pour le schéma détecté.',
+    'token.invalid.cardNumberOrCvv': 'Le numéro de carte et le CVV ne correspondent pas au format attendu pour le schéma détecté.',
 
     // Transactions
     'transaction.created': 'Transaction créée avec succès.',
