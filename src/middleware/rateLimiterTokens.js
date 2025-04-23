@@ -9,12 +9,17 @@ const tokenRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res, next, options) => {
-    const langHeader = req.headers['accept-language'];
-    const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
-    const message = getMessage(lang, 'rateLimit.tokens');
+    try {
+      const langHeader = req.headers['accept-language'];
+      const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
+      const message = getMessage(lang, 'rateLimit.tokens') || 'Too many token requests. Please try again later.';
 
-    logger.warn(`Rate limit excedido en ${req.method} ${req.originalUrl} desde IP ${req.ip}`);
-    res.status(options.statusCode).json({ error: message });
+      logger.warn(`Rate limit excedido en ${req.method} ${req.originalUrl} desde IP ${req.ip}`);
+      res.status(options.statusCode).json({ error: message });
+    } catch (err) {
+      logger.error('Error inesperado en rateLimiterTokens handler', { error: err.message });
+      res.status(429).json({ error: 'Too many requests' });
+    }
   }
 });
 
