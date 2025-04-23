@@ -6,7 +6,8 @@ const errorHandler = require('./src/middleware/errorHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
 const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
 const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks');
-const i18n = require('./src/i18n/i18nMiddleware');
+const i18nMiddleware = require('./src/i18n/i18nMiddleware');
+const getMessage = require('./src/i18n/getMessage'); // ✅ necesario aquí
 
 dotenv.config();
 const app = express();
@@ -24,16 +25,18 @@ mongoose.connect(process.env.MONGO_URI, {
 
 // Middlewares globales
 app.use(express.json());
-app.use(i18n);
+app.use(i18nMiddleware);
 
 // Middleware de validación de API Key
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
+  const langHeader = req.headers['accept-language'];
+  const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
+
   if (!apiKey || apiKey !== process.env.API_KEY) {
-    return res.status(403).json({
-      error: res.getMessage('error.invalidApiKey')
-    });
+    return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
+
   next();
 };
 
