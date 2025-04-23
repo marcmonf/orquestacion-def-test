@@ -1,3 +1,4 @@
+// ✅ index.js 
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
@@ -7,7 +8,7 @@ const rateLimiter = require('./src/middleware/rateLimiter');
 const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
 const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks');
 const i18nMiddleware = require('./src/i18n/i18nMiddleware');
-const getMessage = require('./src/i18n/getMessage'); // ✅ necesario aquí
+const getMessage = require('./src/i18n/getMessage');
 
 dotenv.config();
 const app = express();
@@ -27,13 +28,16 @@ mongoose.connect(process.env.MONGO_URI, {
 app.use(express.json());
 app.use(i18nMiddleware);
 
-// Middleware de validación de API Key
+// Middleware de validación de API Key con lógica diferenciada
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   const langHeader = req.headers['accept-language'];
   const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  if (!apiKey || apiKey !== process.env.API_KEY) {
+  const expectedKey =
+    req.originalUrl.startsWith('/tokens') ? process.env.TOKEN_API_KEY : process.env.API_KEY;
+
+  if (!apiKey || apiKey !== expectedKey) {
     return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
 
