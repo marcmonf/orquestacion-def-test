@@ -2,10 +2,11 @@
 const getMessage = require('./getMessage');
 
 const i18nMiddleware = (req, res, next) => {
-  // Detectar el idioma desde los headers, default a 'en'
-  const lang = req.headers['accept-language']?.split(',')[0]?.toLowerCase() || 'en';
+  // Extraer solo el idioma base (es, en, fr) desde Accept-Language
+  const langHeader = req.headers['accept-language'];
+  const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  // Añadir función a res para obtener mensaje traducido
+  // Añadir función de traducción al objeto res
   res.getMessage = (key) => getMessage(lang, key);
 
   next();
