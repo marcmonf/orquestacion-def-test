@@ -10,12 +10,8 @@ const messages = require('./messages');
  */
 function getMessage(lang, key) {
   const language = lang?.trim().toLowerCase() || 'en';
-
   if (messages[language]?.[key]) {
     return messages[language][key];
   }
-
   return messages['en'][key] || 'Unknown error';
 }
-
-module.exports = getMessage;
