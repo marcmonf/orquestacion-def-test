@@ -7,10 +7,18 @@ const tokenRateLimiter = rateLimit({
   max: 10, // Máximo 10 solicitudes por IP
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
   handler: (req, res, next, options) => {
-    logger.warn(`Rate limit excedido en ${req.method} ${req.originalUrl} desde IP ${req.ip}`);
+    logger.warn('Rate limit excedido en endpoint /tokens/:token', {
+      ip: req.ip,
+      method: req.method,
+      url: req.originalUrl,
+      timestamp: new Date().toISOString()
+    });
+
     res.status(options.statusCode).json({
-      error: res.getMessage('rateLimit.tokens')
+      success: false,
+      message: res.getMessage('rateLimit.tokens')
     });
   }
 });
