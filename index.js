@@ -3,8 +3,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
-const xss = require('xss-clean'); // ✅ añadido
-const mongoSanitize = require('express-mongo-sanitize'); // ✅ añadido
+const xss = require('xss-clean');
+const mongoSanitize = require('express-mongo-sanitize');
 
 const errorHandler = require('./src/middleware/errorHandler');
 const notFoundHandler = require('./src/middleware/notFoundHandler');
@@ -30,9 +30,12 @@ mongoose.connect(process.env.MONGO_URI, {
 
 // Middlewares globales
 app.use(helmet());
-app.use(express.json());
-app.use(xss());            // ✅ Protección contra XSS
-app.use(mongoSanitize());  // ✅ Protección contra NoSQL Injection
+
+// ⚡ Limitamos el tamaño de los JSON entrantes a 10 KB
+app.use(express.json({ limit: '10kb' }));
+
+app.use(xss());            // Protección contra XSS
+app.use(mongoSanitize());  // Protección contra NoSQL Injection
 app.use(i18nMiddleware);
 
 // Middleware de validación de API Key
