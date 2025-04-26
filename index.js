@@ -3,6 +3,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
+const cors = require('cors'); // ✅ añadido
+const hpp = require('hpp'); // ✅ añadido
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 
@@ -28,14 +30,30 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log('MongoDB conectado'))
 .catch(err => console.error('Error de conexión MongoDB:', err));
 
-// Middlewares globales
+// Middlewares de seguridad
 app.use(helmet());
 
-// ⚡ Limitamos el tamaño de los JSON entrantes a 10 KB
+// Configuración estricta de CORS
+app.use(cors({
+  origin: ['https://mi-frontend.com'], // 🔥 cambia esto por el dominio real que quieras permitir
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+  credentials: true
+}));
+
+// Limitamos el tamaño de los JSON entrantes a 10 KB
 app.use(express.json({ limit: '10kb' }));
 
-app.use(xss());            // Protección contra XSS
-app.use(mongoSanitize());  // Protección contra NoSQL Injection
+// Protección contra XSS
+app.use(xss());
+
+// Protección contra NoSQL Injection
+app.use(mongoSanitize());
+
+// Protección contra HTTP Parameter Pollution
+app.use(hpp());
+
+// Middleware de internacionalización
 app.use(i18nMiddleware);
 
 // Middleware de validación de API Key
