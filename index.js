@@ -35,7 +35,7 @@ app.use(helmet());
 
 // Configuración estricta de CORS
 app.use(cors({
-  origin: ['https://mi-frontend.com'], // 🔥 cambia esto por el dominio real que quieras permitir
+  origin: ['https://mi-frontend.com'], // 🔥 cambiar esto por el dominio real que queramos permitir
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
   credentials: true
