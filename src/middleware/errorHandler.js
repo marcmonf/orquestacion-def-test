@@ -7,11 +7,18 @@ const errorHandler = (err, req, res, next) => {
     timestamp: new Date().toISOString()
   });
 
-  const message = res.getMessage
-    ? res.getMessage('internal_server_error')
-    : 'Internal server error';
+  // Detectar idioma preferido
+  const langHeader = req.headers['accept-language'];
+  const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  res.status(500).json({ error: message });
+  // Obtener mensaje
+  const fallbackMessage = res.getMessage ? res.getMessage('error.internal') : 'Internal server error';
+  const finalMessage = err.message || fallbackMessage;
+
+  res.status(500).json({
+    success: false,
+    message: finalMessage
+  });
 };
 
 module.exports = errorHandler;
