@@ -1,10 +1,10 @@
-// index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const helmet = require('helmet'); // ✅ importamos Helmet
+const helmet = require('helmet');
 
 const errorHandler = require('./src/middleware/errorHandler');
+const notFoundHandler = require('./src/middleware/notFoundHandler'); // ✅ añadido
 const rateLimiter = require('./src/middleware/rateLimiter');
 const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
 const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks');
@@ -26,7 +26,7 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch(err => console.error('Error de conexión MongoDB:', err));
 
 // Middlewares globales
-app.use(helmet()); // ✅ Usamos Helmet antes de cualquier otra cosa
+app.use(helmet());
 app.use(express.json());
 app.use(i18nMiddleware);
 
@@ -55,9 +55,12 @@ app.use('/test', require('./src/routes/testRoutes'));
 
 // Rutas públicas
 app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
-app.use('/webhooks', require('./src/webhooks/webhookReceiver')); // pública sin rate limit
+app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 
-// Middleware de errores (último siempre)
+// Middleware para rutas no encontradas (404)
+app.use(notFoundHandler);
+
+// Middleware global de errores (500)
 app.use(errorHandler);
 
 // Lanzar servidor
