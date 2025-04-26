@@ -1,7 +1,8 @@
-// ✅ index.js 
+// index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const helmet = require('helmet'); // ✅ importamos Helmet
 
 const errorHandler = require('./src/middleware/errorHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
@@ -25,19 +26,17 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch(err => console.error('Error de conexión MongoDB:', err));
 
 // Middlewares globales
+app.use(helmet()); // ✅ Usamos Helmet antes de cualquier otra cosa
 app.use(express.json());
 app.use(i18nMiddleware);
 
-// Middleware de validación de API Key con lógica diferenciada
+// Middleware de validación de API Key
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   const langHeader = req.headers['accept-language'];
   const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  const expectedKey =
-    req.originalUrl.startsWith('/tokens') ? process.env.TOKEN_API_KEY : process.env.API_KEY;
-
-  if (!apiKey || apiKey !== expectedKey) {
+  if (!apiKey || apiKey !== process.env.API_KEY) {
     return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
 
