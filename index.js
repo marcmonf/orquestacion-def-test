@@ -1,10 +1,13 @@
+// index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
+const xss = require('xss-clean'); // ✅ añadido
+const mongoSanitize = require('express-mongo-sanitize'); // ✅ añadido
 
 const errorHandler = require('./src/middleware/errorHandler');
-const notFoundHandler = require('./src/middleware/notFoundHandler'); // ✅ añadido
+const notFoundHandler = require('./src/middleware/notFoundHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
 const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
 const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks');
@@ -28,6 +31,8 @@ mongoose.connect(process.env.MONGO_URI, {
 // Middlewares globales
 app.use(helmet());
 app.use(express.json());
+app.use(xss());            // ✅ Protección contra XSS
+app.use(mongoSanitize());  // ✅ Protección contra NoSQL Injection
 app.use(i18nMiddleware);
 
 // Middleware de validación de API Key
