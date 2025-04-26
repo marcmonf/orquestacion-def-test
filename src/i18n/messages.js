@@ -5,6 +5,7 @@ module.exports = {
     'error.unexpected': 'An unexpected error occurred on the server.',
     'error.invalidApiKey': 'Invalid or missing API key.',
     'error.rateLimit': 'Too many requests from this IP. Please try again later.',
+    'error.notFound': 'Route not found.',
 
     // Rate Limiting
     'rateLimit.tokens': 'Too many token requests. Please try again later.',
@@ -58,6 +59,7 @@ module.exports = {
     'error.unexpected': 'Ocurrió un error inesperado en el servidor.',
     'error.invalidApiKey': 'Clave API inválida o ausente.',
     'error.rateLimit': 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.',
+    'error.notFound': 'Ruta no encontrada.',
 
     // Rate Limiting
     'rateLimit.tokens': 'Demasiadas solicitudes de token. Intenta nuevamente más tarde.',
@@ -111,6 +113,7 @@ module.exports = {
     'error.unexpected': 'Une erreur inattendue est survenue sur le serveur.',
     'error.invalidApiKey': 'Clé API invalide ou manquante.',
     'error.rateLimit': 'Trop de requêtes depuis cette IP. Veuillez réessayer plus tard.',
+    'error.notFound': 'Route introuvable.',
 
     // Rate Limiting
     'rateLimit.tokens': 'Trop de requêtes de jetons. Veuillez réessayer plus tard.',
