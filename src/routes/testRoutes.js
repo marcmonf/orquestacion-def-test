@@ -15,4 +15,12 @@ router.get('/force-error', (req, res, next) => {
   next(new Error('Este es un error simulado para probar el middleware de errores global.'));
 });
 
+// ✅ Ruta POST temporal para probar sanitización XSS
+router.post('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    sanitizedBody: req.body
+  });
+});
+
 module.exports = router;
