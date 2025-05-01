@@ -1,10 +1,10 @@
-// ✅ tokenController.js
+// src/tokens/tokenController.js
 const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
 const { isValidPanAndCvv } = require('../utils/cardUtils');
-const logger = require('../utils/logger'); // ✅ para trazabilidad
+const logger = require('../utils/logger'); // ✅ Logger para trazabilidad
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -19,6 +19,7 @@ const tokenizeCard = async (req, res) => {
 
   const { cardNumber, expiryMonth, expiryYear, cardholderName, cvv } = req.body;
 
+  // ✅ Validación adicional por esquema
   if (!isValidPanAndCvv(cardNumber, cvv)) {
     return res.status(400).json({
       success: false,
@@ -36,9 +37,20 @@ const tokenizeCard = async (req, res) => {
       expiryMonth,
       expiryYear,
       cardholderName
+      // ⚠️ CVV no se guarda nunca
     });
 
     await newToken.save();
+
+    // ✅ CVV se limpia inmediatamente
+    delete req.body.cvv;
+
+    logger.info('Token generado correctamente sin almacenar CVV', {
+      token,
+      endpoint: req.originalUrl,
+      method: req.method,
+      ip: req.ip
+    });
 
     return res.status(201).json({
       success: true,
@@ -46,7 +58,7 @@ const tokenizeCard = async (req, res) => {
       message: res.getMessage('token.created')
     });
   } catch (err) {
-    console.error('Error al tokenizar tarjeta:', err);
+    logger.error(`Error al tokenizar tarjeta: ${err.message}`, { stack: err.stack });
     return res.status(500).json({
       success: false,
       message: res.getMessage('token.error')
@@ -56,16 +68,6 @@ const tokenizeCard = async (req, res) => {
 
 const getCardData = async (req, res) => {
   const { token } = req.params;
-
-  // ✅ Logging de trazabilidad
-  logger.info('Acceso a token recuperado', {
-    ip: req.ip,
-    method: req.method,
-    endpoint: req.originalUrl,
-    tokenRequested: token,
-    userAgent: req.headers['user-agent'],
-    timestamp: new Date().toISOString()
-  });
 
   try {
     const record = await Token.findOne({ token });
@@ -86,7 +88,7 @@ const getCardData = async (req, res) => {
       cardholderName: record.cardholderName
     });
   } catch (err) {
-    console.error('Error al recuperar tarjeta:', err);
+    logger.error(`Error al recuperar token: ${err.message}`, { stack: err.stack });
     return res.status(500).json({
       success: false,
       message: res.getMessage('token.error')
