@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
 const { isValidPanAndCvv } = require('../utils/cardUtils');
-const logger = require('../utils/logger'); // ✅ Logger para trazabilidad
+const logger = require('../utils/logger');
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
 
@@ -19,7 +19,6 @@ const tokenizeCard = async (req, res) => {
 
   const { cardNumber, expiryMonth, expiryYear, cardholderName, cvv } = req.body;
 
-  // ✅ Validación adicional por esquema
   if (!isValidPanAndCvv(cardNumber, cvv)) {
     return res.status(400).json({
       success: false,
@@ -30,19 +29,20 @@ const tokenizeCard = async (req, res) => {
   try {
     const token = generateToken();
     const encryptedPan = encryptPan(cardNumber);
+    const bin = cardNumber.slice(0, 6);
+    const last4 = cardNumber.slice(-4);
 
     const newToken = new Token({
       token,
       pan: encryptedPan,
+      bin,
+      last4,
       expiryMonth,
       expiryYear,
       cardholderName
-      // ⚠️ CVV no se guarda nunca
     });
 
     await newToken.save();
-
-    // ✅ CVV se limpia inmediatamente
     delete req.body.cvv;
 
     logger.info('Token generado correctamente sin almacenar CVV', {
