@@ -43,8 +43,8 @@ const tokenizeCard = async (req, res) => {
       pan: encryptedPan,
       expiryMonth,
       expiryYear,
-      cardholderName
-      bin: cardNumber.slice(0, 6),
+      cardholderName,
+      bin: cardNumber.slice(0, 8),
       last4: cardNumber.slice(-4)
     });
 
