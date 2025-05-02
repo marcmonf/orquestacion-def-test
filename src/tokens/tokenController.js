@@ -44,6 +44,8 @@ const tokenizeCard = async (req, res) => {
       expiryMonth,
       expiryYear,
       cardholderName
+      bin: cardNumber.slice(0, 6),
+      last4: cardNumber.slice(-4)
     });
 
     await newToken.save();
