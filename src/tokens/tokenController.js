@@ -3,10 +3,18 @@ const Token = require('../models/Token');
 const crypto = require('crypto');
 const tokenSchema = require('../validators/tokenValidator');
 const { encryptPan, decryptPan } = require('../utils/cryptoUtils');
-const { isValidPanAndCvv } = require('../utils/cardUtils');
+const { isValidPanAndCvv, getCardScheme } = require('../utils/cardUtils');
 const logger = require('../utils/logger');
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
+
+const truncateCardholderName = (name) => {
+  const parts = name.split(' ');
+  if (!parts.length) return '';
+  const firstName = parts[0];
+  const masked = firstName[0] + '*'.repeat(firstName.length - 1);
+  return masked + (parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '');
+};
 
 const tokenizeCard = async (req, res) => {
   const { error } = tokenSchema.validate(req.body);
@@ -29,20 +37,17 @@ const tokenizeCard = async (req, res) => {
   try {
     const token = generateToken();
     const encryptedPan = encryptPan(cardNumber);
-    const bin = cardNumber.slice(0, 6);
-    const last4 = cardNumber.slice(-4);
 
     const newToken = new Token({
       token,
       pan: encryptedPan,
-      bin,
-      last4,
       expiryMonth,
       expiryYear,
       cardholderName
     });
 
     await newToken.save();
+
     delete req.body.cvv;
 
     logger.info('Token generado correctamente sin almacenar CVV', {
@@ -79,13 +84,23 @@ const getCardData = async (req, res) => {
     }
 
     const decryptedPan = decryptPan(record.pan);
+    const bin = decryptedPan.slice(0, 6);
+    const last4 = decryptedPan.slice(-4);
+    const maskedCardholderName = truncateCardholderName(record.cardholderName);
+
+    logger.info('Acceso a token limitado correctamente', {
+      tokenRequested: token,
+      ip: req.ip,
+      endpoint: req.originalUrl,
+      method: req.method,
+      timestamp: new Date().toISOString()
+    });
 
     return res.status(200).json({
       success: true,
-      pan: decryptedPan,
-      expiryMonth: record.expiryMonth,
-      expiryYear: record.expiryYear,
-      cardholderName: record.cardholderName
+      bin,
+      last4,
+      cardholderName: maskedCardholderName
     });
   } catch (err) {
     logger.error(`Error al recuperar token: ${err.message}`, { stack: err.stack });
