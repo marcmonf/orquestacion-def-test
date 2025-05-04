@@ -30,7 +30,7 @@ const tokenizeCard = async (req, res) => {
     const token = generateToken();
     const encryptedPan = encryptPan(cardNumber);
 
-    const bin = cardNumber.slice(0, 8);
+    const bin = cardNumber.slice(0, 8); // Usamos BIN de 8 dígitos
     const last4 = cardNumber.slice(-4);
 
     const newToken = new Token({
@@ -51,7 +51,8 @@ const tokenizeCard = async (req, res) => {
       token,
       endpoint: req.originalUrl,
       method: req.method,
-      ip: req.ip
+      ip: req.ip,
+      timestamp: new Date().toISOString()
     });
 
     return res.status(201).json({
@@ -60,7 +61,10 @@ const tokenizeCard = async (req, res) => {
       message: res.getMessage('token.created')
     });
   } catch (err) {
-    logger.error(`Error al tokenizar tarjeta: ${err.message}`, { stack: err.stack });
+    logger.error(`Error al tokenizar tarjeta: ${err.message}`, {
+      stack: err.stack,
+      timestamp: new Date().toISOString()
+    });
     return res.status(500).json({
       success: false,
       message: res.getMessage('token.error')
@@ -68,39 +72,4 @@ const tokenizeCard = async (req, res) => {
   }
 };
 
-const getCardData = async (req, res) => {
-  const { token } = req.params;
-
-  try {
-    const record = await Token.findOne({ token });
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        message: res.getMessage('token.not.found')
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      bin: record.bin,
-      last4: record.last4,
-      cardholderName: truncateName(record.cardholderName)
-    });
-  } catch (err) {
-    logger.error(`Error al recuperar token: ${err.message}`, { stack: err.stack });
-    return res.status(500).json({
-      success: false,
-      message: res.getMessage('token.error')
-    });
-  }
-};
-
-// Función para truncar el nombre del titular (por privacidad)
-const truncateName = (name) => {
-  if (!name) return '';
-  const parts = name.trim().split(' ');
-  const firstName = parts[0];
-  return `${firstName[0]}*** ${parts.slice(1).join(' ')}`.trim();
-};
-
-module.exports = { tokenizeCard, getCardData };
+module.exports = { tokenizeCard };
