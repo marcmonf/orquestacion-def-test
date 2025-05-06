@@ -1,3 +1,4 @@
+// src/controllers/transactionController.js
 const Joi = require('joi');
 const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
@@ -49,9 +50,14 @@ const createTransaction = async (req, res) => {
   }
 
   try {
+    const recurrenceId =
+      value.recurrenceId ||
+      (value.transactionType === 'CIT' && value.isRecurring ? uuidv4() : null);
+
     const newTransaction = new Transaction({
       ...value,
-      paymentId: value.paymentId || uuidv4()
+      paymentId: value.paymentId || uuidv4(),
+      recurrenceId
     });
 
     await newTransaction.save();
