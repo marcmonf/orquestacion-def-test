@@ -79,10 +79,10 @@ const transactionSchema = Joi.object({
     })
     .messages({
       'string.pattern.base': 'transaction.invalid.expiryYear',
-      'any.required': 'transaction.invalid.expiryYear'
+      'any.required': 'transaction.invalid.expiryYear',
+      'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
     }),
 
-  // Nuevos campos
   isRecurring: Joi.boolean().optional(),
 
   recurrenceId: Joi.string().when('transactionType', {
@@ -101,8 +101,8 @@ const transactionSchema = Joi.object({
       'any.required': 'transaction.invalid.transactionType'
     }),
 
-  token: Joi.string().when('method', {
-    is: 'token',
+  token: Joi.string().when('transactionType', {
+    is: 'MIT',
     then: Joi.required().messages({
       'any.required': 'transaction.invalid.token.required'
     }),
