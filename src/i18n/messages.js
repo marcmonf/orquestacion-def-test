@@ -51,7 +51,11 @@ module.exports = {
     'transaction.invalid.expiryYear': 'Expiry year must be a 4-digit number.',
     'transaction.invalid.expiryYear.tooLow': 'Expiry year cannot be in the past.',
     'transaction.invalid.recurrenceId.required': 'recurrenceId is required for this type of transaction.',
-    'transaction.invalid.mit.noMatch': 'No previous CIT found linked to this recurrenceId and token.'
+    'transaction.invalid.mit.noMatch': 'No previous CIT found linked to this recurrenceId and token.',
+    'transaction.invalid.cardNumber': 'Card number must be 13 to 19 digits.',
+    'transaction.invalid.cardNumber.required': 'Card number is required for CIT transactions.',
+    'transaction.invalid.cvv': 'CVV must be 3 or 4 digits.',
+    'transaction.invalid.cvv.required': 'CVV is required for CIT transactions.'
   },
 
   es: {
@@ -106,7 +110,11 @@ module.exports = {
     'transaction.invalid.expiryYear': 'El año de vencimiento debe tener 4 dígitos.',
     'transaction.invalid.expiryYear.tooLow': 'El año de vencimiento no puede ser menor al actual.',
     'transaction.invalid.recurrenceId.required': 'recurrenceId es obligatorio para este tipo de transacción.',
-    'transaction.invalid.mit.noMatch': 'No se encontró una CIT anterior vinculada con este recurrenceId y token.'
+    'transaction.invalid.mit.noMatch': 'No se encontró una CIT anterior vinculada con este recurrenceId y token.',
+    'transaction.invalid.cardNumber': 'El número de tarjeta debe tener entre 13 y 19 dígitos.',
+    'transaction.invalid.cardNumber.required': 'El número de tarjeta es obligatorio para transacciones CIT.',
+    'transaction.invalid.cvv': 'El CVV debe tener 3 o 4 dígitos.',
+    'transaction.invalid.cvv.required': 'El CVV es obligatorio para transacciones CIT.'
   },
 
   fr: {
@@ -161,6 +169,10 @@ module.exports = {
     'transaction.invalid.expiryYear': "L'année d’expiration doit comporter 4 chiffres.",
     'transaction.invalid.expiryYear.tooLow': "L'année d’expiration ne peut pas être inférieure à l’année actuelle.",
     'transaction.invalid.recurrenceId.required': 'recurrenceId est requis pour ce type de transaction.',
-    'transaction.invalid.mit.noMatch': 'Aucune CIT précédente liée à ce recurrenceId et ce token n’a été trouvée.'
+    'transaction.invalid.mit.noMatch': 'Aucune CIT précédente liée à ce recurrenceId et ce token n’a été trouvée.',
+    'transaction.invalid.cardNumber': 'Le numéro de carte doit comporter entre 13 et 19 chiffres.',
+    'transaction.invalid.cardNumber.required': 'Le numéro de carte est requis pour les transactions CIT.',
+    'transaction.invalid.cvv': 'Le CVV doit comporter 3 ou 4 chiffres.',
+    'transaction.invalid.cvv.required': 'Le CVV est requis pour les transactions CIT.'
   }
 };
