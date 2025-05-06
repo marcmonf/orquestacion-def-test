@@ -51,9 +51,11 @@ const createTransaction = async (req, res) => {
 
   try {
     let recurrenceId = value.recurrenceId || null;
+    let token = value.token || null;
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
+      token = uuidv4(); // Simulación de tokenización
     }
 
     if (value.transactionType === 'MIT') {
@@ -79,7 +81,8 @@ const createTransaction = async (req, res) => {
     const newTransaction = new Transaction({
       ...value,
       paymentId: value.paymentId || uuidv4(),
-      recurrenceId
+      recurrenceId,
+      token
     });
 
     await newTransaction.save();
