@@ -1,4 +1,3 @@
-// src/controllers/transactionController.js
 const Joi = require('joi');
 const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
@@ -40,10 +39,12 @@ const getAllTransactions = async (req, res) => {
 const createTransaction = async (req, res) => {
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
-    logger.warn('Validación fallida en creación', { details: error.details[0].message });
+    const messageKey = error.details[0].message;
+    const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
+    logger.warn('Validación fallida en creación', { details: messageKey });
     return res.status(400).json({
       success: false,
-      message: res.getMessage(error.details[0].message)
+      message: translated
     });
   }
 
