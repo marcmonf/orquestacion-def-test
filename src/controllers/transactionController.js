@@ -55,7 +55,7 @@ const createTransaction = async (req, res) => {
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
-      token = uuidv4(); // Simulación de tokenización
+      token = uuidv4(); // Simulación de token generado automáticamente
     }
 
     if (value.transactionType === 'MIT') {
@@ -98,7 +98,9 @@ const createTransaction = async (req, res) => {
     res.status(201).json({
       success: true,
       message: res.getMessage('transaction.created'),
-      transaction: newTransaction
+      transaction: newTransaction,
+      recurrenceId,
+      token
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
