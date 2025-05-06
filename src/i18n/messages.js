@@ -25,7 +25,6 @@ module.exports = {
     'token.invalid.cardholderName.required': 'cardholderName is required.',
     'token.invalid.cardholderName.tooShort': 'cardholderName must have at least 2 characters.',
     'token.invalid.cardholderName.tooLong': 'cardholderName must not exceed 64 characters.',
-    'token.invalid.cardNumberOrCvv': 'Invalid card number or CVV combination for the detected scheme.',
     'token.invalid.cardNumberOrCvv': 'Card number and CVV do not match expected format for the detected card scheme.',
 
     // Transactions
@@ -50,7 +49,8 @@ module.exports = {
     'transaction.invalid.cardholderName': 'Cardholder name must be between 2 and 64 characters.',
     'transaction.invalid.expiryMonth': 'Expiry month must be a value between 01 and 12.',
     'transaction.invalid.expiryYear': 'Expiry year must be a 4-digit number.',
-    'transaction.invalid.expiryYear.tooLow': 'Expiry year cannot be in the past.'
+    'transaction.invalid.expiryYear.tooLow': 'Expiry year cannot be in the past.',
+    'transaction.invalid.recurrenceId.required': 'recurrenceId is required for this type of transaction.'
   },
 
   es: {
@@ -79,7 +79,6 @@ module.exports = {
     'token.invalid.cardholderName.required': 'cardholderName es obligatorio.',
     'token.invalid.cardholderName.tooShort': 'cardholderName debe tener al menos 2 caracteres.',
     'token.invalid.cardholderName.tooLong': 'cardholderName no puede superar los 64 caracteres.',
-    'token.invalid.cardNumberOrCvv': 'Combinación de número de tarjeta y CVV inválida para el esquema detectado.',
     'token.invalid.cardNumberOrCvv': 'El número de tarjeta y el CVV no coinciden con el formato esperado para el esquema detectado.',
 
     // Transacciones
@@ -104,7 +103,8 @@ module.exports = {
     'transaction.invalid.cardholderName': 'El nombre del titular debe tener entre 2 y 64 caracteres.',
     'transaction.invalid.expiryMonth': 'El mes de vencimiento debe estar entre 01 y 12.',
     'transaction.invalid.expiryYear': 'El año de vencimiento debe tener 4 dígitos.',
-    'transaction.invalid.expiryYear.tooLow': 'El año de vencimiento no puede ser menor al actual.'
+    'transaction.invalid.expiryYear.tooLow': 'El año de vencimiento no puede ser menor al actual.',
+    'transaction.invalid.recurrenceId.required': 'recurrenceId es obligatorio para este tipo de transacción.'
   },
 
   fr: {
@@ -133,7 +133,6 @@ module.exports = {
     'token.invalid.cardholderName.required': 'cardholderName est requis.',
     'token.invalid.cardholderName.tooShort': 'cardholderName doit comporter au moins 2 caractères.',
     'token.invalid.cardholderName.tooLong': 'cardholderName ne doit pas dépasser 64 caractères.',
-    'token.invalid.cardNumberOrCvv': 'Combinaison de numéro de carte et CVV invalide pour le schéma détecté.',
     'token.invalid.cardNumberOrCvv': 'Le numéro de carte et le CVV ne correspondent pas au format attendu pour le schéma détecté.',
 
     // Transactions
@@ -158,6 +157,7 @@ module.exports = {
     'transaction.invalid.cardholderName': 'Le nom du titulaire doit comporter entre 2 et 64 caractères.',
     'transaction.invalid.expiryMonth': 'Le mois d’expiration doit être compris entre 01 et 12.',
     'transaction.invalid.expiryYear': "L'année d’expiration doit comporter 4 chiffres.",
-    'transaction.invalid.expiryYear.tooLow': "L'année d’expiration ne peut pas être inférieure à l’année actuelle."
+    'transaction.invalid.expiryYear.tooLow': "L'année d’expiration ne peut pas être inférieure à l’année actuelle.",
+    'transaction.invalid.recurrenceId.required': 'recurrenceId est requis pour ce type de transaction.'
   }
 };
