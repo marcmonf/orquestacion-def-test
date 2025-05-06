@@ -1,7 +1,7 @@
-// src/models/recurringProfileModel.js
+// src/models/RecurrentProfile.js
 const mongoose = require('mongoose');
 
-const recurringProfileSchema = new mongoose.Schema({
+const RecurrentProfileSchema = new mongoose.Schema({
   recurrenceId: {
     type: String,
     required: true,
@@ -16,13 +16,16 @@ const recurringProfileSchema = new mongoose.Schema({
     required: true
   },
   cardholderName: {
-    type: String
+    type: String,
+    required: true
   },
   expiryMonth: {
-    type: String
+    type: String,
+    required: true
   },
   expiryYear: {
-    type: String
+    type: String,
+    required: true
   },
   createdAt: {
     type: Date,
@@ -30,4 +33,4 @@ const recurringProfileSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('RecurringProfile', recurringProfileSchema);
+module.exports = mongoose.model('RecurrentProfile', RecurrentProfileSchema);
