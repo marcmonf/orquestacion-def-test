@@ -8,15 +8,11 @@ const errorHandler = (err, req, res, next) => {
     timestamp: new Date().toISOString()
   });
 
-  // Detectar idioma preferido
   const langHeader = req.headers['accept-language'];
   const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  // Obtener mensaje traducido con fallback
-  const fallbackMessage = getMessage(lang, 'error.internal');
-  const finalMessage = err.message && !err.message.startsWith('transaction.') && !err.message.startsWith('token.')
-    ? err.message
-    : fallbackMessage;
+  const isMessageKey = err.message && getMessage(lang, err.message) !== 'Unknown error';
+  const finalMessage = isMessageKey ? getMessage(lang, err.message) : err.message || getMessage(lang, 'error.internal');
 
   res.status(500).json({
     success: false,
