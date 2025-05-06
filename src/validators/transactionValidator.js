@@ -83,6 +83,30 @@ const transactionSchema = Joi.object({
       'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
     }),
 
+  cardNumber: Joi.string()
+    .pattern(/^\d{13,19}$/)
+    .when('transactionType', {
+      is: 'CIT',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    })
+    .messages({
+      'string.pattern.base': 'transaction.invalid.cardNumber',
+      'any.required': 'transaction.invalid.cardNumber.required'
+    }),
+
+  cvv: Joi.string()
+    .pattern(/^\d{3,4}$/)
+    .when('transactionType', {
+      is: 'CIT',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    })
+    .messages({
+      'string.pattern.base': 'transaction.invalid.cvv',
+      'any.required': 'transaction.invalid.cvv.required'
+    }),
+
   isRecurring: Joi.boolean().optional(),
 
   recurrenceId: Joi.string().when('transactionType', {
