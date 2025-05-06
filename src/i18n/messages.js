@@ -50,7 +50,8 @@ module.exports = {
     'transaction.invalid.expiryMonth': 'Expiry month must be a value between 01 and 12.',
     'transaction.invalid.expiryYear': 'Expiry year must be a 4-digit number.',
     'transaction.invalid.expiryYear.tooLow': 'Expiry year cannot be in the past.',
-    'transaction.invalid.recurrenceId.required': 'recurrenceId is required for this type of transaction.'
+    'transaction.invalid.recurrenceId.required': 'recurrenceId is required for this type of transaction.',
+    'transaction.invalid.mit.noMatch': 'No previous CIT found linked to this recurrenceId and token.'
   },
 
   es: {
@@ -104,7 +105,8 @@ module.exports = {
     'transaction.invalid.expiryMonth': 'El mes de vencimiento debe estar entre 01 y 12.',
     'transaction.invalid.expiryYear': 'El año de vencimiento debe tener 4 dígitos.',
     'transaction.invalid.expiryYear.tooLow': 'El año de vencimiento no puede ser menor al actual.',
-    'transaction.invalid.recurrenceId.required': 'recurrenceId es obligatorio para este tipo de transacción.'
+    'transaction.invalid.recurrenceId.required': 'recurrenceId es obligatorio para este tipo de transacción.',
+    'transaction.invalid.mit.noMatch': 'No se encontró una CIT anterior vinculada con este recurrenceId y token.'
   },
 
   fr: {
@@ -158,6 +160,7 @@ module.exports = {
     'transaction.invalid.expiryMonth': 'Le mois d’expiration doit être compris entre 01 et 12.',
     'transaction.invalid.expiryYear': "L'année d’expiration doit comporter 4 chiffres.",
     'transaction.invalid.expiryYear.tooLow': "L'année d’expiration ne peut pas être inférieure à l’année actuelle.",
-    'transaction.invalid.recurrenceId.required': 'recurrenceId est requis pour ce type de transaction.'
+    'transaction.invalid.recurrenceId.required': 'recurrenceId est requis pour ce type de transaction.',
+    'transaction.invalid.mit.noMatch': 'Aucune CIT précédente liée à ce recurrenceId et ce token n’a été trouvée.'
   }
 };
