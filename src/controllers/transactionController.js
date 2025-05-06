@@ -5,7 +5,7 @@ const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const transactionSchema = require('../validators/transactionValidator');
 const { createTokenForCard } = require('../services/tokenService');
-const RecurrentProfile = require('../models/recurrentProfile');
+const RecurrentProfile = require('../models/RecurrentProfile');
 
 // GET /transactions
 const getAllTransactions = async (req, res) => {
