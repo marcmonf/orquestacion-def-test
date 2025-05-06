@@ -55,7 +55,8 @@ module.exports = {
     'transaction.invalid.cardNumber': 'Card number must be 13 to 19 digits.',
     'transaction.invalid.cardNumber.required': 'Card number is required for CIT transactions.',
     'transaction.invalid.cvv': 'CVV must be 3 or 4 digits.',
-    'transaction.invalid.cvv.required': 'CVV is required for CIT transactions.'
+    'transaction.invalid.cvv.required': 'CVV is required for CIT transactions.',
+    'recurrentProfiles.fetch.error': 'Error fetching recurrent profiles.'
   },
 
   es: {
@@ -114,7 +115,8 @@ module.exports = {
     'transaction.invalid.cardNumber': 'El número de tarjeta debe tener entre 13 y 19 dígitos.',
     'transaction.invalid.cardNumber.required': 'El número de tarjeta es obligatorio para transacciones CIT.',
     'transaction.invalid.cvv': 'El CVV debe tener 3 o 4 dígitos.',
-    'transaction.invalid.cvv.required': 'El CVV es obligatorio para transacciones CIT.'
+    'transaction.invalid.cvv.required': 'El CVV es obligatorio para transacciones CIT.',
+    'recurrentProfiles.fetch.error': 'Error al obtener perfiles recurrentes.'
   },
 
   fr: {
@@ -173,6 +175,7 @@ module.exports = {
     'transaction.invalid.cardNumber': 'Le numéro de carte doit comporter entre 13 et 19 chiffres.',
     'transaction.invalid.cardNumber.required': 'Le numéro de carte est requis pour les transactions CIT.',
     'transaction.invalid.cvv': 'Le CVV doit comporter 3 ou 4 chiffres.',
-    'transaction.invalid.cvv.required': 'Le CVV est requis pour les transactions CIT.'
+    'transaction.invalid.cvv.required': 'Le CVV est requis pour les transactions CIT.',
+    'recurrentProfiles.fetch.error': 'Erreur lors de la récupération des profils récurrents.'
   }
 };
