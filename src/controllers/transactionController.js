@@ -52,12 +52,10 @@ const createTransaction = async (req, res) => {
   try {
     let recurrenceId = value.recurrenceId || null;
 
-    // CIT recurrente: generamos recurrenceId
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
     }
 
-    // MIT: validar que exista CIT previa con ese recurrenceId y token
     if (value.transactionType === 'MIT') {
       const previous = await Transaction.findOne({
         recurrenceId: value.recurrenceId,
@@ -97,8 +95,7 @@ const createTransaction = async (req, res) => {
     res.status(201).json({
       success: true,
       message: res.getMessage('transaction.created'),
-      transaction: newTransaction,
-      recurrenceId: newTransaction.recurrenceId || null
+      transaction: newTransaction
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
@@ -191,9 +188,87 @@ const deleteTransaction = async (req, res) => {
   }
 };
 
-// Analytics...
+// ANALYTICS
 
-// (las funciones de analítica no cambian y se mantienen igual)
+const getTransactionVolume = async (req, res) => {
+  try {
+    const result = await Transaction.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: null, totalVolume: { $sum: '$amount' } } }
+    ]);
+    const totalVolume = result[0]?.totalVolume || 0;
+    logger.info('Volumen total obtenido', { totalVolume });
+    res.status(200).json({ totalVolume });
+  } catch (err) {
+    logger.error('Error al obtener volumen', { error: err.message });
+    res.status(500).json({
+      success: false,
+      message: res.getMessage('transaction.analytics.volume.error')
+    });
+  }
+};
+
+const getApprovalRate = async (req, res) => {
+  try {
+    const total = await Transaction.countDocuments();
+    const approved = await Transaction.countDocuments({ status: 'approved' });
+    const rate = total ? ((approved / total) * 100).toFixed(2) : '0';
+    logger.info('Tasa de aprobación obtenida', { total, approved, rate });
+    res.status(200).json({ approvalRate: `${rate}%` });
+  } catch (err) {
+    logger.error('Error al obtener tasa aprobación', { error: err.message });
+    res.status(500).json({
+      success: false,
+      message: res.getMessage('transaction.analytics.approvalRate.error')
+    });
+  }
+};
+
+const getAverageMSC = async (req, res) => {
+  try {
+    const result = await Transaction.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: null, average: { $avg: '$amount' } } }
+    ]);
+    const averageMSC = result[0]?.average || 0;
+    logger.info('MSC promedio obtenido', { averageMSC });
+    res.status(200).json({ averageMSC });
+  } catch (err) {
+    logger.error('Error al obtener MSC promedio', { error: err.message });
+    res.status(500).json({
+      success: false,
+      message: res.getMessage('transaction.analytics.averageMsc.error')
+    });
+  }
+};
+
+const getTransactionSummary = async (req, res) => {
+  try {
+    const total = await Transaction.countDocuments();
+    const approved = await Transaction.countDocuments({ status: 'approved' });
+    const declined = await Transaction.countDocuments({ status: 'declined' });
+    const volumeResult = await Transaction.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const volume = volumeResult[0]?.total || 0;
+
+    logger.info('Resumen de métricas obtenido', { total, approved, declined, volume });
+    res.status(200).json({
+      totalTransactions: total,
+      approvedTransactions: approved,
+      declinedTransactions: declined,
+      approvalRate: total ? ((approved / total) * 100).toFixed(2) + '%' : '0%',
+      totalVolume: volume
+    });
+  } catch (err) {
+    logger.error('Error al obtener resumen de métricas', { error: err.message });
+    res.status(500).json({
+      success: false,
+      message: res.getMessage('transaction.analytics.summary.error')
+    });
+  }
+};
 
 module.exports = {
   getAllTransactions,
