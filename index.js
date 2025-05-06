@@ -58,11 +58,12 @@ app.use(hpp());
 app.use(i18nMiddleware);
 
 // Rutas protegidas
-app.use('/apms',         validateApiKey,       rateLimiter,         require('./src/channels/apms/apmsHandler'));
-app.use('/transactions', validateApiKey,       rateLimiter,         require('./src/routes/transactions'));
-app.use('/tokens',       validateTokenApiKey,  rateLimiterTokens,   require('./src/tokens/tokenRoutes')); // ✅ cambiado
-app.use('/analytics',    validateApiKey,       rateLimiter,         require('./src/routes/analytics'));
-app.use('/merchants',    validateApiKey,       rateLimiter,         require('./src/routes/merchantRoutes'));
+app.use('/apms',             validateApiKey,       rateLimiter,         require('./src/channels/apms/apmsHandler'));
+app.use('/transactions',     validateApiKey,       rateLimiter,         require('./src/routes/transactions'));
+app.use('/tokens',           validateTokenApiKey,  rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
+app.use('/analytics',        validateApiKey,       rateLimiter,         require('./src/routes/analytics'));
+app.use('/merchants',        validateApiKey,       rateLimiter,         require('./src/routes/merchantRoutes'));
+app.use('/recurrent-profiles', validateApiKey,     rateLimiter,         require('./src/routes/recurrentProfiles')); // ✅ NUEVA RUTA
 
 // Ruta de prueba
 app.use('/test', require('./src/routes/testRoutes'));
