@@ -97,7 +97,8 @@ const createTransaction = async (req, res) => {
     res.status(201).json({
       success: true,
       message: res.getMessage('transaction.created'),
-      transaction: newTransaction
+      transaction: newTransaction,
+      recurrenceId: newTransaction.recurrenceId || null
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
