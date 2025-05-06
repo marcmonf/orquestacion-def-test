@@ -14,7 +14,7 @@ const transactionSchema = new mongoose.Schema({
 
   // Datos para identificar la recurrencia
   isRecurring:  { type: Boolean, default: false },
-  recurrenceId: { type: String }, // ID único para vincular la serie de pagos
+  recurrenceId: { type: String },                 // ID único para vincular la serie de pagos
 
   // Clasificación de la transacción (CIT/MIT)
   transactionType: { 
@@ -26,8 +26,8 @@ const transactionSchema = new mongoose.Schema({
   // Referencia al token utilizado, si aplica
   token: { type: String },
 
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date }
+  createdAt:  { type: Date, default: Date.now },
+  updatedAt:  { type: Date }
 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);
