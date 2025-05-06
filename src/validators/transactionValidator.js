@@ -1,3 +1,4 @@
+// src/validators/transactionValidator.js
 const Joi = require('joi');
 
 const currentYear = new Date().getFullYear();
@@ -79,6 +80,35 @@ const transactionSchema = Joi.object({
     .messages({
       'string.pattern.base': 'transaction.invalid.expiryYear',
       'any.required': 'transaction.invalid.expiryYear'
+    }),
+
+  // Nuevos campos para pagos recurrentes y MIT/CIT
+  isRecurring: Joi.boolean().optional(),
+
+  recurrenceId: Joi.string()
+    .when('isRecurring', {
+      is: true,
+      then: Joi.required().messages({
+        'any.required': 'transaction.invalid.recurrenceId.required'
+      }),
+      otherwise: Joi.optional()
+    }),
+
+  transactionType: Joi.string()
+    .valid('CIT', 'MIT')
+    .required()
+    .messages({
+      'any.only': 'transaction.invalid.transactionType',
+      'any.required': 'transaction.invalid.transactionType'
+    }),
+
+  token: Joi.string()
+    .when('method', {
+      is: 'token',
+      then: Joi.required().messages({
+        'any.required': 'transaction.invalid.token.required'
+      }),
+      otherwise: Joi.optional()
     })
 });
 
