@@ -1,5 +1,6 @@
 // src/middleware/errorHandler.js
 const logger = require('../utils/logger');
+const getMessage = require('../i18n/getMessage');
 
 const errorHandler = (err, req, res, next) => {
   logger.error(`[${req.method}] ${req.originalUrl} - ${err.message}`, {
@@ -11,9 +12,11 @@ const errorHandler = (err, req, res, next) => {
   const langHeader = req.headers['accept-language'];
   const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
-  // Obtener mensaje
-  const fallbackMessage = res.getMessage ? res.getMessage('error.internal') : 'Internal server error';
-  const finalMessage = err.message || fallbackMessage;
+  // Obtener mensaje traducido con fallback
+  const fallbackMessage = getMessage(lang, 'error.internal');
+  const finalMessage = err.message && !err.message.startsWith('transaction.') && !err.message.startsWith('token.')
+    ? err.message
+    : fallbackMessage;
 
   res.status(500).json({
     success: false,
