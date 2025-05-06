@@ -82,17 +82,25 @@ const transactionSchema = Joi.object({
       'any.required': 'transaction.invalid.expiryYear'
     }),
 
-  // Nuevos campos para pagos recurrentes y MIT/CIT
   isRecurring: Joi.boolean().optional(),
 
-  recurrenceId: Joi.string()
-    .when('isRecurring', {
+  recurrenceId: Joi.string().when('transactionType', {
+    is: 'CIT',
+    then: Joi.when('isRecurring', {
       is: true,
       then: Joi.required().messages({
         'any.required': 'transaction.invalid.recurrenceId.required'
       }),
       otherwise: Joi.optional()
     }),
+    otherwise: Joi.when('transactionType', {
+      is: 'MIT',
+      then: Joi.required().messages({
+        'any.required': 'transaction.invalid.recurrenceId.required'
+      }),
+      otherwise: Joi.optional()
+    })
+  }),
 
   transactionType: Joi.string()
     .valid('CIT', 'MIT')
@@ -102,14 +110,13 @@ const transactionSchema = Joi.object({
       'any.required': 'transaction.invalid.transactionType'
     }),
 
-  token: Joi.string()
-    .when('method', {
-      is: 'token',
-      then: Joi.required().messages({
-        'any.required': 'transaction.invalid.token.required'
-      }),
-      otherwise: Joi.optional()
-    })
+  token: Joi.string().when('transactionType', {
+    is: 'MIT',
+    then: Joi.required().messages({
+      'any.required': 'transaction.invalid.token.required'
+    }),
+    otherwise: Joi.optional()
+  })
 });
 
 module.exports = transactionSchema;
