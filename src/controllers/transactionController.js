@@ -4,6 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const transactionSchema = require('../validators/transactionValidator');
+const { createTokenForCard } = require('../services/tokenService');
+const RecurrentProfile = require('../models/RecurrentProfile');
 
 // GET /transactions
 const getAllTransactions = async (req, res) => {
@@ -55,7 +57,22 @@ const createTransaction = async (req, res) => {
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
-      token = uuidv4(); // Simulación de token generado automáticamente
+      token = await createTokenForCard({
+        cardNumber: value.cardNumber,
+        cardholderName: value.cardholderName,
+        expiryMonth: value.expiryMonth,
+        expiryYear: value.expiryYear,
+        cvv: value.cvv
+      });
+
+      await new RecurrentProfile({
+        recurrenceId,
+        token,
+        merchantId: value.merchantId,
+        cardholderName: value.cardholderName,
+        expiryMonth: value.expiryMonth,
+        expiryYear: value.expiryYear
+      }).save();
     }
 
     if (value.transactionType === 'MIT') {
