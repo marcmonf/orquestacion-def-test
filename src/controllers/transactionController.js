@@ -57,6 +57,7 @@ const createTransaction = async (req, res) => {
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
+
       token = await createTokenForCard({
         cardNumber: value.cardNumber,
         cardholderName: value.cardholderName,
@@ -95,8 +96,13 @@ const createTransaction = async (req, res) => {
       }
     }
 
+    // Evitamos almacenar CVV o PAN
+    const sanitizedValue = { ...value };
+    delete sanitizedValue.cvv;
+    delete sanitizedValue.cardNumber;
+
     const newTransaction = new Transaction({
-      ...value,
+      ...sanitizedValue,
       paymentId: value.paymentId || uuidv4(),
       recurrenceId,
       token
