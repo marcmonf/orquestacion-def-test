@@ -1,10 +1,12 @@
+// src/routes/recurrentProfiles.js
 const express = require('express');
 const router = express.Router();
 const RecurrentProfile = require('../models/RecurrentProfile');
 const logger = require('../utils/logger');
+const checkRole = require('../middleware/checkRole');
 
 // GET /recurrent-profiles
-router.get('/', async (req, res) => {
+router.get('/', checkRole(['admin']), async (req, res) => {
   try {
     const { merchantId, token, recurrenceId } = req.query;
     const query = {};
@@ -22,7 +24,7 @@ router.get('/', async (req, res) => {
     logger.error('Error al consultar perfiles recurrentes', { error: error.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage('recurrentProfiles.fetch.error')
+      message: res.getMessage('recurrentProfiles.fetch.error') || 'Error fetching recurrent profiles.'
     });
   }
 });
