@@ -6,6 +6,7 @@ module.exports = {
     'error.invalidApiKey': 'Invalid or missing API key.',
     'error.rateLimit': 'Too many requests from this IP. Please try again later.',
     'error.notFound': 'Route not found.',
+    'error.insufficientPermissions': 'Insufficient permissions for this resource.',
 
     // Rate Limiting
     'rateLimit.tokens': 'Too many token requests. Please try again later.',
@@ -66,6 +67,7 @@ module.exports = {
     'error.invalidApiKey': 'Clave API inválida o ausente.',
     'error.rateLimit': 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.',
     'error.notFound': 'Ruta no encontrada.',
+    'error.insufficientPermissions': 'Permisos insuficientes para acceder a este recurso.',
 
     // Rate Limiting
     'rateLimit.tokens': 'Demasiadas solicitudes de token. Intenta nuevamente más tarde.',
@@ -126,6 +128,7 @@ module.exports = {
     'error.invalidApiKey': 'Clé API invalide ou manquante.',
     'error.rateLimit': 'Trop de requêtes depuis cette IP. Veuillez réessayer plus tard.',
     'error.notFound': 'Route introuvable.',
+    'error.insufficientPermissions': "Permissions insuffisantes pour accéder à cette ressource.",
 
     // Rate Limiting
     'rateLimit.tokens': 'Trop de requêtes de jetons. Veuillez réessayer plus tard.',
