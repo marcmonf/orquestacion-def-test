@@ -23,6 +23,9 @@ const getMessage = require('./src/i18n/getMessage');
 const validateTokenApiKey = require('./src/middleware/validateTokenApiKey');
 const checkRole = require('./src/middleware/checkRole');
 
+const idempotencyMiddleware = require('./src/middleware/idempotency');
+const transactionsRouter = require('./src/routes/transactions');
+
 dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
@@ -68,7 +71,15 @@ app.use(i18nMiddleware);
 
 // Rutas protegidas por API Key y roles
 app.use('/apms',               validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/channels/apms/apmsHandler'));
-app.use('/transactions',       validateApiKey,       checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/transactions'));
+
+// ✅ Integración específica para POST con idempotencia
+app.use('/transactions', validateApiKey, checkRole(['admin', 'merchant']), rateLimiter, (req, res, next) => {
+  if (req.method === 'POST') {
+    return idempotencyMiddleware(req, res, () => transactionsRouter(req, res, next));
+  }
+  return transactionsRouter(req, res, next);
+});
+
 app.use('/tokens',             validateTokenApiKey,  checkRole(['admin']),             rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
 app.use('/analytics',          validateApiKey,       checkRole(['admin', 'analyst']),  rateLimiter,         require('./src/routes/analytics'));
 app.use('/merchants',          validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/routes/merchantRoutes'));
