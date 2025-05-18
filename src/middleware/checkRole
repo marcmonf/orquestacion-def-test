@@ -10,7 +10,9 @@ const rolePermissions = {
 module.exports = (allowedRoles) => {
   return (req, res, next) => {
     const lang = req.headers['accept-language']?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
-    const role = req.headers['x-user-role']; // Ejemplo: 'admin', 'merchant', etc.
+
+    // Se prioriza el rol inyectado por el backend, si existe
+    const role = req.userRole || req.headers['x-user-role'];
 
     if (!allowedRoles.includes(role)) {
       return res.status(403).json({
