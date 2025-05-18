@@ -1,12 +1,11 @@
-// src/routes/recurrentProfiles.js
+// src/routes/recurrentprofiles.js
 const express = require('express');
 const router = express.Router();
 const RecurrentProfile = require('../models/RecurrentProfile');
 const logger = require('../utils/logger');
-const checkRole = require('../middleware/checkRole');
 
 // GET /recurrent-profiles
-router.get('/', checkRole(['admin']), async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { merchantId, token, recurrenceId } = req.query;
     const query = {};
