@@ -3,6 +3,7 @@ const Joi = require('joi');
 const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
+const auditLogger = require('../logs/auditLogger');
 const transactionSchema = require('../validators/transactionValidator');
 const { createTokenForCard } = require('../services/tokenService');
 const RecurrentProfile = require('../models/RecurrentProfile');
@@ -45,6 +46,14 @@ const createTransaction = async (req, res) => {
     const messageKey = error.details[0].message;
     const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
     logger.warn('Validación fallida en creación', { details: messageKey });
+
+    auditLogger.info({
+      action: 'TRANSACTION_VALIDATION_FAILED',
+      user: req.merchantId || 'unknown',
+      details: { error: messageKey, input: req.body },
+      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+    });
+
     return res.status(400).json({
       success: false,
       message: translated
@@ -89,6 +98,13 @@ const createTransaction = async (req, res) => {
           token: value.token
         });
 
+        auditLogger.info({
+          action: 'MIT_WITHOUT_CIT',
+          user: req.merchantId || 'unknown',
+          details: { recurrenceId: value.recurrenceId, token: value.token },
+          metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+        });
+
         return res.status(400).json({
           success: false,
           message: res.getMessage('transaction.invalid.mit.noMatch')
@@ -118,6 +134,19 @@ const createTransaction = async (req, res) => {
       recurrenceId: newTransaction.recurrenceId
     });
 
+    auditLogger.info({
+      action: 'TRANSACTION_CREATED',
+      user: req.merchantId || 'unknown',
+      details: {
+        paymentId: newTransaction.paymentId,
+        method: newTransaction.method,
+        transactionType: newTransaction.transactionType,
+        isRecurring: newTransaction.isRecurring,
+        recurrenceId: newTransaction.recurrenceId
+      },
+      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+    });
+
     res.status(201).json({
       success: true,
       message: res.getMessage('transaction.created'),
@@ -127,6 +156,14 @@ const createTransaction = async (req, res) => {
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
+
+    auditLogger.info({
+      action: 'TRANSACTION_CREATE_ERROR',
+      user: req.merchantId || 'unknown',
+      details: { error: err.message },
+      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+    });
+
     res.status(500).json({
       success: false,
       message: res.getMessage('transaction.create.error')
