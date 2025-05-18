@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 
-router.get('/health', (req, res) => {
+router.get('/', (req, res) => {
   const uptime = process.uptime(); // segundos
   const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
 
