@@ -6,9 +6,6 @@ const logger = require('../utils/logger');
 
 // GET /recurrent-profiles
 router.get('/', async (req, res) => {
-  console.log('>>> Entrando en GET /recurrent-profiles');
-  logger.info('>>> Entrando en GET /recurrent-profiles');
-
   try {
     const { merchantId, token, recurrenceId } = req.query;
     const query = {};
@@ -19,14 +16,14 @@ router.get('/', async (req, res) => {
 
     const profiles = await RecurrentProfile.find(query).sort({ createdAt: -1 });
 
-    logger.info('Perfiles recurrentes consultados', { total: profiles.length, query });
+    logger.info('>>> Entrando en GET /recurrent-profiles', { total: profiles.length, query });
 
     res.status(200).json({ success: true, profiles });
   } catch (error) {
     logger.error('Error al consultar perfiles recurrentes', { error: error.message });
     res.status(500).json({
       success: false,
-      message: res.getMessage('recurrentProfiles.fetch.error') || 'Error fetching recurrent profiles.'
+      message: res.getMessage?.('recurrentProfiles.fetch.error') || 'Error fetching recurrent profiles.'
     });
   }
 });
