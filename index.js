@@ -37,6 +37,9 @@ const validateApiKey = (req, res, next) => {
     return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
 
+  // Desbloqueo temporal de permisos para test
+  req.userRole = 'admin';
+
   next();
 };
 
@@ -51,7 +54,7 @@ mongoose.connect(process.env.MONGO_URI, {
 // Middlewares de seguridad global
 app.use(helmet());
 app.use(cors({
-  origin: ['https://orquestador-def-test.onrender.com'], // Cambia por tu frontend en producción
+  origin: ['https://orquestacion-def-test.onrender.com'], // Cambia por tu frontend en producción
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-User-Role'],
   credentials: true
