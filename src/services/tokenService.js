@@ -20,7 +20,18 @@ const getCardBin = (cardNumber) => {
 
 // Función para cifrar el PAN con AES-256 (si deseas almacenarlo)
 const encryptPan = (cardNumber) => {
-  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.PAN_SECRET_KEY), Buffer.from(process.env.PAN_IV));
+  const key = process.env.PAN_SECRET_KEY;
+  const iv = process.env.PAN_IV;
+
+  if (!key || key.length !== 32) {
+    throw new Error('PAN_SECRET_KEY debe tener 32 caracteres');
+  }
+
+  if (!iv || iv.length !== 16) {
+    throw new Error('PAN_IV debe tener 16 caracteres');
+  }
+
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key), Buffer.from(iv));
   let encrypted = cipher.update(cardNumber, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return encrypted;
@@ -33,7 +44,7 @@ const createTokenForCard = async ({ cardNumber, cardholderName, expiryMonth, exp
       throw new Error('token.creation.error');
     }
 
-      // ✅ Validación reforzada del PAN antes de cifrar
+    // ✅ Validación reforzada del PAN antes de cifrar
     if (!/^\d{13,19}$/.test(cardNumber)) {
       logger.warn('PAN inválido en formato', { cardNumber });
       throw new Error('token.invalid.cardNumber');
@@ -49,7 +60,6 @@ const createTokenForCard = async ({ cardNumber, cardholderName, expiryMonth, exp
       cardholderName,
       expiryMonth,
       expiryYear
-      // El CVV nunca debe guardarse
     });
 
     await newToken.save();
