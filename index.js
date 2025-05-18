@@ -22,8 +22,9 @@ const i18nMiddleware = require('./src/i18n/i18nMiddleware');
 const getMessage = require('./src/i18n/getMessage');
 const validateTokenApiKey = require('./src/middleware/validateTokenApiKey');
 const checkRole = require('./src/middleware/checkRole');
-
 const idempotencyMiddleware = require('./src/middleware/idempotency');
+
+// Rutas
 const transactionsRouter = require('./src/routes/transactions');
 
 dotenv.config();
@@ -41,7 +42,7 @@ const validateApiKey = (req, res, next) => {
   }
 
   // ⚠️ TEMPORAL: Inyectar rol desde backend para entorno de pruebas
-  // Sustituir por lógica real en producción (por ejemplo, asociar clave-rol desde BD o config)
+  // Sustituir por lógica real en producción
   req.userRole = 'admin';
 
   next();
@@ -58,7 +59,7 @@ mongoose.connect(process.env.MONGO_URI, {
 // Middlewares de seguridad global
 app.use(helmet());
 app.use(cors({
-  origin: ['https://orquestacion-def-test.onrender.com'], // Cambia por tu frontend en producción
+  origin: ['https://orquestacion-def-test.onrender.com'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-User-Role'],
   credentials: true
@@ -70,20 +71,35 @@ app.use(hpp());
 app.use(i18nMiddleware);
 
 // Rutas protegidas por API Key y roles
-app.use('/apms',               validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/channels/apms/apmsHandler'));
+app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
 
-// ✅ Integración específica para POST con idempotencia
-app.use('/transactions', validateApiKey, checkRole(['admin', 'merchant']), rateLimiter, (req, res, next) => {
+// ✅ Aplicar idempotency SOLO en POST /transactions
+app.use('/transactions', (req, res, next) => {
   if (req.method === 'POST') {
-    return idempotencyMiddleware(req, res, () => transactionsRouter(req, res, next));
+    return validateApiKey(req, res, () =>
+      checkRole(['admin', 'merchant'])(req, res, () =>
+        rateLimiter(req, res, () =>
+          idempotencyMiddleware(req, res, () =>
+            transactionsRouter(req, res, next)
+          )
+        )
+      )
+    );
+  } else {
+    return validateApiKey(req, res, () =>
+      checkRole(['admin', 'merchant'])(req, res, () =>
+        rateLimiter(req, res, () =>
+          transactionsRouter(req, res, next)
+        )
+      )
+    );
   }
-  return transactionsRouter(req, res, next);
 });
 
-app.use('/tokens',             validateTokenApiKey,  checkRole(['admin']),             rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
-app.use('/analytics',          validateApiKey,       checkRole(['admin', 'analyst']),  rateLimiter,         require('./src/routes/analytics'));
-app.use('/merchants',          validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/routes/merchantRoutes'));
-app.use('/recurrent-profiles', validateApiKey,       checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/recurrentprofiles'));
+app.use('/tokens', validateTokenApiKey, checkRole(['admin']), rateLimiterTokens, require('./src/tokens/tokenRoutes'));
+app.use('/analytics', validateApiKey, checkRole(['admin', 'analyst']), rateLimiter, require('./src/routes/analytics'));
+app.use('/merchants', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/routes/merchantRoutes'));
+app.use('/recurrent-profiles', validateApiKey, checkRole(['admin', 'merchant']), rateLimiter, require('./src/routes/recurrentprofiles'));
 
 // Ruta de prueba protegida
 app.use('/test', require('./src/routes/testRoutes'));
