@@ -3,40 +3,47 @@ const crypto = require('crypto');
 const Token = require('../models/Token');
 const logger = require('../utils/logger');
 
-// Clave secreta de cifrado (debe estar definida como variable de entorno segura)
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default_key_32_bytes_long!'; // 32 bytes para AES-256
-const IV_LENGTH = 16; // AES block size
-
-function encrypt(text) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return iv.toString('hex') + ':' + encrypted;
-}
-
+// Función para generar un token aleatorio
 const generateToken = () => {
   return crypto.randomBytes(16).toString('hex');
 };
 
+// Función para obtener los últimos 4 dígitos del PAN
+const getCardLast4 = (cardNumber) => {
+  return cardNumber.slice(-4);
+};
+
+// Función para obtener el BIN (primeros 6 dígitos)
+const getCardBin = (cardNumber) => {
+  return cardNumber.slice(0, 6);
+};
+
+// Función para cifrar el PAN con AES-256 (si deseas almacenarlo)
+const encryptPan = (cardNumber) => {
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.PAN_SECRET_KEY), Buffer.from(process.env.PAN_IV));
+  let encrypted = cipher.update(cardNumber, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return encrypted;
+};
+
+// Función principal para crear y guardar un token
 const createTokenForCard = async ({ cardNumber, cardholderName, expiryMonth, expiryYear, cvv }) => {
   try {
-    const token = generateToken();
+    if (!cardNumber || !cvv) {
+      throw new Error('token.creation.error');
+    }
 
-    const encryptedPan = encrypt(cardNumber);
-    const encryptedCvv = cvv ? encrypt(cvv) : undefined;
-    const last4 = cardNumber.slice(-4);
-    const bin = cardNumber.slice(0, 6);
+    const token = generateToken();
 
     const newToken = new Token({
       token,
-      pan: encryptedPan,
-      last4,
-      bin,
+      pan: encryptPan(cardNumber), // PAN cifrado
+      last4: getCardLast4(cardNumber),
+      bin: getCardBin(cardNumber),
       cardholderName,
       expiryMonth,
-      expiryYear,
-      cvv: encryptedCvv
+      expiryYear
+      // El CVV nunca debe guardarse
     });
 
     await newToken.save();
