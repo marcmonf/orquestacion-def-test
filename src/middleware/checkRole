@@ -1,0 +1,24 @@
+// src/middleware/checkRole.js
+const getMessage = require('../i18n/getMessage');
+
+const rolePermissions = {
+  '/tokens': ['admin'],
+  '/transactions': ['admin', 'merchant'],
+  '/analytics': ['admin', 'analyst']
+};
+
+module.exports = (allowedRoles) => {
+  return (req, res, next) => {
+    const lang = req.headers['accept-language']?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
+    const role = req.headers['x-user-role']; // Ejemplo: 'admin', 'merchant', etc.
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: getMessage(lang, 'error.insufficientPermissions')
+      });
+    }
+
+    next();
+  };
+};
