@@ -1,4 +1,4 @@
-const Transaction = require('./transactionModel');
+const Transaction = require('../models/Transaction');
 
 exports.saveTransaction = async function (tx) {
   const transaction = new Transaction(tx);
