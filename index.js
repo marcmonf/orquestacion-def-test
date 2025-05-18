@@ -66,6 +66,11 @@ app.use('/test', require('./src/routes/testRoutes'));
 app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
 app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 
+// Ruta de prueba básica para comprobar despliegue
+app.get('/test', (req, res) => {
+  res.status(200).send('Ruta de prueba funcionando');
+});
+
 app.use(notFoundHandler);
 app.use(errorHandler);
 
