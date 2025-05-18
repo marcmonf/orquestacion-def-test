@@ -31,6 +31,9 @@ const validateApiKey = (req, res, next) => {
 
 const validateTokenApiKey = require('./src/middleware/validateTokenApiKey');
 
+// ✅ Nuevo middleware para control por roles
+const checkRole = require('./src/middleware/checkRole');
+
 dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
@@ -48,7 +51,7 @@ app.use(helmet());
 app.use(cors({
   origin: ['https://mi-frontend.com'], // 👈 cámbialo por tu dominio real
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-User-Role'],
   credentials: true
 }));
 app.use(express.json({ limit: '10kb' }));
@@ -57,13 +60,13 @@ app.use(mongoSanitize());
 app.use(hpp());
 app.use(i18nMiddleware);
 
-// Rutas protegidas
-app.use('/apms',             validateApiKey,       rateLimiter,         require('./src/channels/apms/apmsHandler'));
-app.use('/transactions',     validateApiKey,       rateLimiter,         require('./src/routes/transactions'));
-app.use('/tokens',           validateTokenApiKey,  rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
-app.use('/analytics',        validateApiKey,       rateLimiter,         require('./src/routes/analytics'));
-app.use('/merchants',        validateApiKey,       rateLimiter,         require('./src/routes/merchantRoutes'));
-app.use('/recurrent-profiles', validateApiKey,     rateLimiter,         require('./src/routes/recurrentProfiles')); // ✅ NUEVA RUTA
+// Rutas protegidas con control por rol
+app.use('/apms',             validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/channels/apms/apmsHandler'));
+app.use('/transactions',     validateApiKey,       checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/transactions'));
+app.use('/tokens',           validateTokenApiKey,  checkRole(['admin']),             rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
+app.use('/analytics',        validateApiKey,       checkRole(['admin', 'analyst']),  rateLimiter,         require('./src/routes/analytics'));
+app.use('/merchants',        validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/routes/merchantRoutes'));
+app.use('/recurrent-profiles', validateApiKey,     checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/recurrentProfiles')); // ✅ NUEVA RUTA
 
 // Ruta de prueba
 app.use('/test', require('./src/routes/testRoutes'));
