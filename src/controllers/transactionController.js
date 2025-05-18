@@ -61,6 +61,19 @@ const createTransaction = async (req, res) => {
   }
 
   try {
+    // Verificar idempotencia por paymentId existente
+    const existingTx = await Transaction.findOne({ paymentId: value.paymentId });
+    if (existingTx) {
+      logger.info('Transacción repetida detectada (idempotencia)', { paymentId: value.paymentId });
+      return res.status(200).json({
+        success: true,
+        message: res.getMessage('transaction.created'),
+        transaction: existingTx,
+        recurrenceId: existingTx.recurrenceId,
+        token: existingTx.token || null
+      });
+    }
+
     let recurrenceId = value.recurrenceId || null;
     let token = value.token || null;
 
@@ -112,7 +125,6 @@ const createTransaction = async (req, res) => {
       }
     }
 
-    // Evitamos almacenar CVV o PAN
     const sanitizedValue = { ...value };
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
