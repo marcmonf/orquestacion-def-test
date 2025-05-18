@@ -37,7 +37,8 @@ const validateApiKey = (req, res, next) => {
     return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
 
-  // Desbloqueo temporal de permisos para test
+  // ⚠️ TEMPORAL: Inyectar rol desde backend para entorno de pruebas
+  // Sustituir por lógica real en producción (por ejemplo, asociar clave-rol desde BD o config)
   req.userRole = 'admin';
 
   next();
@@ -75,6 +76,9 @@ app.use('/recurrent-profiles', validateApiKey,       checkRole(['admin', 'mercha
 
 // Ruta de prueba protegida
 app.use('/test', require('./src/routes/testRoutes'));
+
+// Endpoint de health check
+app.use('/health', require('./src/routes/health'));
 
 // Rutas públicas para webhooks
 app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
