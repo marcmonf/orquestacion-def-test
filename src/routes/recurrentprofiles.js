@@ -1,3 +1,4 @@
+console.log('>>> recurrentprofiles.js cargado correctamente');
 // src/routes/recurrentprofiles.js
 const express = require('express');
 const router = express.Router();
