@@ -33,6 +33,12 @@ const createTokenForCard = async ({ cardNumber, cardholderName, expiryMonth, exp
       throw new Error('token.creation.error');
     }
 
+      // ✅ Validación reforzada del PAN antes de cifrar
+    if (!/^\d{13,19}$/.test(cardNumber)) {
+      logger.warn('PAN inválido en formato', { cardNumber });
+      throw new Error('token.invalid.cardNumber');
+    }
+
     const token = generateToken();
 
     const newToken = new Token({
