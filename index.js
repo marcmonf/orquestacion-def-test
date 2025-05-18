@@ -1,13 +1,18 @@
 // index.js
+
+// Módulos principales
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+
+// Middlewares de seguridad
 const helmet = require('helmet');
 const cors = require('cors');
 const hpp = require('hpp');
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 
+// Middlewares personalizados
 const errorHandler = require('./src/middleware/errorHandler');
 const notFoundHandler = require('./src/middleware/notFoundHandler');
 const rateLimiter = require('./src/middleware/rateLimiter');
@@ -15,7 +20,14 @@ const rateLimiterTokens = require('./src/middleware/rateLimiterTokens');
 const rateLimiterWebhooks = require('./src/middleware/rateLimiterWebhooks');
 const i18nMiddleware = require('./src/i18n/i18nMiddleware');
 const getMessage = require('./src/i18n/getMessage');
+const validateTokenApiKey = require('./src/middleware/validateTokenApiKey');
+const checkRole = require('./src/middleware/checkRole');
 
+dotenv.config();
+const app = express();
+app.set('trust proxy', 1);
+
+// Middleware para validar API Key general
 const validateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   const langHeader = req.headers['accept-language'];
@@ -28,13 +40,7 @@ const validateApiKey = (req, res, next) => {
   next();
 };
 
-const validateTokenApiKey = require('./src/middleware/validateTokenApiKey');
-const checkRole = require('./src/middleware/checkRole');
-
-dotenv.config();
-const app = express();
-app.set('trust proxy', 1);
-
+// Conexión a MongoDB
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -42,9 +48,10 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log('MongoDB conectado'))
 .catch(err => console.error('Error de conexión MongoDB:', err));
 
+// Middlewares de seguridad global
 app.use(helmet());
 app.use(cors({
-  origin: ['https://orquestador-def-test.onrender.com'],
+  origin: ['https://orquestador-def-test.onrender.com'], // Cambia por tu frontend en producción
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-User-Role'],
   credentials: true
@@ -55,6 +62,7 @@ app.use(mongoSanitize());
 app.use(hpp());
 app.use(i18nMiddleware);
 
+// Rutas protegidas por API Key y roles
 app.use('/apms',               validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/channels/apms/apmsHandler'));
 app.use('/transactions',       validateApiKey,       checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/transactions'));
 app.use('/tokens',             validateTokenApiKey,  checkRole(['admin']),             rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
@@ -62,18 +70,20 @@ app.use('/analytics',          validateApiKey,       checkRole(['admin', 'analys
 app.use('/merchants',          validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/routes/merchantRoutes'));
 app.use('/recurrent-profiles', validateApiKey,       checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/recurrentprofiles'));
 
+// Ruta de prueba protegida
 app.use('/test', require('./src/routes/testRoutes'));
+
+// Rutas públicas para webhooks
 app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
 app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 
-// Ruta de prueba básica para comprobar despliegue
-app.get('/test', (req, res) => {
-  res.status(200).send('Ruta de prueba funcionando');
-});
-
+// Middleware para rutas no encontradas
 app.use(notFoundHandler);
+
+// Middleware de gestión de errores centralizada
 app.use(errorHandler);
 
+// Inicio del servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Pasarela escuchando en puerto ${PORT}`);
