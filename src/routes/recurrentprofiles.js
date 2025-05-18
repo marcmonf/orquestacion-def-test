@@ -1,4 +1,3 @@
-console.log('>>> recurrentprofiles.js cargado correctamente');
 // src/routes/recurrentprofiles.js
 const express = require('express');
 const router = express.Router();
@@ -7,6 +6,9 @@ const logger = require('../utils/logger');
 
 // GET /recurrent-profiles
 router.get('/', async (req, res) => {
+  console.log('>>> Entrando en GET /recurrent-profiles');
+  logger.info('>>> Entrando en GET /recurrent-profiles');
+
   try {
     const { merchantId, token, recurrenceId } = req.query;
     const query = {};
