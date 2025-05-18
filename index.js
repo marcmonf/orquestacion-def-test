@@ -66,7 +66,7 @@ app.use('/transactions',     validateApiKey,       checkRole(['admin', 'merchant
 app.use('/tokens',           validateTokenApiKey,  checkRole(['admin']),             rateLimiterTokens,   require('./src/tokens/tokenRoutes'));
 app.use('/analytics',        validateApiKey,       checkRole(['admin', 'analyst']),  rateLimiter,         require('./src/routes/analytics'));
 app.use('/merchants',        validateApiKey,       checkRole(['admin']),             rateLimiter,         require('./src/routes/merchantRoutes'));
-app.use('/recurrent-profiles', validateApiKey,     checkRole(['admin', 'merchant']), rateLimiter,         require('./src/routes/recurrentprofiles')); // ✅ NUEVA RUTA
+app.use('/recurrent-profiles', validateApiKey, checkRole(['admin', 'merchant']), rateLimiter, require('./src/routes/recurrentprofiles')); // ✅ NUEVA RUTA
 
 // Ruta de prueba
 app.use('/test', require('./src/routes/testRoutes'));
