@@ -131,7 +131,20 @@ const transactionSchema = Joi.object({
       'any.required': 'transaction.invalid.token.required'
     }),
     otherwise: Joi.optional()
-  })
+  }),
+
+  phone: Joi.string()
+    .pattern(/^\+?\d{8,15}$/)
+    .when('method', {
+      is: 'mbway',
+      then: Joi.required().messages({
+        'any.required': 'transaction.invalid.phone.required'
+      }),
+      otherwise: Joi.optional()
+    })
+    .messages({
+      'string.pattern.base': 'transaction.invalid.phone'
+    })
 });
 
 module.exports = transactionSchema;
