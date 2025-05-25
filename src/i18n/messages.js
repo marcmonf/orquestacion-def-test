@@ -272,6 +272,5 @@ module.exports = {
     // Saúde
     'health.ok': 'API operacional'
   }
-}
 
 };
