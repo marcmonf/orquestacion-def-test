@@ -59,6 +59,10 @@ module.exports = {
     'transaction.invalid.cvv.required': 'CVV is required for CIT transactions.',
     'recurrentProfiles.fetch.error': 'Error fetching recurrent profiles.',
 
+    // Others
+    'transaction.invalid.phone': 'The phone number is invalid.',
+    'transaction.invalid.phone.required': 'The phone number is required for MB WAY.'
+
     // Health
     'health.ok': 'API operational'
   },
@@ -122,6 +126,11 @@ module.exports = {
     'transaction.invalid.cvv': 'El CVV debe tener 3 o 4 dígitos.',
     'transaction.invalid.cvv.required': 'El CVV es obligatorio para transacciones CIT.',
     'recurrentProfiles.fetch.error': 'Error al obtener perfiles recurrentes.',
+   
+    // ...otras claves
+    'transaction.invalid.phone': 'El número de teléfono es inválido.',
+    'transaction.invalid.phone.required': 'El número de teléfono es obligatorio para MB WAY.'
+
 
     // Health
     'health.ok': 'API operativa'
@@ -186,6 +195,10 @@ module.exports = {
     'transaction.invalid.cvv': 'Le CVV doit comporter 3 ou 4 chiffres.',
     'transaction.invalid.cvv.required': 'Le CVV est requis pour les transactions CIT.',
     'recurrentProfiles.fetch.error': 'Erreur lors de la récupération des profils récurrents.',
+
+    // autres
+    'transaction.invalid.phone': 'Le numéro de téléphone est invalide.',
+    'transaction.invalid.phone.required': 'Le numéro de téléphone est requis pour MB WAY.'
 
     // Health
     'health.ok': 'API opérationnelle'
