@@ -9,6 +9,7 @@ const { createTokenForCard } = require('../services/tokenService');
 const RecurrentProfile = require('../models/RecurrentProfile');
 const mbwayConnector = require('../channels/apms/hub/connectors/mbwayConnector');
 const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
+const { initiatePayment: initiatePixPayment } = require('../channels/apms/hub/connectors/pixConnector');
 
 // GET /transactions
 const getAllTransactions = async (req, res) => {
@@ -148,6 +149,16 @@ const createTransaction = async (req, res) => {
       sanitizedValue.timestamp = bizumResult.timestamp;
     }
 
+    if (value.method === 'pix') {
+      const pixResult = await initiatePixPayment(value);
+      sanitizedValue.status = pixResult.status;
+      sanitizedValue.processor = pixResult.processor;
+      sanitizedValue.transactionId = pixResult.transactionId;
+      sanitizedValue.timestamp = pixResult.timestamp;
+      sanitizedValue.qrCodePayload = pixResult.qrCodePayload;
+      sanitizedValue.paymentUrl = pixResult.paymentUrl;
+    }
+
     const newTransaction = new Transaction({
       ...sanitizedValue,
       paymentId: value.paymentId || uuidv4(),
@@ -201,6 +212,7 @@ const createTransaction = async (req, res) => {
     });
   }
 };
+
 
 
 
