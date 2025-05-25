@@ -1,6 +1,6 @@
 // src/middleware/language.js
 
-const SUPPORTED_LANGUAGES = ['en', 'es', 'fr'];
+const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'pt'];
 
 const detectLanguage = (req, res, next) => {
   const headerLang = req.headers['accept-language'];
