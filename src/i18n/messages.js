@@ -208,7 +208,8 @@ module.exports = {
     // Health
     'health.ok': 'API opérationnelle'
   }
-    pt: {
+    // ✅ CORREGIDO: coma antes de `pt`
+  pt: {
     // Geral
     'error.internal': 'Erro interno no servidor.',
     'error.unexpected': 'Ocorreu um erro inesperado no servidor.',
@@ -243,13 +244,13 @@ module.exports = {
     'transaction.updated': 'Transação atualizada com sucesso.',
     'transaction.deleted': 'Transação excluída com sucesso.',
     'transaction.validation': 'Erro de validação.',
-      'transaction.fetch.error': 'Erro ao obter transações.',
+    'transaction.fetch.error': 'Erro ao obter transações.',
     'transaction.create.error': 'Erro ao criar a transação.',
     'transaction.update.error': 'Erro ao atualizar a transação.',
     'transaction.delete.error': 'Erro ao excluir a transação.',
     'transaction.analytics.volume.error': 'Erro ao calcular o volume de transações.',
     'transaction.analytics.approvalRate.error': 'Erro ao calcular a taxa de aprovação.',
-     'transaction.analytics.averageMsc.error': 'Erro ao calcular o MSC médio.',
+    'transaction.analytics.averageMsc.error': 'Erro ao calcular o MSC médio.',
     'transaction.analytics.summary.error': 'Erro ao gerar o resumo das transações.',
     'transaction.invalid.amount': 'O valor deve ser um número positivo.',
     'transaction.invalid.currency': 'A moeda deve conter 3 letras.',
@@ -276,6 +277,7 @@ module.exports = {
 
     // Saúde
     'health.ok': 'API operacional'
+  }
 }
 
 };
