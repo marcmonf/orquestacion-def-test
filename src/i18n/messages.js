@@ -62,6 +62,9 @@ module.exports = {
     // Others
     'transaction.invalid.phone': 'The phone number is invalid.',
     'transaction.invalid.phone.required': 'The phone number is required for MB WAY.',
+    'transaction.invalid.phone.mbway.required': 'The phone number is required for MB WAY.',
+    'transaction.invalid.phone.bizum.required': 'The phone number is required for Bizum.',
+
 
     // Health
     'health.ok': 'API operational'
@@ -130,6 +133,9 @@ module.exports = {
     // ...otras claves
     'transaction.invalid.phone': 'El número de teléfono es inválido.',
     'transaction.invalid.phone.required': 'El número de teléfono es obligatorio para MB WAY.',
+    'transaction.invalid.phone.mbway.required': 'El número de teléfono es obligatorio para MB WAY.',
+    'transaction.invalid.phone.bizum.required': 'El número de teléfono es obligatorio para Bizum.',
+
 
 
     // Health
@@ -199,6 +205,9 @@ module.exports = {
     // autres
     'transaction.invalid.phone': 'Le numéro de téléphone est invalide.',
     'transaction.invalid.phone.required': 'Le numéro de téléphone est requis pour MB WAY.',
+    'transaction.invalid.phone.mbway.required': 'Le numéro de téléphone est requis pour MB WAY.',
+    'transaction.invalid.phone.bizum.required': 'Le numéro de téléphone est requis pour Bizum.',
+
 
     // Health
     'health.ok': 'API opérationnelle'
