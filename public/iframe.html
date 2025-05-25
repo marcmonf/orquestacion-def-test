@@ -54,12 +54,14 @@
   </form>
 
   <script>
-    const apiUrl = 'https://orquestacion-def-test.onrender.com/tokens';
+    const apiKey = 'your-api-key-here'; // Sustituir con tu API key real
+    const tokenUrl = 'https://orquestacion-def-test.onrender.com/tokens';
+    const transactionUrl = 'https://orquestacion-def-test.onrender.com/transactions';
 
     document.getElementById('card-form').addEventListener('submit', async function (e) {
       e.preventDefault();
 
-      const data = {
+      const cardData = {
         cardholderName: document.getElementById('cardholderName').value,
         cardNumber: document.getElementById('cardNumber').value,
         expiryMonth: document.getElementById('expiryMonth').value,
@@ -68,25 +70,56 @@
       };
 
       try {
-        const response = await fetch(apiUrl, {
+        const tokenResponse = await fetch(tokenUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-api-key': 'your-api-key-here'
+            'x-api-key': apiKey
           },
-          body: JSON.stringify(data)
+          body: JSON.stringify(cardData)
         });
 
-        const result = await response.json();
+        const tokenResult = await tokenResponse.json();
 
-        if (result.success && result.token) {
-          window.parent.postMessage({ token: result.token }, '*');
+        if (tokenResult.success && tokenResult.token) {
+          // Crear la transacción después de tokenizar
+          const transactionData = {
+            paymentId: `iframe-${Date.now()}`,
+            amount: 1000, // 💰 Monto en la unidad más pequeña (por ejemplo, centavos)
+            currency: 'EUR',
+            method: 'card',
+            status: 'approved',
+            merchantId: 'demo-merchant',
+            cardholderName: cardData.cardholderName,
+            expiryMonth: cardData.expiryMonth,
+            expiryYear: cardData.expiryYear,
+            transactionType: 'CIT',
+            token: tokenResult.token
+          };
+
+          const txResponse = await fetch(transactionUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey
+            },
+            body: JSON.stringify(transactionData)
+          });
+
+          const txResult = await txResponse.json();
+
+          if (txResult.success) {
+            window.parent.postMessage({ transaction: txResult.transaction }, '*');
+            alert('Transaction completed successfully!');
+          } else {
+            alert(txResult.message || 'Transaction failed.');
+          }
         } else {
-          alert(result.message || 'Tokenization failed.');
+          alert(tokenResult.message || 'Tokenization failed.');
         }
       } catch (err) {
-        console.error('Error tokenizing:', err);
-        alert('Tokenization failed.');
+        console.error('Error in payment flow:', err);
+        alert('Something went wrong.');
       }
     });
   </script>
