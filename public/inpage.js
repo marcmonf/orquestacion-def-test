@@ -1,4 +1,4 @@
-const apiUrl = '/iframe';
+const apiUrl = '/iframe-process';
 
 document.getElementById('card-form').addEventListener('submit', async function (e) {
   e.preventDefault();
