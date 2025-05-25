@@ -136,7 +136,7 @@ const transactionSchema = Joi.object({
   phone: Joi.string()
     .pattern(/^\+?\d{8,15}$/)
     .when('method', {
-      is: 'mbway',
+      is: Joi.valid('mbway', 'bizum'),
       then: Joi.required().messages({
         'any.required': 'transaction.invalid.phone.required'
       }),
