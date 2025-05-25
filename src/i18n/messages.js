@@ -7,16 +7,13 @@ module.exports = {
     'error.rateLimit': 'Too many requests from this IP. Please try again later.',
     'error.notFound': 'Route not found.',
     'error.insufficientPermissions': 'Insufficient permissions for this resource.',
-
     // Rate Limiting
     'rateLimit.tokens': 'Too many token requests. Please try again later.',
     'rateLimit.webhooks': 'Too many incoming webhook requests. Please try again later.',
-
     // Tokens
     'token.created': 'Card successfully tokenized.',
     'token.not.found': 'Token not found.',
     'token.error': 'An error occurred while tokenizing the card.',
-
     // Token validation
     'token.invalid.cardNumber': 'Invalid card number.',
     'token.invalid.cvv': 'CVV must be 3 or 4 digits.',
@@ -27,7 +24,6 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName must have at least 2 characters.',
     'token.invalid.cardholderName.tooLong': 'cardholderName must not exceed 64 characters.',
     'token.invalid.cardNumberOrCvv': 'Card number and CVV do not match expected format for the detected card scheme.',
-
     // Transactions
     'transaction.created': 'Transaction successfully created.',
     'transaction.not.found': 'Transaction not found.',
@@ -58,13 +54,11 @@ module.exports = {
     'transaction.invalid.cvv': 'CVV must be 3 or 4 digits.',
     'transaction.invalid.cvv.required': 'CVV is required for CIT transactions.',
     'recurrentProfiles.fetch.error': 'Error fetching recurrent profiles.',
-
     // Others
     'transaction.invalid.phone': 'The phone number is invalid.',
     'transaction.invalid.phone.mbway.required': 'The phone number is required for MB WAY.',
     'transaction.invalid.phone.bizum.required': 'The phone number is required for Bizum.',
     'transaction.invalid.currency.pix.required': 'Pix payments require BRL as the currency.',
-
     // Health
     'health.ok': 'API operational'
   },
