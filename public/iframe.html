@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Secure Payment iFrame</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Secure Card Entry</title>
   <style>
     body {
       font-family: sans-serif;
@@ -15,7 +15,7 @@
       margin-top: 0.5rem;
       font-weight: 600;
     }
-    input {
+    input, select {
       width: 100%;
       padding: 0.4rem;
       margin-top: 0.2rem;
@@ -50,103 +50,55 @@
     <label for="cvv">CVV</label>
     <input type="text" id="cvv" maxlength="4" required />
 
-    <button type="submit">Pay</button>
+    <label for="amount">Amount</label>
+    <input type="number" id="amount" step="0.01" required />
+
+    <label for="currency">Currency</label>
+    <select id="currency" required>
+      <option value="">-- Select --</option>
+      <option value="EUR">EUR</option>
+      <option value="USD">USD</option>
+      <option value="BRL">BRL</option>
+    </select>
+
+    <button type="submit">Pay Securely</button>
   </form>
 
   <script>
-    const queryParams = new URLSearchParams(window.location.search);
-    const amount = queryParams.get('amount');
-    const currency = queryParams.get('currency');
-    const merchantId = queryParams.get('merchantId');
-    const lang = queryParams.get('lang') || 'en';
-
-    const messages = {
-      en: {
-        tokenFailed: 'Tokenization failed.',
-        transactionFailed: 'Transaction failed.',
-        transactionSuccess: 'Payment successful!'
-      },
-      es: {
-        tokenFailed: 'Falló la tokenización.',
-        transactionFailed: 'La transacción ha fallado.',
-        transactionSuccess: '¡Pago realizado con éxito!'
-      },
-      fr: {
-        tokenFailed: 'Échec de la tokenisation.',
-        transactionFailed: 'Échec de la transaction.',
-        transactionSuccess: 'Paiement réussi !'
-      },
-      pt: {
-        tokenFailed: 'Tokenização falhou.',
-        transactionFailed: 'Falha na transação.',
-        transactionSuccess: 'Pagamento realizado com sucesso!'
-      }
-    };
-
-    const apiKey = 'your-api-key-here'; // ⛔ Sustituye por la API Key real
+    const apiUrl = '/iframe';
 
     document.getElementById('card-form').addEventListener('submit', async function (e) {
       e.preventDefault();
 
-      const cardData = {
+      const data = {
         cardholderName: document.getElementById('cardholderName').value,
         cardNumber: document.getElementById('cardNumber').value,
         expiryMonth: document.getElementById('expiryMonth').value,
         expiryYear: document.getElementById('expiryYear').value,
-        cvv: document.getElementById('cvv').value
+        cvv: document.getElementById('cvv').value,
+        amount: parseFloat(document.getElementById('amount').value),
+        currency: document.getElementById('currency').value
       };
 
       try {
-        const tokenRes = await fetch('https://orquestacion-def-test.onrender.com/tokens', {
+        const response = await fetch(apiUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'accept-language': lang
-          },
-          body: JSON.stringify(cardData)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
         });
 
-        const tokenResult = await tokenRes.json();
+        const result = await response.json();
 
-        if (!tokenResult.success || !tokenResult.token) {
-          alert(messages[lang]?.tokenFailed || messages.en.tokenFailed);
-          return;
-        }
-
-        const txPayload = {
-          amount: parseFloat(amount),
-          currency: currency,
-          merchantId: merchantId,
-          method: 'card',
-          status: 'approved', // Simulado, real sería gestionado en backend
-          cardholderName: cardData.cardholderName,
-          expiryMonth: cardData.expiryMonth,
-          expiryYear: cardData.expiryYear,
-          token: tokenResult.token,
-          transactionType: 'CIT'
-        };
-
-        const txRes = await fetch('https://orquestacion-def-test.onrender.com/transactions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'accept-language': lang
-          },
-          body: JSON.stringify(txPayload)
-        });
-
-        const txResult = await txRes.json();
-
-        if (txResult.success) {
-          alert(messages[lang]?.transactionSuccess || messages.en.transactionSuccess);
+        if (result.success && result.transaction) {
+          alert('✅ Payment Successful!\nTransaction ID: ' + result.transaction._id);
+          window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
         } else {
-          alert(messages[lang]?.transactionFailed || messages.en.transactionFailed);
+          alert(result.message || 'Payment failed.');
+          window.parent.postMessage({ status: 'error', message: result.message }, '*');
         }
       } catch (err) {
-        console.error(err);
-        alert(messages[lang]?.transactionFailed || messages.en.transactionFailed);
+        console.error('Error submitting form:', err);
+        alert('Payment failed due to technical error.');
       }
     });
   </script>
