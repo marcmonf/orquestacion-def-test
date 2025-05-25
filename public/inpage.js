@@ -10,7 +10,8 @@ document.getElementById('card-form').addEventListener('submit', async function (
     expiryYear: document.getElementById('expiryYear').value,
     cvv: document.getElementById('cvv').value,
     amount: parseFloat(document.getElementById('amount').value),
-    currency: document.getElementById('currency').value
+    currency: document.getElementById('currency').value,
+    method: 'card' 
   };
 
   try {
