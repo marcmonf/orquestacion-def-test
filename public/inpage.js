@@ -13,9 +13,10 @@ document.getElementById('card-form').addEventListener('submit', async function (
     cvv: document.getElementById('cvv').value,
     amount: parseFloat(document.getElementById('amount').value),
     currency: document.getElementById('currency').value,
-    merchantId: 'demo-merchant', // <- esta coma FALTABA si estaba mal antes
+    merchantId: 'demo-merchant',
     method: 'card',
-    status: 'approved'
+    status: 'approved',
+    transactionType: 'CIT' // ✅ campo obligatorio que faltaba
   };
 
   try {
