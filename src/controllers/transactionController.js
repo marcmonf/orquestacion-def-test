@@ -78,6 +78,7 @@ const createTransaction = async (req, res) => {
 
     let recurrenceId = value.recurrenceId || null;
     let token = value.token || null;
+    let qrCodeImage = null;
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
@@ -157,6 +158,7 @@ const createTransaction = async (req, res) => {
       sanitizedValue.timestamp = pixResult.timestamp;
       sanitizedValue.qrCodePayload = pixResult.qrCodePayload;
       sanitizedValue.paymentUrl = pixResult.paymentUrl;
+      qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(pixResult.qrCodePayload)}`;
     }
 
     const newTransaction = new Transaction({
@@ -194,7 +196,8 @@ const createTransaction = async (req, res) => {
       message: res.getMessage('transaction.created'),
       transaction: newTransaction,
       recurrenceId,
-      token
+      token,
+      qrCodeImage
     });
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
