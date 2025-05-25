@@ -133,17 +133,26 @@ const transactionSchema = Joi.object({
     otherwise: Joi.optional()
   }),
 
-  phone: Joi.string()
-    .pattern(/^\+?\d{8,15}$/)
-    .when('method', {
-      is: Joi.valid('mbway', 'bizum'),
-      then: Joi.required().messages({
-        'any.required': 'transaction.invalid.phone.required'
-      }),
-      otherwise: Joi.optional()
-    })
-    .messages({
-      'string.pattern.base': 'transaction.invalid.phone'
+  phone: Joi.alternatives()
+    .conditional(Joi.object({ method: Joi.valid('mbway') }).unknown(), {
+      then: Joi.string()
+        .pattern(/^\+?\d{8,15}$/)
+        .required()
+        .messages({
+          'string.pattern.base': 'transaction.invalid.phone',
+          'any.required': 'transaction.invalid.phone.mbway.required'
+        }),
+      otherwise: Joi.alternatives()
+        .conditional(Joi.object({ method: Joi.valid('bizum') }).unknown(), {
+          then: Joi.string()
+            .pattern(/^\+?\d{8,15}$/)
+            .required()
+            .messages({
+              'string.pattern.base': 'transaction.invalid.phone',
+              'any.required': 'transaction.invalid.phone.bizum.required'
+            }),
+          otherwise: Joi.string().optional()
+        })
     })
 });
 
