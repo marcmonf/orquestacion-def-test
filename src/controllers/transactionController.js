@@ -8,6 +8,7 @@ const transactionSchema = require('../validators/transactionValidator');
 const { createTokenForCard } = require('../services/tokenService');
 const RecurrentProfile = require('../models/RecurrentProfile');
 const mbwayConnector = require('../channels/apms/hub/connectors/mbwayConnector');
+const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
 
 // GET /transactions
 const getAllTransactions = async (req, res) => {
@@ -138,6 +139,15 @@ const createTransaction = async (req, res) => {
       sanitizedValue.timestamp = mbwayResult.timestamp;
     }
 
+    if (value.method === 'bizum') {
+      const bizumResult = await initiateBizumPayment(value);
+      sanitizedValue.status = bizumResult.status;
+      sanitizedValue.processor = bizumResult.processor;
+      sanitizedValue.transactionId = bizumResult.transactionId;
+      sanitizedValue.authCode = bizumResult.authCode;
+      sanitizedValue.timestamp = bizumResult.timestamp;
+    }
+
     const newTransaction = new Transaction({
       ...sanitizedValue,
       paymentId: value.paymentId || uuidv4(),
@@ -191,6 +201,7 @@ const createTransaction = async (req, res) => {
     });
   }
 };
+
 
 
 // GET /transactions/:paymentId
