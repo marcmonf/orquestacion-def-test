@@ -208,4 +208,74 @@ module.exports = {
     // Health
     'health.ok': 'API opérationnelle'
   }
+    pt: {
+    // Geral
+    'error.internal': 'Erro interno no servidor.',
+    'error.unexpected': 'Ocorreu um erro inesperado no servidor.',
+    'error.invalidApiKey': 'Chave API inválida ou ausente.',
+    'error.rateLimit': 'Muitas solicitações deste IP. Tente novamente mais tarde.',
+    'error.notFound': 'Rota não encontrada.',
+    'error.insufficientPermissions': 'Permissões insuficientes para acessar este recurso.',
+
+    // Rate Limiting
+    'rateLimit.tokens': 'Muitas solicitações de token. Tente novamente mais tarde.',
+    'rateLimit.webhooks': 'Muitas chamadas recebidas para o endpoint de webhooks. Tente novamente mais tarde.',
+
+    // Tokens
+    'token.created': 'Cartão tokenizado com sucesso.',
+    'token.not.found': 'Token não encontrado.',
+    'token.error': 'Ocorreu um erro ao tokenizar o cartão.',
+
+    // Validação de Token
+    'token.invalid.cardNumber': 'Número de cartão inválido.',
+    'token.invalid.cvv': 'O CVV deve conter 3 ou 4 dígitos.',
+    'token.invalid.expiryMonth': 'expiryMonth deve estar entre 01 e 12.',
+    'token.invalid.expiryYear': 'expiryYear deve conter 4 dígitos.',
+    'token.invalid.expiryYear.tooLow': 'expiryYear não pode estar no passado.',
+    'token.invalid.cardholderName.required': 'cardholderName é obrigatório.',
+    'token.invalid.cardholderName.tooShort': 'cardholderName deve ter pelo menos 2 caracteres.',
+    'token.invalid.cardholderName.tooLong': 'cardholderName não deve ultrapassar 64 caracteres.',
+    'token.invalid.cardNumberOrCvv': 'O número do cartão e o CVV não correspondem ao formato esperado.',
+
+    // Transações
+    'transaction.created': 'Transação criada com sucesso.',
+    'transaction.not.found': 'Transação não encontrada.',
+    'transaction.updated': 'Transação atualizada com sucesso.',
+    'transaction.deleted': 'Transação excluída com sucesso.',
+    'transaction.validation': 'Erro de validação.',
+      'transaction.fetch.error': 'Erro ao obter transações.',
+    'transaction.create.error': 'Erro ao criar a transação.',
+    'transaction.update.error': 'Erro ao atualizar a transação.',
+    'transaction.delete.error': 'Erro ao excluir a transação.',
+    'transaction.analytics.volume.error': 'Erro ao calcular o volume de transações.',
+    'transaction.analytics.approvalRate.error': 'Erro ao calcular a taxa de aprovação.',
+     'transaction.analytics.averageMsc.error': 'Erro ao calcular o MSC médio.',
+    'transaction.analytics.summary.error': 'Erro ao gerar o resumo das transações.',
+    'transaction.invalid.amount': 'O valor deve ser um número positivo.',
+    'transaction.invalid.currency': 'A moeda deve conter 3 letras.',
+    'transaction.invalid.method': 'O método de pagamento deve ser uma string válida.',
+    'transaction.invalid.status': 'O status deve ser: approved, declined ou pending.',
+    'transaction.invalid.merchantId': 'O ID do comerciante deve ser uma string válida.',
+    'transaction.invalid.cardholderName': 'O nome do titular deve ter entre 2 e 64 caracteres.',
+    'transaction.invalid.expiryMonth': 'O mês de validade deve estar entre 01 e 12.',
+    'transaction.invalid.expiryYear': 'O ano de validade deve conter 4 dígitos.',
+    'transaction.invalid.expiryYear.tooLow': 'O ano de validade não pode ser inferior ao atual.',
+    'transaction.invalid.recurrenceId.required': 'recurrenceId é obrigatório para este tipo de transação.',
+    'transaction.invalid.mit.noMatch': 'Nenhuma CIT anterior encontrada com este recurrenceId e token.',
+    'transaction.invalid.cardNumber': 'O número do cartão deve conter entre 13 e 19 dígitos.',
+    'transaction.invalid.cardNumber.required': 'O número do cartão é obrigatório para transações CIT.',
+    'transaction.invalid.cvv': 'O CVV deve conter 3 ou 4 dígitos.',
+    'transaction.invalid.cvv.required': 'O CVV é obrigatório para transações CIT.',
+    'recurrentProfiles.fetch.error': 'Erro ao obter perfis recorrentes.',
+
+    // Específicos APM
+    'transaction.invalid.phone': 'O número de telefone é inválido.',
+    'transaction.invalid.phone.mbway.required': 'O número de telefone é obrigatório para MB WAY.',
+    'transaction.invalid.phone.bizum.required': 'O número de telefone é obrigatório para Bizum.',
+    'transaction.invalid.currency.pix.required': 'Pagamentos com Pix requerem a moeda BRL.',
+
+    // Saúde
+    'health.ok': 'API operacional'
+}
+
 };
