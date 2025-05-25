@@ -19,6 +19,8 @@ router.post('/', async (req, res) => {
     });
   }
 
+  console.log('✅ Recibida petición desde iFrame:', req.body);
+
   try {
     const response = await axios.post(`${ORQUESTADOR_URL}/transactions`, req.body, {
       headers: {
@@ -27,6 +29,7 @@ router.post('/', async (req, res) => {
       }
     });
 
+    console.log('✅ Transacción creada correctamente:', response.data);
     res.status(response.status).json(response.data);
   } catch (error) {
     console.error('❌ Error al reenviar desde /iframe-process:', error.response?.data || error.message);
