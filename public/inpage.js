@@ -13,6 +13,8 @@ document.getElementById('card-form').addEventListener('submit', async function (
     currency: document.getElementById('currency').value,
     method: 'card',
     status: 'approved'
+    merchantId: 'demo-merchant',
+    transactionType: 'CIT'
   };
 
   try {
