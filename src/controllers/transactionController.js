@@ -7,6 +7,7 @@ const auditLogger = require('../logs/auditLogger');
 const transactionSchema = require('../validators/transactionValidator');
 const { createTokenForCard } = require('../services/tokenService');
 const RecurrentProfile = require('../models/RecurrentProfile');
+const mbwayConnector = require('../channels/apms/hub/connectors/mbwayConnector');
 
 // GET /transactions
 const getAllTransactions = async (req, res) => {
@@ -61,7 +62,6 @@ const createTransaction = async (req, res) => {
   }
 
   try {
-    // Verificar idempotencia por paymentId existente
     const existingTx = await Transaction.findOne({ paymentId: value.paymentId });
     if (existingTx) {
       logger.info('Transacción repetida detectada (idempotencia)', { paymentId: value.paymentId });
@@ -129,6 +129,15 @@ const createTransaction = async (req, res) => {
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
 
+    if (value.method === 'mbway') {
+      const mbwayResult = await mbwayConnector.process(value);
+      sanitizedValue.status = mbwayResult.status;
+      sanitizedValue.processor = mbwayResult.processor;
+      sanitizedValue.transactionId = mbwayResult.transactionId;
+      sanitizedValue.authCode = mbwayResult.authCode;
+      sanitizedValue.timestamp = mbwayResult.timestamp;
+    }
+
     const newTransaction = new Transaction({
       ...sanitizedValue,
       paymentId: value.paymentId || uuidv4(),
@@ -182,6 +191,7 @@ const createTransaction = async (req, res) => {
     });
   }
 };
+
 
 // GET /transactions/:paymentId
 const getTransactionById = async (req, res) => {
