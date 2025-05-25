@@ -140,27 +140,31 @@ const transactionSchema = Joi.object({
     otherwise: Joi.optional()
   }),
 
-  phone: Joi.alternatives()
-    .conditional(Joi.object({ method: Joi.valid('mbway') }).unknown(), {
+  phone: Joi.alternatives().conditional('method', [
+    {
+      is: 'mbway',
       then: Joi.string()
         .pattern(/^\+?\d{8,15}$/)
         .required()
         .messages({
           'string.pattern.base': 'transaction.invalid.phone',
           'any.required': 'transaction.invalid.phone.mbway.required'
-        }),
-      otherwise: Joi.alternatives()
-        .conditional(Joi.object({ method: Joi.valid('bizum') }).unknown(), {
-          then: Joi.string()
-            .pattern(/^\+?\d{8,15}$/)
-            .required()
-            .messages({
-              'string.pattern.base': 'transaction.invalid.phone',
-              'any.required': 'transaction.invalid.phone.bizum.required'
-            }),
-          otherwise: Joi.string().optional()
         })
-    })
+    },
+    {
+      is: 'bizum',
+      then: Joi.string()
+        .pattern(/^\+?\d{8,15}$/)
+        .required()
+        .messages({
+          'string.pattern.base': 'transaction.invalid.phone',
+          'any.required': 'transaction.invalid.phone.bizum.required'
+        })
+    },
+    {
+      otherwise: Joi.forbidden()
+    }
+  ])
 });
 
 module.exports = transactionSchema;
