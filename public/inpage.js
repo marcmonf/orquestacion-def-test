@@ -1,3 +1,5 @@
+// public/inpage.js
+
 const apiUrl = '/iframe-process';
 
 document.getElementById('card-form').addEventListener('submit', async function (e) {
@@ -11,10 +13,9 @@ document.getElementById('card-form').addEventListener('submit', async function (
     cvv: document.getElementById('cvv').value,
     amount: parseFloat(document.getElementById('amount').value),
     currency: document.getElementById('currency').value,
+    merchantId: 'demo-merchant', // <- esta coma FALTABA si estaba mal antes
     method: 'card',
     status: 'approved'
-    merchantId: 'demo-merchant',
-    transactionType: 'CIT'
   };
 
   try {
