@@ -207,9 +207,9 @@ module.exports = {
 
     // Health
     'health.ok': 'API opérationnelle'
-  }
-    // ✅ CORREGIDO: coma antes de `pt`
-  pt: {
+  },
+    
+    pt: {
     // Geral
     'error.internal': 'Erro interno no servidor.',
     'error.unexpected': 'Ocorreu um erro inesperado no servidor.',
