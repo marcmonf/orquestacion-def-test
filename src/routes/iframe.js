@@ -4,7 +4,7 @@ const router = express.Router();
 const axios = require('axios');
 const getMessage = require('../i18n/getMessage');
 
-router.post('/iframe-process', async (req, res) => {
+router.post('/', async (req, res) => {
   const langHeader = req.headers['accept-language'];
   const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
 
