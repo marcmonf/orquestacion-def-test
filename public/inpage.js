@@ -11,7 +11,8 @@ document.getElementById('card-form').addEventListener('submit', async function (
     cvv: document.getElementById('cvv').value,
     amount: parseFloat(document.getElementById('amount').value),
     currency: document.getElementById('currency').value,
-    method: 'card' 
+    method: 'card',
+    status: 'approved'
   };
 
   try {
