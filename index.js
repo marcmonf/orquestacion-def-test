@@ -77,6 +77,9 @@ app.get('/iframe', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
 });
 
+// ✅ Ruta pública para iFrame seguro
+app.use('/iframe-process', require('./src/routes/iframe'));
+
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
 
