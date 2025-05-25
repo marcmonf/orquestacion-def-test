@@ -19,7 +19,7 @@ router.post('/', async (req, res) => {
     });
   }
 
-  console.log('💬 Payload recibido en /iframe-process:', req.body);
+  console.log('🧾 BODY RECIBIDO DESDE IFRAME:', JSON.stringify(req.body, null, 2));
 
   try {
     const response = await axios.post(`${ORQUESTADOR_URL}/transactions`, req.body, {
