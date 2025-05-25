@@ -4,6 +4,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const path = require('path');
 
 // Middlewares de seguridad
 const helmet = require('helmet');
@@ -69,6 +70,12 @@ app.use(xss());
 app.use(mongoSanitize());
 app.use(hpp());
 app.use(i18nMiddleware);
+
+// Servir contenido estático seguro (iFrame)
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/iframe', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
+});
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
