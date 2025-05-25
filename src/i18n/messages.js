@@ -63,8 +63,7 @@ module.exports = {
     'transaction.invalid.phone': 'The phone number is invalid.',
     'transaction.invalid.phone.mbway.required': 'The phone number is required for MB WAY.',
     'transaction.invalid.phone.bizum.required': 'The phone number is required for Bizum.',
-
-
+    'transaction.invalid.currency.pix.required': 'Pix payments require BRL as the currency.',
 
     // Health
     'health.ok': 'API operational'
@@ -134,9 +133,7 @@ module.exports = {
     'transaction.invalid.phone': 'El número de teléfono es inválido.',
     'transaction.invalid.phone.mbway.required': 'El número de teléfono es obligatorio para MB WAY.',
     'transaction.invalid.phone.bizum.required': 'El número de teléfono es obligatorio para Bizum.',
-
-
-
+    'transaction.invalid.currency.pix.required': 'Los pagos con Pix requieren que la moneda sea BRL.',
 
     // Health
     'health.ok': 'API operativa'
@@ -206,8 +203,7 @@ module.exports = {
     'transaction.invalid.phone': 'Le numéro de téléphone est invalide.',
     'transaction.invalid.phone.mbway.required': 'Le numéro de téléphone est requis pour MB WAY.',
     'transaction.invalid.phone.bizum.required': 'Le numéro de téléphone est requis pour Bizum.',
-
-
+    'transaction.invalid.currency.pix.required': 'Les paiements par Pix nécessitent la devise BRL.',
 
     // Health
     'health.ok': 'API opérationnelle'
