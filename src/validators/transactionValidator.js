@@ -18,6 +18,13 @@ const transactionSchema = Joi.object({
   currency: Joi.string()
     .length(3)
     .required()
+    .when('method', {
+      is: 'pix',
+      then: Joi.valid('BRL').required().messages({
+        'any.only': 'transaction.invalid.currency.pix.required',
+        'any.required': 'transaction.invalid.currency.pix.required'
+      })
+    })
     .messages({
       'string.base': 'transaction.invalid.currency',
       'string.length': 'transaction.invalid.currency',
