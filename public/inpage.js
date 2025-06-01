@@ -1,10 +1,12 @@
 const apiUrl = '/iframe-process';
 
-// Alterna método (abre o cierra el contenido del método seleccionado)
 function toggleMethod(method) {
   const methods = ['card', 'applepay', 'googlepay'];
 
-  const isActive = document.getElementById(`method-${method}`).classList.contains('active');
+  const targetButton = document.getElementById(`method-${method}`);
+  const targetForm = document.getElementById(`${method}-form`);
+
+  const isAlreadyActive = targetButton.classList.contains('active');
 
   // Cierra todos
   methods.forEach(id => {
@@ -12,20 +14,19 @@ function toggleMethod(method) {
     document.getElementById(`${id}-form`).classList.remove('active');
   });
 
-  // Si no estaba activo, lo abrimos
-  if (!isActive) {
-    document.getElementById(`method-${method}`).classList.add('active');
-    document.getElementById(`${method}-form`).classList.add('active');
-  }
+  // Si el que clicamos no estaba activo, lo abrimos
+  if (!isAlreadyActive) {
+    targetButton.classList.add('active');
+    targetForm.classList.add('active');
 
-  // Inicia componentes especiales
-  if (method === 'applepay') initApplePayButton();
-  if (method === 'googlepay') initGooglePayButton();
+    if (method === 'applepay') initApplePayButton();
+    if (method === 'googlepay') initGooglePayButton();
+  }
 }
 
 window.toggleMethod = toggleMethod;
 
-// Enviar formulario de tarjeta
+// Enviar pago con tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
 
