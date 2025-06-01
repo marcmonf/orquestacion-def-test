@@ -3,43 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Secure Payment</title>
+  <title>iFrame Rediseñado</title>
   <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js"></script>
   <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
   <style>
     body {
       font-family: sans-serif;
-      padding: 1rem;
       background-color: #f9f9f9;
+      padding: 1rem;
     }
 
-    .method-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      margin-bottom: 1.5rem;
-    }
-
-    .method-button {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background-color: white;
-      border: 2px solid #ccc;
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
+    .payment-method {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
       cursor: pointer;
-      font-weight: 600;
-      font-size: 1rem;
+      background-color: white;
     }
 
-    .method-button:hover {
+    .payment-method.active {
       border-color: #0066cc;
+      box-shadow: 0 0 5px #0066cc55;
+    }
+
+    .payment-method h3 {
+      margin: 0;
+      font-size: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
     .payment-form {
       display: none;
       margin-top: 1rem;
+    }
+
+    .payment-form.active {
+      display: block;
     }
 
     label {
@@ -52,13 +54,13 @@
       width: 100%;
       padding: 0.4rem;
       margin-top: 0.2rem;
-      margin-bottom: 0.8rem;
       border: 1px solid #ccc;
       border-radius: 4px;
     }
 
     button {
-      padding: 0.5rem;
+      margin-top: 1rem;
+      padding: 0.6rem;
       background-color: #0066cc;
       color: white;
       border: none;
@@ -68,20 +70,17 @@
   </style>
 </head>
 <body>
-  <h2>Selecciona tu método de pago</h2>
+  <h2>Método de pago</h2>
 
-  <div class="method-buttons">
-    <div class="method-button" onclick="showForm('card')">
-      Tarjeta de crédito
-      <span>💳</span>
+  <div id="methods">
+    <div class="payment-method" onclick="selectMethod('card')" id="method-card">
+      <h3>Tarjeta de Crédito <span>💳</span></h3>
     </div>
-    <div class="method-button" onclick="showForm('applepay')">
-      Apple Pay
-      <span>🍎</span>
+    <div class="payment-method" onclick="selectMethod('applepay')" id="method-applepay">
+      <h3>Apple Pay <span>🍎</span></h3>
     </div>
-    <div class="method-button" onclick="showForm('googlepay')">
-      Google Pay
-      <span>🅖</span>
+    <div class="payment-method" onclick="selectMethod('googlepay')" id="method-googlepay">
+      <h3>Google Pay <span>🔎</span></h3>
     </div>
   </div>
 
@@ -91,7 +90,7 @@
     <input type="text" id="cardholderName" required />
 
     <label for="cardNumber">Card Number</label>
-    <input type="text" id="cardNumber" inputmode="numeric" maxlength="19" required />
+    <input type="text" id="cardNumber" maxlength="19" required />
 
     <label for="expiryMonth">Expiry Month (MM)</label>
     <input type="text" id="expiryMonth" maxlength="2" required />
@@ -113,7 +112,7 @@
       <option value="BRL">BRL</option>
     </select>
 
-    <button type="submit">Pay Securely</button>
+    <button type="submit">Pagar</button>
   </form>
 
   <!-- FORMULARIO APPLE PAY -->
