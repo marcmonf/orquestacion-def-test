@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>iFrame Rediseñado</title>
+  <title>Método de pago</title>
   <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js"></script>
   <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
   <style>
@@ -20,11 +20,12 @@
       margin-bottom: 1rem;
       cursor: pointer;
       background-color: white;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
     }
 
     .payment-method.active {
       border-color: #0066cc;
-      box-shadow: 0 0 5px #0066cc55;
+      box-shadow: 0 0 6px rgba(0, 102, 204, 0.3);
     }
 
     .payment-method h3 {
@@ -38,6 +39,8 @@
     .payment-form {
       display: none;
       margin-top: 1rem;
+      border-top: 1px solid #eee;
+      padding-top: 1rem;
     }
 
     .payment-form.active {
@@ -67,6 +70,10 @@
       border-radius: 4px;
       cursor: pointer;
     }
+
+    h2 {
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -74,13 +81,13 @@
 
   <div id="methods">
     <div class="payment-method" onclick="selectMethod('card')" id="method-card">
-      <h3>Tarjeta de Crédito <span>💳</span></h3>
+      <h3>Pago con tarjeta <span>💳</span></h3>
     </div>
     <div class="payment-method" onclick="selectMethod('applepay')" id="method-applepay">
       <h3>Apple Pay <span>🍎</span></h3>
     </div>
     <div class="payment-method" onclick="selectMethod('googlepay')" id="method-googlepay">
-      <h3>Google Pay <span>🔎</span></h3>
+      <h3>Google Pay <span>🅖</span></h3>
     </div>
   </div>
 
