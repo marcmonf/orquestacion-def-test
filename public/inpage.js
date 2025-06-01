@@ -221,3 +221,6 @@ async function onGooglePayButtonClicked() {
     alert('Google Pay failed due to technical error.');
   }
 }
+
+// ✅ Hacer la función accesible desde HTML (onclick)
+window.showForm = showForm;
