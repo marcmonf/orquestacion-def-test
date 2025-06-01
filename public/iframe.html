@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Secure Card Entry</title>
+  <title>Secure Payment</title>
+  <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js"></script>
   <style>
     body {
       font-family: sans-serif;
@@ -31,10 +32,21 @@
       border-radius: 4px;
       cursor: pointer;
     }
+    .payment-form {
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <form id="card-form">
+  <h2>Select Payment Method</h2>
+  <select id="paymentMethod">
+    <option value="card">Card</option>
+    <option value="applepay">Apple Pay</option>
+    <!-- Aquí se añadirán más opciones como Google Pay, Bizum, Pix... -->
+  </select>
+
+  <!-- FORMULARIO TARJETA -->
+  <form id="card-form" class="payment-form">
     <label for="cardholderName">Cardholder Name</label>
     <input type="text" id="cardholderName" required />
 
@@ -63,6 +75,12 @@
 
     <button type="submit">Pay Securely</button>
   </form>
+
+  <!-- FORMULARIO APPLE PAY -->
+  <div id="applepay-form" class="payment-form">
+    <p>Use Apple Pay to complete your purchase:</p>
+    <div id="apple-pay-button"></div>
+  </div>
 
   <script src="inpage.js"></script>
 </body>
