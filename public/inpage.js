@@ -2,87 +2,83 @@
 
 const apiUrl = '/iframe-process';
 
-// Mostrar formulario dinámico según botón pulsado
-function showForm(method) {
-  // Oculta todos los formularios
-  document.querySelectorAll('.payment-form').forEach(form => {
-    form.style.display = 'none';
-  });
+// Mostrar formulario y método activo visualmente
+function selectMethod(method) {
+  document.querySelectorAll('.payment-method').forEach(div => div.classList.remove('active'));
+  document.querySelectorAll('.payment-form').forEach(form => form.classList.remove('active'));
 
-  // Muestra el formulario correspondiente
+  const activeMethod = document.getElementById(`method-${method}`);
   const activeForm = document.getElementById(`${method}-form`);
-  if (activeForm) {
-    activeForm.style.display = 'block';
-  }
 
-  // Inicializa Apple Pay o Google Pay si corresponde
+  if (activeMethod) activeMethod.classList.add('active');
+  if (activeForm) activeForm.classList.add('active');
+
   if (method === 'applepay') {
     initApplePayButton();
-  }
-
-  if (method === 'googlepay') {
+  } else if (method === 'googlepay') {
     initGooglePayButton();
   }
 }
 
-// Ejecutar automáticamente al cargar la página
-document.addEventListener("DOMContentLoaded", () => {
-  // Mostramos por defecto el formulario de tarjeta
-  showForm('card');
-});
+// Hacer la función accesible globalmente
+window.selectMethod = selectMethod;
 
-// Hacer la función accesible desde los botones del HTML
-window.showForm = showForm;
+// Mostrar tarjeta como predeterminado al cargar
+document.addEventListener("DOMContentLoaded", () => {
+  selectMethod('card');
+});
 
 // Lógica para enviar pago con tarjeta
-document.getElementById('card-form').addEventListener('submit', async function (e) {
-  e.preventDefault();
+const cardForm = document.getElementById('card-form');
+if (cardForm) {
+  cardForm.addEventListener('submit', async function (e) {
+    e.preventDefault();
 
-  const data = {
-    cardholderName: document.getElementById('cardholderName').value,
-    cardNumber: document.getElementById('cardNumber').value,
-    expiryMonth: document.getElementById('expiryMonth').value,
-    expiryYear: document.getElementById('expiryYear').value,
-    cvv: document.getElementById('cvv').value,
-    amount: parseFloat(document.getElementById('amount').value),
-    currency: document.getElementById('currency').value,
-    merchantId: 'demo-merchant',
-    method: 'card',
-    status: 'approved',
-    transactionType: 'CIT'
-  };
+    const data = {
+      cardholderName: document.getElementById('cardholderName').value,
+      cardNumber: document.getElementById('cardNumber').value,
+      expiryMonth: document.getElementById('expiryMonth').value,
+      expiryYear: document.getElementById('expiryYear').value,
+      cvv: document.getElementById('cvv').value,
+      amount: parseFloat(document.getElementById('amount').value),
+      currency: document.getElementById('currency').value,
+      merchantId: 'demo-merchant',
+      method: 'card',
+      status: 'approved',
+      transactionType: 'CIT'
+    };
 
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
 
-    const result = await response.json();
+      const result = await response.json();
 
-    if (result.success && result.transaction) {
-      alert('✅ Payment Successful!\nTransaction ID: ' + result.transaction._id);
-      window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
-    } else {
-      alert(result.message || 'Payment failed.');
-      window.parent.postMessage({ status: 'error', message: result.message }, '*');
+      if (result.success && result.transaction) {
+        alert('✅ Payment Successful! Transaction ID: ' + result.transaction._id);
+        window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
+      } else {
+        alert(result.message || 'Payment failed.');
+        window.parent.postMessage({ status: 'error', message: result.message }, '*');
+      }
+    } catch (err) {
+      console.error('Error submitting form:', err);
+      alert('Payment failed due to technical error.');
     }
-  } catch (err) {
-    console.error('Error submitting form:', err);
-    alert('Payment failed due to technical error.');
-  }
-});
+  });
+}
 
-// Inicializar Apple Pay
 function initApplePayButton() {
   if (!window.ApplePaySession || !ApplePaySession.canMakePayments()) {
-    console.warn("Apple Pay no está disponible en este dispositivo.");
+    console.warn("Apple Pay no disponible");
     return;
   }
 
   const container = document.getElementById('apple-pay-button');
-  container.innerHTML = ''; // Limpiar botón previo
+  container.innerHTML = '';
 
   const appleButton = document.createElement('apple-pay-button');
   appleButton.setAttribute('buttonstyle', 'black');
@@ -99,10 +95,7 @@ function startApplePaySession() {
     currencyCode: 'EUR',
     supportedNetworks: ['visa', 'masterCard', 'amex'],
     merchantCapabilities: ['supports3DS'],
-    total: {
-      label: 'Demo Merchant',
-      amount: '99.90'
-    }
+    total: { label: 'Demo Merchant', amount: '99.90' }
   };
 
   const session = new ApplePaySession(3, paymentRequest);
@@ -117,7 +110,7 @@ function startApplePaySession() {
       const merchantSession = await res.json();
       session.completeMerchantValidation(merchantSession);
     } catch (error) {
-      console.error("Error en validación de Apple Pay:", error);
+      console.error("Apple Pay validation failed:", error);
       session.abort();
     }
   };
@@ -140,45 +133,39 @@ function startApplePaySession() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
       const result = await response.json();
 
       if (result.success && result.transaction) {
         session.completePayment(ApplePaySession.STATUS_SUCCESS);
-        alert('✅ Apple Pay Successful!\nTransaction ID: ' + result.transaction._id);
+        alert('✅ Apple Pay Successful!');
         window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
       } else {
         session.completePayment(ApplePaySession.STATUS_FAILURE);
         alert(result.message || 'Apple Pay failed.');
-        window.parent.postMessage({ status: 'error', message: result.message }, '*');
       }
     } catch (err) {
-      console.error('Error procesando Apple Pay:', err);
+      console.error('Apple Pay error:', err);
       session.completePayment(ApplePaySession.STATUS_FAILURE);
-      alert('Apple Pay failed due to technical error.');
+      alert('Apple Pay technical error.');
     }
   };
 
   session.begin();
 }
 
-// Inicializar Google Pay
 function initGooglePayButton() {
-  const paymentsClient = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
 
-  const button = paymentsClient.createButton({
-    onClick: onGooglePayButtonClicked
-  });
-
+  const button = client.createButton({ onClick: onGooglePayButtonClicked });
   const container = document.getElementById('google-pay-button');
   container.innerHTML = '';
   container.appendChild(button);
 }
 
 async function onGooglePayButtonClicked() {
-  const paymentsClient = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
 
-  const paymentRequest = {
+  const request = {
     apiVersion: 2,
     apiVersionMinor: 0,
     allowedPaymentMethods: [{
@@ -201,13 +188,11 @@ async function onGooglePayButtonClicked() {
       currencyCode: 'EUR',
       countryCode: 'ES'
     },
-    merchantInfo: {
-      merchantName: 'Demo Merchant'
-    }
+    merchantInfo: { merchantName: 'Demo Merchant' }
   };
 
   try {
-    const paymentData = await paymentsClient.loadPaymentData(paymentRequest);
+    const paymentData = await client.loadPaymentData(request);
 
     const payload = {
       method: 'googlepay',
@@ -227,14 +212,13 @@ async function onGooglePayButtonClicked() {
     const result = await response.json();
 
     if (result.success && result.transaction) {
-      alert('✅ Google Pay Successful!\nTransaction ID: ' + result.transaction._id);
+      alert('✅ Google Pay Successful!');
       window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
     } else {
       alert(result.message || 'Google Pay failed.');
-      window.parent.postMessage({ status: 'error', message: result.message }, '*');
     }
   } catch (err) {
-    console.error('Error procesando Google Pay:', err);
-    alert('Google Pay failed due to technical error.');
+    console.error('Google Pay error:', err);
+    alert('Google Pay technical error.');
   }
 }
