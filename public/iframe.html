@@ -90,12 +90,15 @@
       width: 100%;
     }
 
-    #apple-pay-button img,
-    #google-pay-button img {
+    .wallet-button {
+      width: 100%;
+      margin: 12px 0;
+    }
+
+    .wallet-button img {
       width: 100%;
       cursor: pointer;
       border-radius: 10px;
-      margin-top: 10px;
     }
   </style>
 </head>
@@ -136,15 +139,13 @@
       </form>
     </div>
 
-    <div id="method-applepay" class="method-header">
-      <img src="/applepay-custom.png" alt="Apple Pay">
+    <div class="wallet-button">
+      <img src="/applepay-custom.png" alt="Apple Pay" onclick="startApplePaySession()" />
     </div>
-    <div id="apple-pay-button" class="method-form show"></div>
 
-    <div id="method-googlepay" class="method-header">
-      <img src="/googlepay-custom.png" alt="Google Pay">
+    <div class="wallet-button">
+      <img src="/googlepay-custom.png" alt="Google Pay" onclick="onGooglePayButtonClicked()" />
     </div>
-    <div id="google-pay-button" class="method-form show"></div>
   </div>
 
   <script src="https://pay.google.com/gp/p/js/pay.js" async></script>
