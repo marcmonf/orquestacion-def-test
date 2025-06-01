@@ -1,26 +1,29 @@
 const apiUrl = '/iframe-process';
 
-// Alterna método de pago: activa visualmente y muestra contenido
-function selectMethod(method) {
+// Alterna método (abre o cierra el contenido del método seleccionado)
+function toggleMethod(method) {
   const methods = ['card', 'applepay', 'googlepay'];
 
+  const isActive = document.getElementById(`method-${method}`).classList.contains('active');
+
+  // Cierra todos
   methods.forEach(id => {
     document.getElementById(`method-${id}`).classList.remove('active');
     document.getElementById(`${id}-form`).classList.remove('active');
   });
 
-  document.getElementById(`method-${method}`).classList.add('active');
-  document.getElementById(`${method}-form`).classList.add('active');
+  // Si no estaba activo, lo abrimos
+  if (!isActive) {
+    document.getElementById(`method-${method}`).classList.add('active');
+    document.getElementById(`${method}-form`).classList.add('active');
+  }
 
+  // Inicia componentes especiales
   if (method === 'applepay') initApplePayButton();
   if (method === 'googlepay') initGooglePayButton();
 }
 
-window.selectMethod = selectMethod;
-
-document.addEventListener('DOMContentLoaded', () => {
-  selectMethod('card');
-});
+window.toggleMethod = toggleMethod;
 
 // Enviar formulario de tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
@@ -165,8 +168,8 @@ async function onGooglePayButtonClicked() {
       tokenizationSpecification: {
         type: 'PAYMENT_GATEWAY',
         parameters: {
-          gateway: 'example',
-          gatewayMerchantId: 'demoMerchantId'
+          gateway: 'stripe',
+          gatewayMerchantId: 'demo_merchant'
         }
       }
     }],
