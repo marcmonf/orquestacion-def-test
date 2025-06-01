@@ -7,26 +7,59 @@
   <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js"></script>
   <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
   <style>
+    :root {
+      --main-color: #0066cc;
+      --border-radius: 10px;
+      --shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
     body {
-      font-family: sans-serif;
+      font-family: 'Segoe UI', sans-serif;
       background-color: #f9f9f9;
       padding: 1rem;
       max-width: 600px;
       margin: auto;
+      color: #333;
+    }
+
+    .header-powered {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      color: #555;
+    }
+
+    .header-powered img {
+      height: 26px;
+      margin-left: 8px;
+      opacity: 0.85;
+    }
+
+    h2 {
+      margin-bottom: 1rem;
+      font-weight: 600;
+      font-size: 1.3rem;
     }
 
     .method-option {
-      border: 2px solid #ccc;
-      border-radius: 8px;
+      border: 2px solid #ddd;
+      border-radius: var(--border-radius);
       padding: 1rem;
-      margin-bottom: 1rem;
-      background-color: #fff;
+      margin-bottom: 0.6rem;
+      background-color: white;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.3s ease;
+    }
+
+    .method-option:hover {
+      border-color: var(--main-color);
+      box-shadow: var(--shadow);
     }
 
     .method-option.active {
-      border-color: #0066cc;
+      border-color: var(--main-color);
       box-shadow: 0 0 6px rgba(0, 102, 204, 0.4);
     }
 
@@ -41,8 +74,11 @@
     .method-content {
       display: none;
       margin-top: 1rem;
-      border-top: 1px solid #eee;
-      padding-top: 1rem;
+      padding: 1rem;
+      border: 1px solid #eee;
+      border-radius: var(--border-radius);
+      background: #fff;
+      box-shadow: var(--shadow);
     }
 
     .method-content.show {
@@ -52,33 +88,45 @@
     label {
       display: block;
       margin-top: 0.5rem;
-      font-weight: 600;
+      font-weight: 500;
+      font-size: 0.9rem;
     }
 
     input, select {
       width: 100%;
-      padding: 0.4rem;
+      padding: 0.45rem;
       margin-top: 0.2rem;
       border: 1px solid #ccc;
-      border-radius: 4px;
+      border-radius: 6px;
+      font-size: 0.95rem;
     }
 
     button {
       margin-top: 1rem;
       padding: 0.6rem;
-      background-color: #0066cc;
+      background-color: var(--main-color);
       color: white;
       border: none;
-      border-radius: 4px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 1rem;
+      width: 100%;
       cursor: pointer;
+      transition: background-color 0.2s ease;
     }
 
-    h2 {
-      margin-bottom: 1rem;
+    button:hover {
+      background-color: #004999;
     }
   </style>
 </head>
 <body>
+
+  <div class="header-powered">
+    Powered by
+    <img src="Logo_Monetiser.png" alt="Monetiser logo" />
+  </div>
+
   <h2>Método de pago</h2>
 
   <!-- Pago con tarjeta -->
