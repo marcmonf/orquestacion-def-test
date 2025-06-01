@@ -12,11 +12,42 @@
       padding: 1rem;
       background-color: #f9f9f9;
     }
+
+    .method-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .method-button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: white;
+      border: 2px solid #ccc;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .method-button:hover {
+      border-color: #0066cc;
+    }
+
+    .payment-form {
+      display: none;
+      margin-top: 1rem;
+    }
+
     label {
       display: block;
       margin-top: 0.5rem;
       font-weight: 600;
     }
+
     input, select {
       width: 100%;
       padding: 0.4rem;
@@ -25,6 +56,7 @@
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+
     button {
       padding: 0.5rem;
       background-color: #0066cc;
@@ -33,18 +65,25 @@
       border-radius: 4px;
       cursor: pointer;
     }
-    .payment-form {
-      display: none;
-    }
   </style>
 </head>
 <body>
-  <h2>Select Payment Method</h2>
-  <select id="paymentMethod">
-    <option value="card">Card</option>
-    <option value="applepay">Apple Pay</option>
-    <option value="googlepay">Google Pay</option>
-  </select>
+  <h2>Selecciona tu método de pago</h2>
+
+  <div class="method-buttons">
+    <div class="method-button" onclick="showForm('card')">
+      Tarjeta de crédito
+      <span>💳</span>
+    </div>
+    <div class="method-button" onclick="showForm('applepay')">
+      Apple Pay
+      <span>🍎</span>
+    </div>
+    <div class="method-button" onclick="showForm('googlepay')">
+      Google Pay
+      <span>🅖</span>
+    </div>
+  </div>
 
   <!-- FORMULARIO TARJETA -->
   <form id="card-form" class="payment-form">
@@ -79,13 +118,13 @@
 
   <!-- FORMULARIO APPLE PAY -->
   <div id="applepay-form" class="payment-form">
-    <p>Use Apple Pay to complete your purchase:</p>
+    <p>Usa Apple Pay para completar tu compra:</p>
     <div id="apple-pay-button"></div>
   </div>
 
   <!-- FORMULARIO GOOGLE PAY -->
   <div id="googlepay-form" class="payment-form">
-    <p>Use Google Pay to complete your purchase:</p>
+    <p>Usa Google Pay para completar tu compra:</p>
     <div id="google-pay-button"></div>
   </div>
 
