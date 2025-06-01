@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Secure Payment</title>
   <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js"></script>
+  <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
   <style>
     body {
       font-family: sans-serif;
@@ -42,7 +43,7 @@
   <select id="paymentMethod">
     <option value="card">Card</option>
     <option value="applepay">Apple Pay</option>
-    <!-- Aquí se añadirán más opciones como Google Pay, Bizum, Pix... -->
+    <option value="googlepay">Google Pay</option>
   </select>
 
   <!-- FORMULARIO TARJETA -->
@@ -80,6 +81,12 @@
   <div id="applepay-form" class="payment-form">
     <p>Use Apple Pay to complete your purchase:</p>
     <div id="apple-pay-button"></div>
+  </div>
+
+  <!-- FORMULARIO GOOGLE PAY -->
+  <div id="googlepay-form" class="payment-form">
+    <p>Use Google Pay to complete your purchase:</p>
+    <div id="google-pay-button"></div>
   </div>
 
   <script src="inpage.js"></script>
