@@ -2,31 +2,20 @@
 
 const apiUrl = '/iframe-process';
 
-// Mostrar formulario dinámico según método de pago
-document.addEventListener("DOMContentLoaded", function () {
-  const methodSelect = document.getElementById("paymentMethod");
+// Mostrar formulario dinámico según botón pulsado
+function showForm(method) {
+  document.querySelectorAll('.payment-form').forEach(form => form.style.display = 'none');
+  const activeForm = document.getElementById(`${method}-form`);
+  if (activeForm) activeForm.style.display = 'block';
 
-  // Mostrar el formulario inicial por defecto
-  showForm(methodSelect.value);
-
-  methodSelect.addEventListener("change", function (e) {
-    showForm(e.target.value);
-  });
-
-  function showForm(method) {
-    document.querySelectorAll('.payment-form').forEach(form => form.style.display = 'none');
-    const activeForm = document.getElementById(`${method}-form`);
-    if (activeForm) activeForm.style.display = 'block';
-
-    if (method === 'applepay') {
-      initApplePayButton();
-    }
-
-    if (method === 'googlepay') {
-      initGooglePayButton();
-    }
+  if (method === 'applepay') {
+    initApplePayButton();
   }
-});
+
+  if (method === 'googlepay') {
+    initGooglePayButton();
+  }
+}
 
 // Lógica para enviar pago con tarjeta
 document.getElementById('card-form').addEventListener('submit', async function (e) {
@@ -184,7 +173,7 @@ async function onGooglePayButtonClicked() {
       tokenizationSpecification: {
         type: 'PAYMENT_GATEWAY',
         parameters: {
-          gateway: 'example', // ← en producción esto será 'adyen', 'stripe', etc.
+          gateway: 'example',
           gatewayMerchantId: 'demoMerchantId'
         }
       }
