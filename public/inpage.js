@@ -1,32 +1,29 @@
 const apiUrl = '/iframe-process';
 
-// Alterna visualmente el método de pago y muestra el formulario correspondiente
+// Alterna método de pago: activa visualmente y muestra contenido
 function selectMethod(method) {
-  // Quitar clases activas de todos
-  document.querySelectorAll('.payment-method').forEach(div => div.classList.remove('active'));
-  document.querySelectorAll('.payment-form').forEach(form => form.classList.remove('active'));
+  const methods = ['card', 'applepay', 'googlepay'];
 
-  // Activar método seleccionado
-  const activeMethod = document.getElementById(`method-${method}`);
-  const activeForm = document.getElementById(`${method}-form`);
-  if (activeMethod) activeMethod.classList.add('active');
-  if (activeForm) activeForm.classList.add('active');
+  methods.forEach(id => {
+    document.getElementById(`method-${id}`).classList.remove('active');
+    document.getElementById(`${id}-form`).classList.remove('active');
+  });
 
-  // Inicializar componente dinámico si aplica
+  document.getElementById(`method-${method}`).classList.add('active');
+  document.getElementById(`${method}-form`).classList.add('active');
+
   if (method === 'applepay') initApplePayButton();
   if (method === 'googlepay') initGooglePayButton();
 }
 
-// Ejecutar automáticamente al cargar
-document.addEventListener("DOMContentLoaded", () => {
+window.selectMethod = selectMethod;
+
+document.addEventListener('DOMContentLoaded', () => {
   selectMethod('card');
 });
 
-// Hacer accesible desde el HTML
-window.selectMethod = selectMethod;
-
-// Enviar datos del formulario de tarjeta
-document.getElementById('card-form').addEventListener('submit', async function (e) {
+// Enviar formulario de tarjeta
+document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const data = {
@@ -44,24 +41,23 @@ document.getElementById('card-form').addEventListener('submit', async function (
   };
 
   try {
-    const response = await fetch(apiUrl, {
+    const res = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
 
-    const result = await response.json();
-
+    const result = await res.json();
     if (result.success && result.transaction) {
-      alert('✅ Payment Successful!\nTransaction ID: ' + result.transaction._id);
+      alert(`✅ Pago realizado. ID: ${result.transaction._id}`);
       window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
     } else {
-      alert(result.message || 'Payment failed.');
+      alert(result.message || 'Error en el pago.');
       window.parent.postMessage({ status: 'error', message: result.message }, '*');
     }
   } catch (err) {
-    console.error('Error submitting form:', err);
-    alert('Payment failed due to technical error.');
+    alert('Error técnico al procesar el pago.');
+    console.error(err);
   }
 });
 
@@ -120,27 +116,24 @@ function startApplePaySession() {
     };
 
     try {
-      const response = await fetch(apiUrl, {
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      const result = await response.json();
-
+      const result = await res.json();
       if (result.success && result.transaction) {
         session.completePayment(ApplePaySession.STATUS_SUCCESS);
-        alert('✅ Apple Pay Successful!\nTransaction ID: ' + result.transaction._id);
+        alert('✅ Apple Pay completado');
         window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
       } else {
         session.completePayment(ApplePaySession.STATUS_FAILURE);
-        alert(result.message || 'Apple Pay failed.');
-        window.parent.postMessage({ status: 'error', message: result.message }, '*');
+        alert(result.message || 'Apple Pay falló');
       }
     } catch (err) {
-      console.error('Apple Pay error:', err);
+      console.error(err);
       session.completePayment(ApplePaySession.STATUS_FAILURE);
-      alert('Apple Pay failed due to technical error.');
     }
   };
 
@@ -200,23 +193,21 @@ async function onGooglePayButtonClicked() {
       transactionType: 'CIT'
     };
 
-    const response = await fetch(apiUrl, {
+    const res = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
-    const result = await response.json();
-
+    const result = await res.json();
     if (result.success && result.transaction) {
-      alert('✅ Google Pay Successful!\nTransaction ID: ' + result.transaction._id);
+      alert('✅ Google Pay completado');
       window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
     } else {
-      alert(result.message || 'Google Pay failed.');
-      window.parent.postMessage({ status: 'error', message: result.message }, '*');
+      alert(result.message || 'Google Pay falló');
     }
   } catch (err) {
     console.error('Google Pay error:', err);
-    alert('Google Pay failed due to technical error.');
+    alert('Google Pay error técnico');
   }
 }
