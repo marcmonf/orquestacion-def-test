@@ -21,6 +21,10 @@ document.addEventListener("DOMContentLoaded", function () {
     if (method === 'applepay') {
       initApplePayButton();
     }
+
+    if (method === 'googlepay') {
+      initGooglePayButton();
+    }
   }
 });
 
@@ -91,7 +95,7 @@ function startApplePaySession() {
     merchantCapabilities: ['supports3DS'],
     total: {
       label: 'Demo Merchant',
-      amount: '99.90' // Puedes ajustar esto dinámicamente si lo deseas
+      amount: '99.90'
     }
   };
 
@@ -118,7 +122,7 @@ function startApplePaySession() {
     const payload = {
       method: 'applepay',
       paymentData,
-      amount: 99.90, // Igual que el total mostrado
+      amount: 99.90,
       currency: 'EUR',
       merchantId: 'demo-merchant',
       transactionType: 'CIT'
@@ -150,4 +154,81 @@ function startApplePaySession() {
   };
 
   session.begin();
+}
+
+// Inicializar Google Pay
+function initGooglePayButton() {
+  const paymentsClient = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+
+  const button = paymentsClient.createButton({
+    onClick: onGooglePayButtonClicked
+  });
+
+  const container = document.getElementById('google-pay-button');
+  container.innerHTML = '';
+  container.appendChild(button);
+}
+
+async function onGooglePayButtonClicked() {
+  const paymentsClient = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+
+  const paymentRequest = {
+    apiVersion: 2,
+    apiVersionMinor: 0,
+    allowedPaymentMethods: [{
+      type: 'CARD',
+      parameters: {
+        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+        allowedCardNetworks: ['VISA', 'MASTERCARD']
+      },
+      tokenizationSpecification: {
+        type: 'PAYMENT_GATEWAY',
+        parameters: {
+          gateway: 'example', // ← en producción esto será 'adyen', 'stripe', etc.
+          gatewayMerchantId: 'demoMerchantId'
+        }
+      }
+    }],
+    transactionInfo: {
+      totalPriceStatus: 'FINAL',
+      totalPrice: '99.90',
+      currencyCode: 'EUR',
+      countryCode: 'ES'
+    },
+    merchantInfo: {
+      merchantName: 'Demo Merchant'
+    }
+  };
+
+  try {
+    const paymentData = await paymentsClient.loadPaymentData(paymentRequest);
+
+    const payload = {
+      method: 'googlepay',
+      paymentData,
+      amount: 99.90,
+      currency: 'EUR',
+      merchantId: 'demo-merchant',
+      transactionType: 'CIT'
+    };
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    if (result.success && result.transaction) {
+      alert('✅ Google Pay Successful!\nTransaction ID: ' + result.transaction._id);
+      window.parent.postMessage({ status: 'success', data: result.transaction }, '*');
+    } else {
+      alert(result.message || 'Google Pay failed.');
+      window.parent.postMessage({ status: 'error', message: result.message }, '*');
+    }
+  } catch (err) {
+    console.error('Error procesando Google Pay:', err);
+    alert('Google Pay failed due to technical error.');
+  }
 }
