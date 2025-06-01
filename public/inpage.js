@@ -4,10 +4,18 @@ const apiUrl = '/iframe-process';
 
 // Mostrar formulario dinámico según botón pulsado
 function showForm(method) {
-  document.querySelectorAll('.payment-form').forEach(form => form.style.display = 'none');
-  const activeForm = document.getElementById(`${method}-form`);
-  if (activeForm) activeForm.style.display = 'block';
+  // Oculta todos los formularios
+  document.querySelectorAll('.payment-form').forEach(form => {
+    form.style.display = 'none';
+  });
 
+  // Muestra el formulario correspondiente
+  const activeForm = document.getElementById(`${method}-form`);
+  if (activeForm) {
+    activeForm.style.display = 'block';
+  }
+
+  // Inicializa Apple Pay o Google Pay si corresponde
   if (method === 'applepay') {
     initApplePayButton();
   }
@@ -16,6 +24,15 @@ function showForm(method) {
     initGooglePayButton();
   }
 }
+
+// Ejecutar automáticamente al cargar la página
+document.addEventListener("DOMContentLoaded", () => {
+  // Mostramos por defecto el formulario de tarjeta
+  showForm('card');
+});
+
+// Hacer la función accesible desde los botones del HTML
+window.showForm = showForm;
 
 // Lógica para enviar pago con tarjeta
 document.getElementById('card-form').addEventListener('submit', async function (e) {
@@ -221,6 +238,3 @@ async function onGooglePayButtonClicked() {
     alert('Google Pay failed due to technical error.');
   }
 }
-
-// ✅ Hacer la función accesible desde HTML (onclick)
-window.showForm = showForm;
