@@ -3,203 +3,180 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Método de pago</title>
-  <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
+  <title>iFrame de Pago</title>
   <style>
-    :root {
-      --main-color: #0066cc;
-      --border-radius: 10px;
-      --shadow: 0 2px 6px rgba(0,0,0,0.08);
-    }
-
     body {
-      font-family: 'Segoe UI', sans-serif;
-      background-color: #f9f9f9;
-      padding: 1rem;
-      max-width: 600px;
-      margin: auto;
-      color: #333;
-    }
-
-    .header-powered {
+      font-family: Arial, sans-serif;
+      background-color: #f8f9fa;
       display: flex;
-      justify-content: flex-end;
-      align-items: center;
-      font-size: 0.85rem;
-      margin-bottom: 1rem;
-      color: #555;
+      justify-content: center;
+      padding: 20px;
     }
 
-    .header-powered img {
-      height: 26px;
-      margin-left: 8px;
-      opacity: 0.85;
+    .payment-container {
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 400px;
+      position: relative;
+    }
+
+    .powered-by {
+      position: absolute;
+      top: 10px;
+      right: 20px;
+      font-size: 12px;
+      color: #888;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .powered-by img {
+      height: 18px;
     }
 
     h2 {
-      margin-bottom: 1rem;
-      font-weight: 600;
-      font-size: 1.3rem;
+      text-align: center;
+      margin-bottom: 20px;
     }
 
     .method-option {
-      border: 2px solid #ddd;
-      border-radius: var(--border-radius);
-      padding: 1rem;
-      margin-bottom: 0.6rem;
-      background-color: white;
+      padding: 12px;
+      background-color: #f0f0f0;
+      border-radius: 8px;
+      margin-bottom: 10px;
       cursor: pointer;
-      transition: all 0.3s ease;
+      font-weight: bold;
+      transition: background-color 0.3s ease;
     }
 
     .method-option:hover {
-      border-color: var(--main-color);
-      box-shadow: var(--shadow);
+      background-color: #e0e0e0;
     }
 
     .method-option.active {
-      border-color: var(--main-color);
-      box-shadow: 0 0 6px rgba(0, 102, 204, 0.4);
+      background-color: #d0d0d0;
     }
 
-    .method-option h3 {
-      margin: 0;
-      font-size: 1rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .method-content {
+    .method-form {
       display: none;
-      margin-top: 1rem;
-      padding: 1rem;
-      border: 1px solid #eee;
-      border-radius: var(--border-radius);
-      background: #fff;
-      box-shadow: var(--shadow);
+      margin-bottom: 20px;
     }
 
-    .method-content.show {
+    .method-form.show {
       display: block;
     }
 
-    label {
-      display: block;
-      margin-top: 0.5rem;
-      font-weight: 500;
-      font-size: 0.9rem;
+    .form-group {
+      margin-bottom: 12px;
     }
 
-    input, select {
+    .form-group label {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .form-group input {
       width: 100%;
-      padding: 0.45rem;
-      margin-top: 0.2rem;
+      padding: 8px;
+      font-size: 14px;
       border: 1px solid #ccc;
       border-radius: 6px;
-      font-size: 0.95rem;
     }
 
-    button {
-      margin-top: 1rem;
-      padding: 0.6rem;
-      background-color: var(--main-color);
-      color: white;
+    button[type="submit"] {
+      background-color: #007bff;
+      color: #fff;
       border: none;
+      padding: 10px 16px;
+      font-size: 16px;
       border-radius: 6px;
-      font-weight: 600;
-      font-size: 1rem;
-      width: 100%;
       cursor: pointer;
-      transition: background-color 0.2s ease;
-    }
-
-    button:hover {
-      background-color: #004999;
-    }
-
-    .pay-button-custom {
-      display: inline-block;
       width: 100%;
-      max-width: 240px;
-      border-radius: 40px;
-      overflow: hidden;
+    }
+
+    button[type="submit"]:hover {
+      background-color: #0056b3;
+    }
+
+    .custom-pay-button {
+      width: 100%;
+      max-width: 300px;
+      border-radius: 12px;
       cursor: pointer;
       transition: transform 0.2s ease;
     }
 
-    .pay-button-custom img {
-      width: 100%;
-      display: block;
+    .custom-pay-button:hover {
+      transform: scale(1.02);
     }
 
-    .pay-button-custom:hover {
-      transform: scale(1.02);
+    .pay-button-container {
+      display: flex;
+      justify-content: center;
+      padding: 10px 0;
     }
   </style>
 </head>
 <body>
-
-  <div class="header-powered">
-    Powered by
-    <img src="Logo_Monetiser.png" alt="Monetiser logo" />
-  </div>
-
-  <h2>Método de pago</h2>
-
-  <!-- Pago con tarjeta -->
-  <div class="method-option" id="method-card">
-    <h3>Pago con tarjeta <span>💳</span></h3>
-  </div>
-  <div class="method-content" id="card-form">
-    <form id="card-payment-form">
-      <label for="cardholderName">Cardholder Name</label>
-      <input type="text" id="cardholderName" required />
-
-      <label for="cardNumber">Card Number</label>
-      <input type="text" id="cardNumber" maxlength="19" required />
-
-      <label for="expiryMonth">Expiry Month (MM)</label>
-      <input type="text" id="expiryMonth" maxlength="2" required />
-
-      <label for="expiryYear">Expiry Year (YYYY)</label>
-      <input type="text" id="expiryYear" maxlength="4" required />
-
-      <label for="cvv">CVV</label>
-      <input type="text" id="cvv" maxlength="4" required />
-
-      <label for="amount">Amount</label>
-      <input type="number" id="amount" step="0.01" required />
-
-      <label for="currency">Currency</label>
-      <select id="currency" required>
-        <option value="">-- Select --</option>
-        <option value="EUR">EUR</option>
-        <option value="USD">USD</option>
-        <option value="BRL">BRL</option>
-      </select>
-
-      <button type="submit">Pagar</button>
-    </form>
-  </div>
-
-  <!-- Apple Pay -->
-  <div class="method-option" id="method-applepay">
-    <h3>Apple Pay <span>🍎</span></h3>
-  </div>
-  <div class="method-content" id="applepay-form">
-    <div class="pay-button-custom" onclick="startApplePaySession()">
-      <img src="applepay-custom.png" alt="Buy with Apple Pay" />
+  <div class="payment-container">
+    <div class="powered-by">
+      Powered by <img src="Logo_Monetiser.png" alt="Monetiser" />
     </div>
-  </div>
 
-  <!-- Google Pay -->
-  <div class="method-option" id="method-googlepay">
-    <h3>Google Pay <span>🅖</span></h3>
-  </div>
-  <div class="method-content" id="googlepay-form">
-    <div class="pay-button-custom" onclick="onGooglePayButtonClicked()">
-      <img src="googlepay-custom.png" alt="Buy with Google Pay" />
+    <h2>Método de pago</h2>
+
+    <div class="method-option" id="method-card">Pago con tarjeta</div>
+    <div class="method-form" id="card-form">
+      <form id="card-payment-form">
+        <div class="form-group">
+          <label for="cardholderName">Titular</label>
+          <input type="text" id="cardholderName" required />
+        </div>
+        <div class="form-group">
+          <label for="cardNumber">Número de tarjeta</label>
+          <input type="text" id="cardNumber" required />
+        </div>
+        <div class="form-group">
+          <label for="expiryMonth">Mes de expiración</label>
+          <input type="text" id="expiryMonth" placeholder="MM" required />
+        </div>
+        <div class="form-group">
+          <label for="expiryYear">Año de expiración</label>
+          <input type="text" id="expiryYear" placeholder="YY" required />
+        </div>
+        <div class="form-group">
+          <label for="cvv">CVV</label>
+          <input type="text" id="cvv" required />
+        </div>
+        <div class="form-group">
+          <label for="amount">Importe</label>
+          <input type="number" id="amount" required />
+        </div>
+        <div class="form-group">
+          <label for="currency">Moneda</label>
+          <input type="text" id="currency" value="EUR" required />
+        </div>
+        <button type="submit">Pagar</button>
+      </form>
+    </div>
+
+    <div class="method-option" id="method-applepay">Apple Pay</div>
+    <div class="method-form" id="applepay-form">
+      <div id="apple-pay-button" class="pay-button-container">
+        <img src="applepay-btn.png" alt="Buy with Apple Pay" onclick="startApplePaySession()" class="custom-pay-button" />
+      </div>
+    </div>
+
+    <div class="method-option" id="method-googlepay">Google Pay</div>
+    <div class="method-form" id="googlepay-form">
+      <div id="google-pay-button" class="pay-button-container">
+        <img src="googlepay-btn.png" alt="Buy with Google Pay" onclick="onGooglePayButtonClicked()" class="custom-pay-button" />
+      </div>
     </div>
   </div>
 
