@@ -50,6 +50,5 @@ function onGooglePayButtonClicked() {
   alert('🔔 Google Pay simulado');
 }
 
-// Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
