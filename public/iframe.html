@@ -41,6 +41,8 @@
     .method-content {
       display: none;
       margin-top: 1rem;
+      border-top: 1px solid #eee;
+      padding-top: 1rem;
     }
 
     .method-content.active {
@@ -80,7 +82,7 @@
   <h2>Método de pago</h2>
 
   <!-- Pago con tarjeta -->
-  <div class="method-option" onclick="selectMethod('card')" id="method-card">
+  <div class="method-option" onclick="toggleMethod('card')" id="method-card">
     <h3>Pago con tarjeta <span>💳</span></h3>
   </div>
   <div class="method-content" id="card-form">
@@ -116,7 +118,7 @@
   </div>
 
   <!-- Apple Pay -->
-  <div class="method-option" onclick="selectMethod('applepay')" id="method-applepay">
+  <div class="method-option" onclick="toggleMethod('applepay')" id="method-applepay">
     <h3>Apple Pay <span>🍎</span></h3>
   </div>
   <div class="method-content" id="applepay-form">
@@ -125,7 +127,7 @@
   </div>
 
   <!-- Google Pay -->
-  <div class="method-option" onclick="selectMethod('googlepay')" id="method-googlepay">
+  <div class="method-option" onclick="toggleMethod('googlepay')" id="method-googlepay">
     <h3>Google Pay <span>🅖</span></h3>
   </div>
   <div class="method-content" id="googlepay-form">
