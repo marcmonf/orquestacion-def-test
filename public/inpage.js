@@ -1,25 +1,28 @@
-// public/inpage.js
-
 const apiUrl = '/iframe-process';
 
-// Solo control del método "card"
 document.addEventListener('DOMContentLoaded', () => {
   const cardHeader = document.getElementById('method-card');
   const cardForm = document.getElementById('card-form');
 
+  // Toggle para tarjeta
   cardHeader.addEventListener('click', () => {
-    const isOpen = cardForm.classList.contains('show');
-    if (isOpen) {
-      cardHeader.classList.remove('active');
-      cardForm.classList.remove('show');
-    } else {
-      cardHeader.classList.add('active');
-      cardForm.classList.add('show');
-    }
+    cardHeader.classList.toggle('active');
+    cardForm.classList.toggle('show');
   });
+
+  // Apple Pay
+  const appleHeader = document.getElementById('method-applepay');
+  appleHeader.addEventListener('click', startApplePaySession);
+
+  // Google Pay
+  const googleHeader = document.getElementById('method-googlepay');
+  googleHeader.addEventListener('click', onGooglePayButtonClicked);
+
+  initApplePayButton();
+  initGooglePayButton();
 });
 
-// Envío del formulario de tarjeta
+// Procesar formulario tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = {
@@ -50,105 +53,38 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
   }
 });
 
-// Apple Pay
+// Apple Pay (demo)
+function initApplePayButton() {
+  const container = document.getElementById('apple-pay-button');
+  container.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = '/applepay-custom.png';
+  img.alt = 'Apple Pay';
+  img.onclick = startApplePaySession;
+  container.appendChild(img);
+}
+
 function startApplePaySession() {
-  const session = new ApplePaySession(3, {
-    countryCode: 'ES',
-    currencyCode: 'EUR',
-    supportedNetworks: ['visa', 'masterCard'],
-    merchantCapabilities: ['supports3DS'],
-    total: { label: 'Demo Merchant', amount: '99.90' }
-  });
-
-  session.onvalidatemerchant = async (event) => {
-    const res = await fetch('/apple-pay/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ validationURL: event.validationURL })
-    });
-    const merchantSession = await res.json();
-    session.completeMerchantValidation(merchantSession);
-  };
-
-  session.onpaymentauthorized = async (event) => {
-    const paymentData = event.payment.token.paymentData;
-
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        method: 'applepay',
-        paymentData,
-        amount: 99.90,
-        currency: 'EUR',
-        merchantId: 'demo-merchant',
-        transactionType: 'CIT'
-      })
-    });
-
-    const result = await response.json();
-    if (result.success && result.transaction) {
-      session.completePayment(ApplePaySession.STATUS_SUCCESS);
-      alert('✅ Apple Pay completado');
-    } else {
-      session.completePayment(ApplePaySession.STATUS_FAILURE);
-    }
-  };
-
-  session.begin();
+  alert('🔔 Apple Pay: simulación iniciada');
+  // Aquí iría la lógica real si se habilita
 }
 
-// Google Pay
+// Google Pay (demo)
+function initGooglePayButton() {
+  const container = document.getElementById('google-pay-button');
+  container.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = '/googlepay-custom.png';
+  img.alt = 'Google Pay';
+  img.onclick = onGooglePayButtonClicked;
+  container.appendChild(img);
+}
+
 async function onGooglePayButtonClicked() {
-  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
-
-  const paymentData = await client.loadPaymentData({
-    apiVersion: 2,
-    apiVersionMinor: 0,
-    allowedPaymentMethods: [{
-      type: 'CARD',
-      parameters: {
-        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-        allowedCardNetworks: ['VISA', 'MASTERCARD']
-      },
-      tokenizationSpecification: {
-        type: 'PAYMENT_GATEWAY',
-        parameters: {
-          gateway: 'stripe',
-          gatewayMerchantId: 'demo_merchant'
-        }
-      }
-    }],
-    transactionInfo: {
-      totalPriceStatus: 'FINAL',
-      totalPrice: '99.90',
-      currencyCode: 'EUR',
-      countryCode: 'ES'
-    },
-    merchantInfo: { merchantName: 'Demo Merchant' }
-  });
-
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      method: 'googlepay',
-      paymentData,
-      amount: 99.90,
-      currency: 'EUR',
-      merchantId: 'demo-merchant',
-      transactionType: 'CIT'
-    })
-  });
-
-  const result = await res.json();
-  if (result.success && result.transaction) {
-    alert('✅ Google Pay completado');
-  } else {
-    alert(result.message || 'Google Pay falló');
-  }
+  alert('🔔 Google Pay: simulación iniciada');
+  // Aquí iría la lógica real si se habilita
 }
 
-// Exportar funciones globalmente
+// Exponer funciones si fueran necesarias
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
