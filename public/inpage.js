@@ -4,25 +4,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const cardHeader = document.getElementById('method-card');
   const cardForm = document.getElementById('card-form');
 
-  // Toggle para tarjeta
   cardHeader.addEventListener('click', () => {
     cardHeader.classList.toggle('active');
     cardForm.classList.toggle('show');
   });
-
-  // Apple Pay
-  const appleHeader = document.getElementById('method-applepay');
-  appleHeader.addEventListener('click', startApplePaySession);
-
-  // Google Pay
-  const googleHeader = document.getElementById('method-googlepay');
-  googleHeader.addEventListener('click', onGooglePayButtonClicked);
-
-  initApplePayButton();
-  initGooglePayButton();
 });
 
-// Procesar formulario tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = {
@@ -53,38 +40,16 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
   }
 });
 
-// Apple Pay (demo)
-function initApplePayButton() {
-  const container = document.getElementById('apple-pay-button');
-  container.innerHTML = '';
-  const img = document.createElement('img');
-  img.src = '/applepay-custom.png';
-  img.alt = 'Apple Pay';
-  img.onclick = startApplePaySession;
-  container.appendChild(img);
-}
-
+// Apple Pay (simulado)
 function startApplePaySession() {
-  alert('🔔 Apple Pay: simulación iniciada');
-  // Aquí iría la lógica real si se habilita
+  alert('🔔 Apple Pay simulado');
 }
 
-// Google Pay (demo)
-function initGooglePayButton() {
-  const container = document.getElementById('google-pay-button');
-  container.innerHTML = '';
-  const img = document.createElement('img');
-  img.src = '/googlepay-custom.png';
-  img.alt = 'Google Pay';
-  img.onclick = onGooglePayButtonClicked;
-  container.appendChild(img);
+// Google Pay (simulado)
+function onGooglePayButtonClicked() {
+  alert('🔔 Google Pay simulado');
 }
 
-async function onGooglePayButtonClicked() {
-  alert('🔔 Google Pay: simulación iniciada');
-  // Aquí iría la lógica real si se habilita
-}
-
-// Exponer funciones si fueran necesarias
+// Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
