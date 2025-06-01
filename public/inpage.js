@@ -1,15 +1,41 @@
 const apiUrl = '/iframe-process';
 
 document.addEventListener('DOMContentLoaded', () => {
-  const cardHeader = document.getElementById('method-card');
+  const methodHeader = document.getElementById('method-card');
   const cardForm = document.getElementById('card-form');
 
-  cardHeader.addEventListener('click', () => {
-    cardHeader.classList.toggle('active');
-    cardForm.classList.toggle('show');
+  methodHeader.addEventListener('click', () => {
+    const isOpen = cardForm.classList.contains('show');
+
+    methodHeader.classList.toggle('active', !isOpen);
+    cardForm.classList.toggle('show', !isOpen);
   });
+
+  // Detectar el sistema operativo del dispositivo
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isAndroid = /Android/i.test(navigator.userAgent);
+
+  const applePayBtn = document.querySelector('img[alt="Apple Pay"]');
+  const googlePayBtn = document.querySelector('img[alt="Google Pay"]');
+
+  if (isIOS) {
+    googlePayBtn.style.display = 'none';
+  } else if (isAndroid) {
+    applePayBtn.style.display = 'none';
+  }
+
+  // Inicializar Apple Pay si aplica
+  if (isIOS && window.ApplePaySession && ApplePaySession.canMakePayments()) {
+    applePayBtn.addEventListener('click', startApplePaySession);
+  }
+
+  // Inicializar Google Pay si aplica
+  if (isAndroid && window.google) {
+    googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
+  }
 });
 
+// Pago con tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = {
@@ -40,15 +66,105 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
   }
 });
 
-// Apple Pay (simulado)
+// Apple Pay
 function startApplePaySession() {
-  alert('🔔 Apple Pay simulado');
+  const session = new ApplePaySession(3, {
+    countryCode: 'ES',
+    currencyCode: 'EUR',
+    supportedNetworks: ['visa', 'masterCard'],
+    merchantCapabilities: ['supports3DS'],
+    total: { label: 'Demo Merchant', amount: '99.90' }
+  });
+
+  session.onvalidatemerchant = async (event) => {
+    const res = await fetch('/apple-pay/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ validationURL: event.validationURL })
+    });
+    const merchantSession = await res.json();
+    session.completeMerchantValidation(merchantSession);
+  };
+
+  session.onpaymentauthorized = async (event) => {
+    const paymentData = event.payment.token.paymentData;
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'applepay',
+        paymentData,
+        amount: 99.90,
+        currency: 'EUR',
+        merchantId: 'demo-merchant',
+        transactionType: 'CIT'
+      })
+    });
+
+    const result = await response.json();
+    if (result.success && result.transaction) {
+      session.completePayment(ApplePaySession.STATUS_SUCCESS);
+      alert('✅ Apple Pay completado');
+    } else {
+      session.completePayment(ApplePaySession.STATUS_FAILURE);
+    }
+  };
+
+  session.begin();
 }
 
-// Google Pay (simulado)
-function onGooglePayButtonClicked() {
-  alert('🔔 Google Pay simulado');
+// Google Pay
+async function onGooglePayButtonClicked() {
+  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+
+  const paymentData = await client.loadPaymentData({
+    apiVersion: 2,
+    apiVersionMinor: 0,
+    allowedPaymentMethods: [{
+      type: 'CARD',
+      parameters: {
+        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+        allowedCardNetworks: ['VISA', 'MASTERCARD']
+      },
+      tokenizationSpecification: {
+        type: 'PAYMENT_GATEWAY',
+        parameters: {
+          gateway: 'stripe',
+          gatewayMerchantId: 'demo_merchant'
+        }
+      }
+    }],
+    transactionInfo: {
+      totalPriceStatus: 'FINAL',
+      totalPrice: '99.90',
+      currencyCode: 'EUR',
+      countryCode: 'ES'
+    },
+    merchantInfo: { merchantName: 'Demo Merchant' }
+  });
+
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method: 'googlepay',
+      paymentData,
+      amount: 99.90,
+      currency: 'EUR',
+      merchantId: 'demo-merchant',
+      transactionType: 'CIT'
+    })
+  });
+
+  const result = await res.json();
+  if (result.success && result.transaction) {
+    alert('✅ Google Pay completado');
+  } else {
+    alert(result.message || 'Google Pay falló');
+  }
 }
 
+// 👇 Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
