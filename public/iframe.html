@@ -11,24 +11,26 @@
       font-family: sans-serif;
       background-color: #f9f9f9;
       padding: 1rem;
+      max-width: 600px;
+      margin: auto;
     }
 
-    .payment-method {
-      border: 1px solid #ccc;
+    .method-option {
+      border: 2px solid #ccc;
       border-radius: 8px;
       padding: 1rem;
       margin-bottom: 1rem;
+      background-color: #fff;
       cursor: pointer;
-      background-color: white;
-      transition: border 0.2s ease, box-shadow 0.2s ease;
+      transition: all 0.2s ease;
     }
 
-    .payment-method.active {
+    .method-option.active {
       border-color: #0066cc;
-      box-shadow: 0 0 6px rgba(0, 102, 204, 0.3);
+      box-shadow: 0 0 6px rgba(0, 102, 204, 0.4);
     }
 
-    .payment-method h3 {
+    .method-option h3 {
       margin: 0;
       font-size: 1rem;
       display: flex;
@@ -36,14 +38,12 @@
       align-items: center;
     }
 
-    .payment-form {
+    .method-content {
       display: none;
       margin-top: 1rem;
-      border-top: 1px solid #eee;
-      padding-top: 1rem;
     }
 
-    .payment-form.active {
+    .method-content.active {
       display: block;
     }
 
@@ -79,57 +79,56 @@
 <body>
   <h2>Método de pago</h2>
 
-  <div id="methods">
-    <div class="payment-method" onclick="selectMethod('card')" id="method-card">
-      <h3>Pago con tarjeta <span>💳</span></h3>
-    </div>
-    <div class="payment-method" onclick="selectMethod('applepay')" id="method-applepay">
-      <h3>Apple Pay <span>🍎</span></h3>
-    </div>
-    <div class="payment-method" onclick="selectMethod('googlepay')" id="method-googlepay">
-      <h3>Google Pay <span>🅖</span></h3>
-    </div>
+  <!-- Pago con tarjeta -->
+  <div class="method-option" onclick="selectMethod('card')" id="method-card">
+    <h3>Pago con tarjeta <span>💳</span></h3>
+  </div>
+  <div class="method-content" id="card-form">
+    <form id="card-payment-form">
+      <label for="cardholderName">Cardholder Name</label>
+      <input type="text" id="cardholderName" required />
+
+      <label for="cardNumber">Card Number</label>
+      <input type="text" id="cardNumber" maxlength="19" required />
+
+      <label for="expiryMonth">Expiry Month (MM)</label>
+      <input type="text" id="expiryMonth" maxlength="2" required />
+
+      <label for="expiryYear">Expiry Year (YYYY)</label>
+      <input type="text" id="expiryYear" maxlength="4" required />
+
+      <label for="cvv">CVV</label>
+      <input type="text" id="cvv" maxlength="4" required />
+
+      <label for="amount">Amount</label>
+      <input type="number" id="amount" step="0.01" required />
+
+      <label for="currency">Currency</label>
+      <select id="currency" required>
+        <option value="">-- Select --</option>
+        <option value="EUR">EUR</option>
+        <option value="USD">USD</option>
+        <option value="BRL">BRL</option>
+      </select>
+
+      <button type="submit">Pagar</button>
+    </form>
   </div>
 
-  <!-- FORMULARIO TARJETA -->
-  <form id="card-form" class="payment-form">
-    <label for="cardholderName">Cardholder Name</label>
-    <input type="text" id="cardholderName" required />
-
-    <label for="cardNumber">Card Number</label>
-    <input type="text" id="cardNumber" maxlength="19" required />
-
-    <label for="expiryMonth">Expiry Month (MM)</label>
-    <input type="text" id="expiryMonth" maxlength="2" required />
-
-    <label for="expiryYear">Expiry Year (YYYY)</label>
-    <input type="text" id="expiryYear" maxlength="4" required />
-
-    <label for="cvv">CVV</label>
-    <input type="text" id="cvv" maxlength="4" required />
-
-    <label for="amount">Amount</label>
-    <input type="number" id="amount" step="0.01" required />
-
-    <label for="currency">Currency</label>
-    <select id="currency" required>
-      <option value="">-- Select --</option>
-      <option value="EUR">EUR</option>
-      <option value="USD">USD</option>
-      <option value="BRL">BRL</option>
-    </select>
-
-    <button type="submit">Pagar</button>
-  </form>
-
-  <!-- FORMULARIO APPLE PAY -->
-  <div id="applepay-form" class="payment-form">
+  <!-- Apple Pay -->
+  <div class="method-option" onclick="selectMethod('applepay')" id="method-applepay">
+    <h3>Apple Pay <span>🍎</span></h3>
+  </div>
+  <div class="method-content" id="applepay-form">
     <p>Usa Apple Pay para completar tu compra:</p>
     <div id="apple-pay-button"></div>
   </div>
 
-  <!-- FORMULARIO GOOGLE PAY -->
-  <div id="googlepay-form" class="payment-form">
+  <!-- Google Pay -->
+  <div class="method-option" onclick="selectMethod('googlepay')" id="method-googlepay">
+    <h3>Google Pay <span>🅖</span></h3>
+  </div>
+  <div class="method-content" id="googlepay-form">
     <p>Usa Google Pay para completar tu compra:</p>
     <div id="google-pay-button"></div>
   </div>
