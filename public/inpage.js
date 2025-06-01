@@ -1,34 +1,25 @@
+// public/inpage.js
+
 const apiUrl = '/iframe-process';
 
+// Solo control del método "card"
 document.addEventListener('DOMContentLoaded', () => {
-  const methods = ['card', 'applepay', 'googlepay'];
+  const cardHeader = document.getElementById('method-card');
+  const cardForm = document.getElementById('card-form');
 
-  methods.forEach(method => {
-    const header = document.getElementById(`method-${method}`);
-    const content = document.getElementById(`${method}-form`);
-
-    header.addEventListener('click', () => {
-      const isOpen = content.classList.contains('show');
-
-      // Cerrar todos
-      methods.forEach(m => {
-        document.getElementById(`method-${m}`).classList.remove('active');
-        document.getElementById(`${m}-form`).classList.remove('show');
-      });
-
-      // Mostrar solo si estaba cerrado
-      if (!isOpen) {
-        header.classList.add('active');
-        content.classList.add('show');
-
-        if (method === 'applepay') initApplePayButton();
-        if (method === 'googlepay') initGooglePayButton();
-      }
-    });
+  cardHeader.addEventListener('click', () => {
+    const isOpen = cardForm.classList.contains('show');
+    if (isOpen) {
+      cardHeader.classList.remove('active');
+      cardForm.classList.remove('show');
+    } else {
+      cardHeader.classList.add('active');
+      cardForm.classList.add('show');
+    }
   });
 });
 
-// Lógica del pago con tarjeta (sin cambios)
+// Envío del formulario de tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = {
@@ -59,22 +50,7 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
   }
 });
 
-// Apple Pay (sin cambios)
-function initApplePayButton() {
-  if (!window.ApplePaySession || !ApplePaySession.canMakePayments()) return;
-
-  const container = document.getElementById('apple-pay-button');
-  container.innerHTML = '';
-
-  const button = document.createElement('apple-pay-button');
-  button.setAttribute('buttonstyle', 'black');
-  button.setAttribute('type', 'plain');
-  button.setAttribute('locale', 'es-ES');
-  container.appendChild(button);
-
-  button.addEventListener('click', startApplePaySession);
-}
-
+// Apple Pay
 function startApplePaySession() {
   const session = new ApplePaySession(3, {
     countryCode: 'ES',
@@ -122,16 +98,7 @@ function startApplePaySession() {
   session.begin();
 }
 
-// Google Pay (simulado correctamente)
-function initGooglePayButton() {
-  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
-
-  const container = document.getElementById('google-pay-button');
-  container.innerHTML = '';
-  const button = client.createButton({ onClick: onGooglePayButtonClicked });
-  container.appendChild(button);
-}
-
+// Google Pay
 async function onGooglePayButtonClicked() {
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
 
@@ -181,6 +148,7 @@ async function onGooglePayButtonClicked() {
     alert(result.message || 'Google Pay falló');
   }
 }
-// 👇 Exponer funciones al contexto global para que funcionen los botones personalizados
+
+// Exportar funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
