@@ -56,63 +56,92 @@ const transactionSchema = Joi.object({
   userId: Joi.string().optional(),
   reference: Joi.string().optional(),
 
-  cardholderName: Joi.string()
-    .min(2)
-    .max(64)
-    .required()
-    .messages({
-      'string.base': 'transaction.invalid.cardholderName',
-      'string.min': 'transaction.invalid.cardholderName',
-      'string.max': 'transaction.invalid.cardholderName',
-      'any.required': 'transaction.invalid.cardholderName'
-    }),
+  cardholderName: Joi.when('method', {
+    is: Joi.valid('card'),
+    then: Joi.string()
+      .min(2)
+      .max(64)
+      .required()
+      .messages({
+        'string.base': 'transaction.invalid.cardholderName',
+        'string.min': 'transaction.invalid.cardholderName',
+        'string.max': 'transaction.invalid.cardholderName',
+        'any.required': 'transaction.invalid.cardholderName'
+      }),
+    otherwise: Joi.forbidden()
+  }),
 
-  expiryMonth: Joi.string()
-    .pattern(/^(0[1-9]|1[0-2])$/)
-    .required()
-    .messages({
-      'string.pattern.base': 'transaction.invalid.expiryMonth',
-      'any.required': 'transaction.invalid.expiryMonth'
-    }),
+  expiryMonth: Joi.when('method', {
+    is: Joi.valid('card'),
+    then: Joi.string()
+      .pattern(/^(0[1-9]|1[0-2])$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'transaction.invalid.expiryMonth',
+        'any.required': 'transaction.invalid.expiryMonth'
+      }),
+    otherwise: Joi.forbidden()
+  }),
 
-  expiryYear: Joi.string()
-    .pattern(/^\d{4}$/)
-    .required()
-    .custom((value, helpers) => {
-      if (parseInt(value) < currentYear) {
-        return helpers.error('transaction.invalid.expiryYear.tooLow');
-      }
-      return value;
-    })
-    .messages({
-      'string.pattern.base': 'transaction.invalid.expiryYear',
-      'any.required': 'transaction.invalid.expiryYear',
-      'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
-    }),
+  expiryYear: Joi.when('method', {
+    is: Joi.valid('card'),
+    then: Joi.string()
+      .pattern(/^\d{4}$/)
+      .required()
+      .custom((value, helpers) => {
+        if (parseInt(value) < currentYear) {
+          return helpers.error('transaction.invalid.expiryYear.tooLow');
+        }
+        return value;
+      })
+      .messages({
+        'string.pattern.base': 'transaction.invalid.expiryYear',
+        'any.required': 'transaction.invalid.expiryYear',
+        'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
+      }),
+    otherwise: Joi.forbidden()
+  }),
 
-  cardNumber: Joi.string()
-    .pattern(/^\d{13,19}$/)
-    .when('transactionType', {
-      is: 'CIT',
-      then: Joi.required(),
-      otherwise: Joi.forbidden()
-    })
-    .messages({
-      'string.pattern.base': 'transaction.invalid.cardNumber',
-      'any.required': 'transaction.invalid.cardNumber.required'
-    }),
+  cardNumber: Joi.when('method', {
+    is: 'card',
+    then: Joi.string()
+      .pattern(/^\d{13,19}$/)
+      .when('transactionType', {
+        is: 'CIT',
+        then: Joi.required(),
+        otherwise: Joi.forbidden()
+      })
+      .messages({
+        'string.pattern.base': 'transaction.invalid.cardNumber',
+        'any.required': 'transaction.invalid.cardNumber.required'
+      }),
+    otherwise: Joi.forbidden()
+  }),
 
-  cvv: Joi.string()
-    .pattern(/^\d{3,4}$/)
-    .when('transactionType', {
-      is: 'CIT',
-      then: Joi.required(),
-      otherwise: Joi.forbidden()
-    })
-    .messages({
-      'string.pattern.base': 'transaction.invalid.cvv',
-      'any.required': 'transaction.invalid.cvv.required'
+  cvv: Joi.when('method', {
+    is: 'card',
+    then: Joi.string()
+      .pattern(/^\d{3,4}$/)
+      .when('transactionType', {
+        is: 'CIT',
+        then: Joi.required(),
+        otherwise: Joi.forbidden()
+      })
+      .messages({
+        'string.pattern.base': 'transaction.invalid.cvv',
+        'any.required': 'transaction.invalid.cvv.required'
+      }),
+    otherwise: Joi.forbidden()
+  }),
+
+  // Nuevos: Apple Pay y Google Pay
+  paymentData: Joi.when('method', {
+    is: Joi.valid('applepay', 'googlepay'),
+    then: Joi.required().messages({
+      'any.required': 'transaction.invalid.paymentData.required'
     }),
+    otherwise: Joi.forbidden()
+  }),
 
   isRecurring: Joi.boolean().optional(),
 
