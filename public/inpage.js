@@ -181,3 +181,6 @@ async function onGooglePayButtonClicked() {
     alert(result.message || 'Google Pay falló');
   }
 }
+// 👇 Exponer funciones al contexto global para que funcionen los botones personalizados
+window.startApplePaySession = startApplePaySession;
+window.onGooglePayButtonClicked = onGooglePayButtonClicked;
