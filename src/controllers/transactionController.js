@@ -132,6 +132,11 @@ const createTransaction = async (req, res) => {
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
 
+    // ✅ Añadimos returnUrl si está presente
+    if (value.returnUrl) {
+      sanitizedValue.returnUrl = value.returnUrl;
+    }
+
     if (value.method === 'mbway') {
       const mbwayResult = await mbwayConnector.process(value);
       sanitizedValue.status = mbwayResult.status;
@@ -216,9 +221,6 @@ const createTransaction = async (req, res) => {
   }
 };
 
-
-
-
 // GET /transactions/:paymentId
 const getTransactionById = async (req, res) => {
   try {
@@ -302,7 +304,6 @@ const deleteTransaction = async (req, res) => {
 };
 
 // ANALYTICS
-
 const getTransactionVolume = async (req, res) => {
   try {
     const result = await Transaction.aggregate([
