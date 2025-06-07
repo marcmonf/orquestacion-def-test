@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   methodHeader.addEventListener('click', () => {
     const isOpen = cardForm.classList.contains('show');
-
     methodHeader.classList.toggle('active', !isOpen);
     cardForm.classList.toggle('show', !isOpen);
   });
@@ -32,8 +31,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+function mostrarMensajeExito(transaction, returnUrl) {
+  const successDiv = document.getElementById('success-message');
+  successDiv.innerHTML = `
+    <strong>✅ ¡Pago realizado con éxito!</strong>
+    Importe: ${transaction.amount} ${transaction.currency}<br>
+    ID: <small>${transaction._id}</small><br>
+    Merchant: <small>${transaction.merchantId}</small><br><br>
+    <button onclick="window.location.href='${returnUrl}'" style="
+      margin-top: 10px;
+      padding: 10px 16px;
+      background-color: #2b6cb0;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    ">Volver a la tienda</button>
+  `;
+  successDiv.style.display = 'block';
+
+  const formCard = document.getElementById('card-form');
+  const headerCard = document.getElementById('method-card');
+  if (formCard) formCard.style.display = 'none';
+  if (headerCard) headerCard.style.display = 'none';
+}
+
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+
+  const returnUrl = 'https://mitienda.com/gracias'; // 👈 Puedes hacer esto dinámico si lo deseas
 
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
@@ -46,7 +73,8 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
     merchantId: 'demo-merchant',
     method: 'card',
     status: 'approved',
-    transactionType: 'CIT'
+    transactionType: 'CIT',
+    returnUrl // opcionalmente se podría enviar también al backend
   };
 
   const res = await fetch(apiUrl, {
@@ -57,17 +85,7 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
 
   const result = await res.json();
   if (result.success && result.transaction) {
-    const successDiv = document.getElementById('success-message');
-    successDiv.innerHTML = `
-      <strong>✅ ¡Pago realizado con éxito!</strong>
-      Importe: ${result.transaction.amount} ${result.transaction.currency}<br>
-      ID: <small>${result.transaction._id}</small><br>
-      Merchant: <small>${result.transaction.merchantId}</small>
-    `;
-    successDiv.style.display = 'block';
-
-    document.getElementById('card-form').style.display = 'none';
-    document.getElementById('method-card').style.display = 'none';
+    mostrarMensajeExito(result.transaction, returnUrl);
   } else {
     alert(result.message || 'Error en el pago.');
   }
@@ -94,6 +112,7 @@ function startApplePaySession() {
 
   session.onpaymentauthorized = async (event) => {
     const paymentData = event.payment.token.paymentData;
+    const returnUrl = 'https://mitienda.com/gracias';
 
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -104,16 +123,18 @@ function startApplePaySession() {
         amount: 99.90,
         currency: 'EUR',
         merchantId: 'demo-merchant',
-        transactionType: 'CIT'
+        transactionType: 'CIT',
+        returnUrl
       })
     });
 
     const result = await response.json();
     if (result.success && result.transaction) {
       session.completePayment(ApplePaySession.STATUS_SUCCESS);
-      alert('✅ Apple Pay completado');
+      mostrarMensajeExito(result.transaction, returnUrl);
     } else {
       session.completePayment(ApplePaySession.STATUS_FAILURE);
+      alert(result.message || 'Apple Pay falló');
     }
   };
 
@@ -122,6 +143,7 @@ function startApplePaySession() {
 
 async function onGooglePayButtonClicked() {
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+  const returnUrl = 'https://mitienda.com/gracias';
 
   const paymentData = await client.loadPaymentData({
     apiVersion: 2,
@@ -158,13 +180,14 @@ async function onGooglePayButtonClicked() {
       amount: 99.90,
       currency: 'EUR',
       merchantId: 'demo-merchant',
-      transactionType: 'CIT'
+      transactionType: 'CIT',
+      returnUrl
     })
   });
 
   const result = await res.json();
   if (result.success && result.transaction) {
-    alert('✅ Google Pay completado');
+    mostrarMensajeExito(result.transaction, returnUrl);
   } else {
     alert(result.message || 'Google Pay falló');
   }
