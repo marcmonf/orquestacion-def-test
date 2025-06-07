@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function mostrarMensajeExito(transaction) {
-  const returnUrl = transaction.returnUrl || 'https://default.url'; // Fallback por si no viene
+  const returnUrl = transaction.returnUrl || 'https://orquestacion-def-test.onrender.com';
   const successDiv = document.getElementById('success-message');
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
@@ -64,7 +64,7 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
     method: 'card',
     status: 'approved',
     transactionType: 'CIT',
-    returnUrl: 'https://mitienda.com/gracias'
+    returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
   };
 
   const res = await fetch(apiUrl, {
@@ -113,7 +113,7 @@ function startApplePaySession() {
         currency: 'EUR',
         merchantId: 'demo-merchant',
         transactionType: 'CIT',
-        returnUrl: 'https://mitienda.com/gracias'
+        returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
       })
     });
 
@@ -169,7 +169,7 @@ async function onGooglePayButtonClicked() {
       currency: 'EUR',
       merchantId: 'demo-merchant',
       transactionType: 'CIT',
-      returnUrl: 'https://mitienda.com/gracias'
+      returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
     })
   });
 
@@ -181,5 +181,6 @@ async function onGooglePayButtonClicked() {
   }
 }
 
+// 👇 Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
