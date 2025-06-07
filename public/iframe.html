@@ -134,6 +134,28 @@
       transform: scale(1.02);
       box-shadow: 0 0 0 2px rgba(0, 112, 243, 0.15);
     }
+
+    #success-message {
+      display: none;
+      background-color: #e6ffed;
+      color: #256029;
+      padding: 15px;
+      border: 1px solid #b7eb8f;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      animation: fadeSlide 0.3s ease-out;
+    }
+
+    #success-message strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    #success-message small {
+      font-size: 12px;
+      color: #555;
+    }
   </style>
 </head>
 <body>
@@ -142,6 +164,8 @@
       Powered by
       <img src="/Logo_Monetiser.png" alt="Monetiser Logo">
     </div>
+
+    <div id="success-message"></div>
 
     <h2>Método de Pago</h2>
 
