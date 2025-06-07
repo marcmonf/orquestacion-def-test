@@ -134,7 +134,6 @@ const transactionSchema = Joi.object({
     otherwise: Joi.forbidden()
   }),
 
-  // Nuevos: Apple Pay y Google Pay
   paymentData: Joi.when('method', {
     is: Joi.valid('applepay', 'googlepay'),
     then: Joi.required().messages({
@@ -189,6 +188,10 @@ const transactionSchema = Joi.object({
         }),
       otherwise: Joi.optional()
     })
+  }),
+
+  returnUrl: Joi.string().uri().optional().messages({
+    'string.uri': 'transaction.invalid.returnUrl'
   })
 });
 
