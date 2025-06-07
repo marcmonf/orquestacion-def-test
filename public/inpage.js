@@ -11,7 +11,6 @@ document.addEventListener('DOMContentLoaded', () => {
     cardForm.classList.toggle('show', !isOpen);
   });
 
-  // Detectar el sistema operativo del dispositivo
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const isAndroid = /Android/i.test(navigator.userAgent);
 
@@ -24,20 +23,18 @@ document.addEventListener('DOMContentLoaded', () => {
     applePayBtn.style.display = 'none';
   }
 
-  // Inicializar Apple Pay si aplica
   if (isIOS && window.ApplePaySession && ApplePaySession.canMakePayments()) {
     applePayBtn.addEventListener('click', startApplePaySession);
   }
 
-  // Inicializar Google Pay si aplica
   if (isAndroid && window.google) {
     googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
   }
 });
 
-// Pago con tarjeta
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
     cardNumber: document.getElementById('cardNumber').value,
@@ -60,13 +57,22 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
 
   const result = await res.json();
   if (result.success && result.transaction) {
-    alert('✅ Pago realizado. ID: ' + result.transaction._id);
+    const successDiv = document.getElementById('success-message');
+    successDiv.innerHTML = `
+      <strong>✅ ¡Pago realizado con éxito!</strong>
+      Importe: ${result.transaction.amount} ${result.transaction.currency}<br>
+      ID: <small>${result.transaction._id}</small><br>
+      Merchant: <small>${result.transaction.merchantId}</small>
+    `;
+    successDiv.style.display = 'block';
+
+    document.getElementById('card-form').style.display = 'none';
+    document.getElementById('method-card').style.display = 'none';
   } else {
     alert(result.message || 'Error en el pago.');
   }
 });
 
-// Apple Pay
 function startApplePaySession() {
   const session = new ApplePaySession(3, {
     countryCode: 'ES',
@@ -114,7 +120,6 @@ function startApplePaySession() {
   session.begin();
 }
 
-// Google Pay
 async function onGooglePayButtonClicked() {
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
 
@@ -165,6 +170,5 @@ async function onGooglePayButtonClicked() {
   }
 }
 
-// 👇 Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
