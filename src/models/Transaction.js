@@ -16,6 +16,7 @@ const transactionSchema = new mongoose.Schema({
   phone:         { type: String },
   apmReference:  { type: String },
   apmExtraData:  { type: Object },
+  returnUrl:     { type: String }, // ✅ Añadido para redirección post-pago
   createdAt:     { type: Date, default: Date.now },
   updatedAt:     { type: Date, default: Date.now }
 });
