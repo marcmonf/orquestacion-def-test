@@ -31,23 +31,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function mostrarMensajeExito(transaction, returnUrl) {
+function mostrarMensajeExito(transaction) {
+  const returnUrl = transaction.returnUrl || 'https://default.url'; // Fallback por si no viene
   const successDiv = document.getElementById('success-message');
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
     Importe: ${transaction.amount} ${transaction.currency}<br>
     ID: <small>${transaction._id}</small><br>
     Merchant: <small>${transaction.merchantId}</small><br><br>
-    <button onclick="window.location.href='${returnUrl}'" style="
-      margin-top: 10px;
-      padding: 10px 16px;
-      background-color: #2b6cb0;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: bold;
-    ">Volver a la tienda</button>
+    <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
   `;
   successDiv.style.display = 'block';
 
@@ -59,8 +51,6 @@ function mostrarMensajeExito(transaction, returnUrl) {
 
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-
-  const returnUrl = 'https://mitienda.com/gracias'; // 👈 Puedes hacer esto dinámico si lo deseas
 
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
@@ -74,7 +64,7 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
     method: 'card',
     status: 'approved',
     transactionType: 'CIT',
-    returnUrl // opcionalmente se podría enviar también al backend
+    returnUrl: 'https://mitienda.com/gracias'
   };
 
   const res = await fetch(apiUrl, {
@@ -85,7 +75,7 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
 
   const result = await res.json();
   if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction, returnUrl);
+    mostrarMensajeExito(result.transaction);
   } else {
     alert(result.message || 'Error en el pago.');
   }
@@ -112,7 +102,6 @@ function startApplePaySession() {
 
   session.onpaymentauthorized = async (event) => {
     const paymentData = event.payment.token.paymentData;
-    const returnUrl = 'https://mitienda.com/gracias';
 
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -124,14 +113,14 @@ function startApplePaySession() {
         currency: 'EUR',
         merchantId: 'demo-merchant',
         transactionType: 'CIT',
-        returnUrl
+        returnUrl: 'https://mitienda.com/gracias'
       })
     });
 
     const result = await response.json();
     if (result.success && result.transaction) {
       session.completePayment(ApplePaySession.STATUS_SUCCESS);
-      mostrarMensajeExito(result.transaction, returnUrl);
+      mostrarMensajeExito(result.transaction);
     } else {
       session.completePayment(ApplePaySession.STATUS_FAILURE);
       alert(result.message || 'Apple Pay falló');
@@ -143,7 +132,6 @@ function startApplePaySession() {
 
 async function onGooglePayButtonClicked() {
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
-  const returnUrl = 'https://mitienda.com/gracias';
 
   const paymentData = await client.loadPaymentData({
     apiVersion: 2,
@@ -181,13 +169,13 @@ async function onGooglePayButtonClicked() {
       currency: 'EUR',
       merchantId: 'demo-merchant',
       transactionType: 'CIT',
-      returnUrl
+      returnUrl: 'https://mitienda.com/gracias'
     })
   });
 
   const result = await res.json();
   if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction, returnUrl);
+    mostrarMensajeExito(result.transaction);
   } else {
     alert(result.message || 'Google Pay falló');
   }
