@@ -64,17 +64,7 @@ const createTransaction = async (req, res) => {
   }
 
   try {
-    const existingTx = await Transaction.findOne({ paymentId: value.paymentId });
-    if (existingTx) {
-      logger.info('Transacción repetida detectada (idempotencia)', { paymentId: value.paymentId });
-      return res.status(200).json({
-        success: true,
-        message: res.getMessage('transaction.created'),
-        transaction: existingTx,
-        recurrenceId: existingTx.recurrenceId,
-        token: existingTx.token || null
-      });
-    }
+    const generatedPaymentId = uuidv4();
 
     let recurrenceId = value.recurrenceId || null;
     let token = value.token || null;
@@ -132,7 +122,6 @@ const createTransaction = async (req, res) => {
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
 
-    // ✅ Añadimos returnUrl si está presente
     if (value.returnUrl) {
       sanitizedValue.returnUrl = value.returnUrl;
     }
@@ -168,7 +157,7 @@ const createTransaction = async (req, res) => {
 
     const newTransaction = new Transaction({
       ...sanitizedValue,
-      paymentId: value.paymentId || uuidv4(),
+      paymentId: generatedPaymentId,
       recurrenceId,
       token
     });
