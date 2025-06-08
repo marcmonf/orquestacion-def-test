@@ -28,6 +28,7 @@ const idempotencyMiddleware = require('./src/middleware/idempotency');
 // Rutas
 const transactionsRouter = require('./src/routes/transactions');
 const applePayRoutes = require('./src/routes/applePayRoutes'); // ✅ Nueva ruta añadida
+const pmsRoutes = require('./src/routes/pmsRoutes'); // ✅ Ruta para integración con Cloudbeds
 
 dotenv.config();
 const app = express();
@@ -83,6 +84,9 @@ app.use('/iframe-process', require('./src/routes/iframe'));
 
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
+
+// ✅ Ruta protegida para integraciones PMS (incluye Cloudbeds)
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
