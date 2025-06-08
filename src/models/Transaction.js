@@ -8,15 +8,26 @@ const transactionSchema = new mongoose.Schema({
   method:        { type: String, required: true },
   status:        { type: String, required: true },
   cardholderName:{ type: String, required: true },
-  expiryMonth:   { type: String, required: true }, // MM (01–12)
-  expiryYear:    { type: String, required: true }, // YYYY (2025...)
+  expiryMonth:   { type: String, required: true },
+  expiryYear:    { type: String, required: true },
   authCode:      { type: String },
   processor:     { type: String },
   fallbackUsed:  { type: Boolean, default: false },
   phone:         { type: String },
   apmReference:  { type: String },
   apmExtraData:  { type: Object },
-  returnUrl:     { type: String }, // ✅ Añadido para redirección post-pago
+  returnUrl:     { type: String },
+
+  // Hospitality-specific fields
+  reservationId: { type: String },
+  guestName:     { type: String },
+  checkInDate:   { type: Date },
+  checkOutDate:  { type: Date },
+  roomType:      { type: String },
+  rateCode:      { type: String },
+  channel:       { type: String },
+  folioNumber:   { type: String },
+
   createdAt:     { type: Date, default: Date.now },
   updatedAt:     { type: Date, default: Date.now }
 });
