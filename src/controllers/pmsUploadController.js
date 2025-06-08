@@ -38,7 +38,12 @@ const uploadReservationsFromCsv = async (req, res) => {
         roomType: resv.roomType,
         rateCode: resv.rateCode,
         channel: resv.channel,
-        folioNumber: resv.folioNumber
+        folioNumber: resv.folioNumber,
+
+        // Campos dummy para cumplir con el modelo
+        cardholderName: 'PENDING_GUEST',
+        expiryMonth: '12',
+        expiryYear: '2099'
       });
 
       await transaction.save();
