@@ -31,8 +31,8 @@ const applePayRoutes = require('./src/routes/applePayRoutes');
 const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
 const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
 const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
-app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
 
+// Configuración
 dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
@@ -89,6 +89,7 @@ app.use('/apple-pay', applePayRoutes);
 // ✅ Rutas protegidas PMS
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsUploadRoutes);
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
