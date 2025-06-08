@@ -30,6 +30,8 @@ const transactionsRouter = require('./src/routes/transactions');
 const applePayRoutes = require('./src/routes/applePayRoutes');
 const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
 const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
+const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
 
 dotenv.config();
 const app = express();
