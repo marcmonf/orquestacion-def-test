@@ -8,14 +8,16 @@ const apiKeyAuth = require('../middleware/auth');
 const checkRole = require('../middleware/checkRole');
 const rateLimiter = require('../middleware/rateLimiter');
 
-const upload = multer({ storage: multer.memoryStorage() });
+// Configuración actualizada para multer@2
+const storage = multer.memoryStorage();
+const upload = multer({ storage }).single('file');
 
 router.post(
   '/upload-reservations',
   apiKeyAuth,
   checkRole(['admin']),
   rateLimiter,
-  upload.single('file'),
+  upload,
   uploadReservationsFromCsv
 );
 
