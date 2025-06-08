@@ -27,8 +27,9 @@ const idempotencyMiddleware = require('./src/middleware/idempotency');
 
 // Rutas
 const transactionsRouter = require('./src/routes/transactions');
-const applePayRoutes = require('./src/routes/applePayRoutes'); // ✅ Nueva ruta añadida
-const pmsRoutes = require('./src/routes/pmsRoutes'); // ✅ Ruta para integración con Cloudbeds
+const applePayRoutes = require('./src/routes/applePayRoutes');
+const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
+const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
 
 dotenv.config();
 const app = express();
@@ -45,9 +46,7 @@ const validateApiKey = (req, res, next) => {
   }
 
   // ⚠️ TEMPORAL: Inyectar rol desde backend para entorno de pruebas
-  // Sustituir por lógica real en producción
   req.userRole = 'admin';
-
   next();
 };
 
@@ -85,8 +84,9 @@ app.use('/iframe-process', require('./src/routes/iframe'));
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
 
-// ✅ Ruta protegida para integraciones PMS (incluye Cloudbeds)
+// ✅ Rutas protegidas PMS
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsUploadRoutes);
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
