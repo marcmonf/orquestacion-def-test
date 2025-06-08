@@ -36,7 +36,7 @@ function mostrarMensajeExito(transaction) {
   const successDiv = document.getElementById('success-message');
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
-    Importe: ${transaction.amount} ${transaction.currency}<br>
+    Importe: ${transaction.amount.toFixed(2)} ${transaction.currency}<br>
     ID: <small>${transaction._id}</small><br>
     Merchant: <small>${transaction.merchantId}</small><br><br>
     <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
