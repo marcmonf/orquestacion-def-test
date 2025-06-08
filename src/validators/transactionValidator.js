@@ -192,7 +192,17 @@ const transactionSchema = Joi.object({
 
   returnUrl: Joi.string().uri().optional().messages({
     'string.uri': 'transaction.invalid.returnUrl'
-  })
+  }),
+
+  // Hospitality-specific fields (optional)
+  reservationId: Joi.string().optional(),
+  guestName: Joi.string().optional(),
+  checkInDate: Joi.date().optional(),
+  checkOutDate: Joi.date().optional(),
+  roomType: Joi.string().optional(),
+  rateCode: Joi.string().optional(),
+  channel: Joi.string().optional(),
+  folioNumber: Joi.string().optional()
 });
 
 module.exports = transactionSchema;
