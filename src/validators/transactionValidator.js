@@ -4,7 +4,7 @@ const Joi = require('joi');
 const currentYear = new Date().getFullYear();
 
 const transactionSchema = Joi.object({
-  paymentId: Joi.string().optional(),
+  paymentId: Joi.forbidden(),
 
   amount: Joi.number()
     .positive()
