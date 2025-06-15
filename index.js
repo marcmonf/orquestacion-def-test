@@ -31,6 +31,7 @@ const applePayRoutes = require('./src/routes/applePayRoutes');
 const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
 const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
 const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
+const pmsQueryRoutes = require('./src/routes/pmsQueryRoutes'); // Consulta de reservas
 
 // Configuración
 dotenv.config();
@@ -90,6 +91,7 @@ app.use('/apple-pay', applePayRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsUploadRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsQueryRoutes); // ← nueva ruta para consultas de reservas
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
