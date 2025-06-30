@@ -1,4 +1,3 @@
-// src/controllers/pmsUploadController.js
 const { parseCsvReservations } = require('../utils/csvParser');
 const Transaction = require('../models/Transaction');
 const { v4: uuidv4 } = require('uuid');
@@ -39,8 +38,6 @@ const uploadReservationsFromCsv = async (req, res) => {
         rateCode: resv.rateCode,
         channel: resv.channel,
         folioNumber: resv.folioNumber,
-
-        // Campos dummy para cumplir con el modelo
         cardholderName: 'PENDING_GUEST',
         expiryMonth: '12',
         expiryYear: '2099'
@@ -64,4 +61,36 @@ const uploadReservationsFromCsv = async (req, res) => {
   }
 };
 
-module.exports = { uploadReservationsFromCsv };
+const getReservations = async (req, res) => {
+  try {
+    const { merchantId, status, from, to } = req.query;
+
+    const filter = {};
+    if (merchantId) filter.merchantId = merchantId;
+    if (status) filter.status = status;
+    if (from || to) {
+      filter.checkInDate = {};
+      if (from) filter.checkInDate.$gte = new Date(from);
+      if (to) filter.checkInDate.$lte = new Date(to);
+    }
+
+    const reservations = await Transaction.find(filter).sort({ checkInDate: 1 });
+
+    return res.status(200).json({
+      success: true,
+      message: res.getMessage('pms.reservationListSuccess'),
+      data: reservations
+    });
+  } catch (error) {
+    logger.error('Error fetching reservations:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: res.getMessage('pms.reservationListError')
+    });
+  }
+};
+
+module.exports = {
+  uploadReservationsFromCsv,
+  getReservations
+};
