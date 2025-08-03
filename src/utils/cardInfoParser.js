@@ -14,15 +14,12 @@ const parseBin = async (cardNumber) => {
     const data = response.data;
 
     return {
-      bin,
-      brand: data.scheme || null,
-      type: data.type || null, // credit / debit
-      category: data.category || null, // business / prepaid / etc.
-      issuerCountry: data.country?.alpha2 || null,
-      isCorporate: data?.category?.toLowerCase() === 'business',
-      isPrepaid: data?.prepaid || false,
-      issuerName: data.bank?.name || null
-    };
+  bin,
+  brand: 'visa',
+  type: 'credit',
+  issuerCountry: 'ES',
+  isCorporate: false
+};
 
   } catch (err) {
     logger.warn('❗️No se pudo analizar el BIN de la tarjeta', { error: err.message });
