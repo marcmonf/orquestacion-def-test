@@ -13,12 +13,12 @@ const parseBin = async (cardNumber) => {
 
     const data = response.data;
 
-    return {
+  return {
   bin,
-  brand: 'mastercard',
+  brand: 'amex',
   type: 'credit',
-  issuerCountry: 'PT',
-  isCorporate: true
+  issuerCountry: 'US',
+  isCorporate: false
 };
 
   } catch (err) {
