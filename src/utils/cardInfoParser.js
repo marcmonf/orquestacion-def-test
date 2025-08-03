@@ -15,10 +15,10 @@ const parseBin = async (cardNumber) => {
 
     return {
   bin,
-  brand: 'visa',
+  brand: 'mastercard',
   type: 'credit',
-  issuerCountry: 'ES',
-  isCorporate: false
+  issuerCountry: 'PT',
+  isCorporate: true
 };
 
   } catch (err) {
