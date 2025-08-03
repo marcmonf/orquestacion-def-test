@@ -12,6 +12,8 @@ module.exports = function defaultStrategy(transaction) {
     if (cardInfo) {
       const { brand, type, isCorporate, issuerCountry } = cardInfo;
 
+      console.log('[DEBUG] cardInfo recibido por strategy:', cardInfo);
+
       if (brand === 'visa' && type === 'credit' && !isCorporate && issuerCountry === 'ES') {
         return 'visaAcquirer';
       }
