@@ -38,6 +38,13 @@ const transactionSchema = Joi.object({
       'any.required': 'transaction.invalid.method'
     }),
 
+  cardScheme: Joi.string()
+    .valid('visa', 'mastercard', 'amex', 'maestro', 'discover', 'diners', 'jcb')
+    .optional()
+    .messages({
+      'any.only': 'transaction.invalid.cardScheme'
+    }),
+
   status: Joi.string()
     .valid('approved', 'declined', 'pending')
     .optional()
