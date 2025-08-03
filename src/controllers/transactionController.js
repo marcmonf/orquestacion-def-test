@@ -18,6 +18,8 @@ const mcAcquirer = require('../channels/acquirers/mcAcquirer');
 const amexAcquirer = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer = require('../channels/acquirers/defaultCardAcquirer');
 
+const { parseBin } = require('../utils/cardInfoParser');
+
 // GET /transactions
 const getAllTransactions = async (req, res) => {
   try {
@@ -133,7 +135,15 @@ const createTransaction = async (req, res) => {
       sanitizedValue.returnUrl = value.returnUrl;
     }
 
-    const selectedConnector = await selectConnector(value);
+    let cardInfo = null;
+    if (value.method === 'card' && value.cardNumber) {
+      cardInfo = await parseBin(value.cardNumber);
+    }
+
+    const selectedConnector = await selectConnector({
+      ...value,
+      cardInfo
+    });
 
     logger.info(`🧠 Orchestrator selected connector: ${selectedConnector}`);
     auditLogger.info({
@@ -183,6 +193,7 @@ const createTransaction = async (req, res) => {
     sanitizedValue.transactionId = response.transactionId;
     if (response.authCode) sanitizedValue.authCode = response.authCode;
     if (response.timestamp) sanitizedValue.timestamp = response.timestamp;
+    if (cardInfo) sanitizedValue.cardInfo = cardInfo;
 
     const newTransaction = new Transaction({
       ...sanitizedValue,
