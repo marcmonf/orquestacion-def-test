@@ -60,7 +60,14 @@ module.exports = {
     'transaction.invalid.phone.bizum.required': 'The phone number is required for Bizum.',
     'transaction.invalid.currency.pix.required': 'Pix payments require BRL as the currency.',
     // Health
-    'health.ok': 'API operational'
+    'health.ok': 'API operational',
+
+    // PMS
+    'pms.upload.success': 'Reservations uploaded successfully.',
+    'pms.upload.error': 'An error occurred while uploading the reservations file.',
+    'pms.invalid.format': 'The uploaded file format is invalid or not supported.',
+    'pms.fetch.error': 'Error fetching PMS reservations.',
+    'pms.no.reservations': 'No reservations found for the selected criteria.'
   },
 
   es: {
@@ -71,16 +78,13 @@ module.exports = {
     'error.rateLimit': 'Demasiadas peticiones desde esta IP. Intenta nuevamente más tarde.',
     'error.notFound': 'Ruta no encontrada.',
     'error.insufficientPermissions': 'Permisos insuficientes para acceder a este recurso.',
-
     // Rate Limiting
     'rateLimit.tokens': 'Demasiadas solicitudes de token. Intenta nuevamente más tarde.',
     'rateLimit.webhooks': 'Demasiadas peticiones entrantes al endpoint de webhooks. Intenta más tarde.',
-
     // Tokens
     'token.created': 'Tarjeta tokenizada correctamente.',
     'token.not.found': 'Token no encontrado.',
     'token.error': 'Ocurrió un error al tokenizar la tarjeta.',
-
     // Token validation
     'token.invalid.cardNumber': 'Número de tarjeta inválido.',
     'token.invalid.cvv': 'El CVV debe tener 3 o 4 dígitos.',
@@ -91,7 +95,6 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName debe tener al menos 2 caracteres.',
     'token.invalid.cardholderName.tooLong': 'cardholderName no puede superar los 64 caracteres.',
     'token.invalid.cardNumberOrCvv': 'El número de tarjeta y el CVV no coinciden con el formato esperado para el esquema detectado.',
-
     // Transacciones
     'transaction.created': 'Transacción creada correctamente.',
     'transaction.not.found': 'Transacción no encontrada.',
@@ -122,15 +125,19 @@ module.exports = {
     'transaction.invalid.cvv': 'El CVV debe tener 3 o 4 dígitos.',
     'transaction.invalid.cvv.required': 'El CVV es obligatorio para transacciones CIT.',
     'recurrentProfiles.fetch.error': 'Error al obtener perfiles recurrentes.',
-   
-    // ...otras claves
     'transaction.invalid.phone': 'El número de teléfono es inválido.',
     'transaction.invalid.phone.mbway.required': 'El número de teléfono es obligatorio para MB WAY.',
     'transaction.invalid.phone.bizum.required': 'El número de teléfono es obligatorio para Bizum.',
     'transaction.invalid.currency.pix.required': 'Los pagos con Pix requieren que la moneda sea BRL.',
-
     // Health
-    'health.ok': 'API operativa'
+    'health.ok': 'API operativa',
+
+    // PMS
+    'pms.upload.success': 'Reservas cargadas correctamente.',
+    'pms.upload.error': 'Ocurrió un error al subir el archivo de reservas.',
+    'pms.invalid.format': 'El formato del archivo cargado no es válido o no está soportado.',
+    'pms.fetch.error': 'Error al obtener las reservas del PMS.',
+    'pms.no.reservations': 'No se encontraron reservas para los criterios seleccionados.'
   },
 
   fr: {
@@ -141,16 +148,13 @@ module.exports = {
     'error.rateLimit': 'Trop de requêtes depuis cette IP. Veuillez réessayer plus tard.',
     'error.notFound': 'Route introuvable.',
     'error.insufficientPermissions': "Permissions insuffisantes pour accéder à cette ressource.",
-
     // Rate Limiting
     'rateLimit.tokens': 'Trop de requêtes de jetons. Veuillez réessayer plus tard.',
     'rateLimit.webhooks': 'Trop de requêtes entrantes vers le point de terminaison des webhooks. Veuillez réessayer plus tard.',
-
     // Tokens
     'token.created': 'Carte tokenisée avec succès.',
     'token.not.found': 'Jeton introuvable.',
     'token.error': 'Une erreur est survenue lors de la tokenisation de la carte.',
-
     // Token validation
     'token.invalid.cardNumber': 'Numéro de carte invalide.',
     'token.invalid.cvv': 'Le CVV doit comporter 3 ou 4 chiffres.',
@@ -161,7 +165,6 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName doit comporter au moins 2 caractères.',
     'token.invalid.cardholderName.tooLong': 'cardholderName ne doit pas dépasser 64 caractères.',
     'token.invalid.cardNumberOrCvv': 'Le numéro de carte et le CVV ne correspondent pas au format attendu pour le schéma détecté.',
-
     // Transactions
     'transaction.created': 'Transaction créée avec succès.',
     'transaction.not.found': 'Transaction introuvable.',
@@ -192,18 +195,22 @@ module.exports = {
     'transaction.invalid.cvv': 'Le CVV doit comporter 3 ou 4 chiffres.',
     'transaction.invalid.cvv.required': 'Le CVV est requis pour les transactions CIT.',
     'recurrentProfiles.fetch.error': 'Erreur lors de la récupération des profils récurrents.',
-
-    // autres
     'transaction.invalid.phone': 'Le numéro de téléphone est invalide.',
     'transaction.invalid.phone.mbway.required': 'Le numéro de téléphone est requis pour MB WAY.',
     'transaction.invalid.phone.bizum.required': 'Le numéro de téléphone est requis pour Bizum.',
     'transaction.invalid.currency.pix.required': 'Les paiements par Pix nécessitent la devise BRL.',
-
     // Health
-    'health.ok': 'API opérationnelle'
+    'health.ok': 'API opérationnelle',
+
+    // PMS
+    'pms.upload.success': 'Réservations téléchargées avec succès.',
+    'pms.upload.error': 'Une erreur est survenue lors du téléchargement du fichier de réservations.',
+    'pms.invalid.format': 'Le format du fichier téléchargé est invalide ou non pris en charge.',
+    'pms.fetch.error': 'Erreur lors de la récupération des réservations PMS.',
+    'pms.no.reservations': 'Aucune réservation trouvée pour les critères sélectionnés.'
   },
-    
-    pt: {
+
+  pt: {
     // Geral
     'error.internal': 'Erro interno no servidor.',
     'error.unexpected': 'Ocorreu um erro inesperado no servidor.',
@@ -211,16 +218,13 @@ module.exports = {
     'error.rateLimit': 'Muitas solicitações deste IP. Tente novamente mais tarde.',
     'error.notFound': 'Rota não encontrada.',
     'error.insufficientPermissions': 'Permissões insuficientes para acessar este recurso.',
-
     // Rate Limiting
     'rateLimit.tokens': 'Muitas solicitações de token. Tente novamente mais tarde.',
     'rateLimit.webhooks': 'Muitas chamadas recebidas para o endpoint de webhooks. Tente novamente mais tarde.',
-
     // Tokens
     'token.created': 'Cartão tokenizado com sucesso.',
     'token.not.found': 'Token não encontrado.',
     'token.error': 'Ocorreu um erro ao tokenizar o cartão.',
-
     // Validação de Token
     'token.invalid.cardNumber': 'Número de cartão inválido.',
     'token.invalid.cvv': 'O CVV deve conter 3 ou 4 dígitos.',
@@ -231,7 +235,6 @@ module.exports = {
     'token.invalid.cardholderName.tooShort': 'cardholderName deve ter pelo menos 2 caracteres.',
     'token.invalid.cardholderName.tooLong': 'cardholderName não deve ultrapassar 64 caracteres.',
     'token.invalid.cardNumberOrCvv': 'O número do cartão e o CVV não correspondem ao formato esperado.',
-
     // Transações
     'transaction.created': 'Transação criada com sucesso.',
     'transaction.not.found': 'Transação não encontrada.',
@@ -262,15 +265,18 @@ module.exports = {
     'transaction.invalid.cvv': 'O CVV deve conter 3 ou 4 dígitos.',
     'transaction.invalid.cvv.required': 'O CVV é obrigatório para transações CIT.',
     'recurrentProfiles.fetch.error': 'Erro ao obter perfis recorrentes.',
-
-    // Específicos APM
     'transaction.invalid.phone': 'O número de telefone é inválido.',
     'transaction.invalid.phone.mbway.required': 'O número de telefone é obrigatório para MB WAY.',
     'transaction.invalid.phone.bizum.required': 'O número de telefone é obrigatório para Bizum.',
     'transaction.invalid.currency.pix.required': 'Pagamentos com Pix requerem a moeda BRL.',
-
     // Saúde
-    'health.ok': 'API operacional'
-  }
+    'health.ok': 'API operacional',
 
+    // PMS
+    'pms.upload.success': 'Reservas carregadas com sucesso.',
+    'pms.upload.error': 'Ocorreu um erro ao carregar o arquivo de reservas.',
+    'pms.invalid.format': 'O formato do arquivo carregado é inválido ou não é suportado.',
+    'pms.fetch.error': 'Erro ao buscar reservas do PMS.',
+    'pms.no.reservations': 'Nenhuma reserva encontrada para os critérios selecionados.'
+  }
 };
