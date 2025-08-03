@@ -40,10 +40,9 @@ const transactionSchema = Joi.object({
 
   status: Joi.string()
     .valid('approved', 'declined', 'pending')
-    .required()
+    .optional()
     .messages({
-      'any.only': 'transaction.invalid.status',
-      'any.required': 'transaction.invalid.status'
+      'any.only': 'transaction.invalid.status'
     }),
 
   merchantId: Joi.string()
