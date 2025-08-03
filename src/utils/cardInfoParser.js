@@ -1,30 +1,30 @@
 // src/utils/cardInfoParser.js
 const axios = require('axios');
-const logger = require('../utils/logger');
 
-const parseBin = async (cardNumber) => {
+async function parseBin(cardNumber) {
   try {
-    const bin = cardNumber.slice(0, 8).padEnd(6, '0').slice(0, 6); // Asegura al menos 6 dígitos
+    const bin = cardNumber.slice(0, 6);
+
     const response = await axios.get(`https://lookup.binlist.net/${bin}`, {
-      headers: {
-        'Accept-Version': '3'
-      }
+      headers: { 'Accept-Version': '3' }
     });
 
     const data = response.data;
 
-  return {
-  bin,
-  brand: 'amex',
-  type: 'credit',
-  issuerCountry: 'US',
-  isCorporate: false
-};
-
+    return {
+      bin,
+      brand: data.scheme || null,
+      type: data.type || null,               // 'debit' | 'credit'
+      category: data.category || null,       // 'prepaid', etc. (if available)
+      issuerCountry: data.country?.alpha2 || null,
+      issuerName: data.bank?.name || null,
+      isCorporate: data.prepaid === false && data.type === 'credit' && data.bank?.name?.toLowerCase().includes('corporate'),
+      isPrepaid: data.prepaid === true
+    };
   } catch (err) {
-    logger.warn('❗️No se pudo analizar el BIN de la tarjeta', { error: err.message });
-    return null;
+    console.warn(`[⚠️  BIN Lookup] Error parsing BIN: ${err.message}`);
+    return null; // Si falla, devolvemos null para que el strategy use el fallback
   }
-};
+}
 
 module.exports = { parseBin };
