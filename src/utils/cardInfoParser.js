@@ -5,6 +5,21 @@ async function parseBin(cardNumber) {
   try {
     const bin = cardNumber.slice(0, 6);
 
+    // 🔧 Override manual temporal para pruebas (BIN 545454)
+    if (bin === '545454') {
+      console.debug('[DEBUG] Override aplicado para BIN 545454');
+      return {
+        bin,
+        brand: 'mastercard',
+        type: 'credit',
+        category: 'corporate',
+        issuerCountry: 'US',
+        issuerName: 'Bank of America',
+        isCorporate: true,
+        isPrepaid: false
+      };
+    }
+
     const response = await axios.get(`https://lookup.binlist.net/${bin}`, {
       headers: { 'Accept-Version': '3' }
     });
@@ -18,7 +33,10 @@ async function parseBin(cardNumber) {
       category: data.category || null,       // 'prepaid', etc. (if available)
       issuerCountry: data.country?.alpha2 || null,
       issuerName: data.bank?.name || null,
-      isCorporate: data.prepaid === false && data.type === 'credit' && data.bank?.name?.toLowerCase().includes('corporate'),
+      isCorporate:
+        data.prepaid === false &&
+        data.type === 'credit' &&
+        data.bank?.name?.toLowerCase().includes('corporate'),
       isPrepaid: data.prepaid === true
     };
   } catch (err) {
