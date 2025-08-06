@@ -5,7 +5,7 @@ async function parseBin(cardNumber) {
   try {
     const bin = cardNumber.slice(0, 6);
 
-    // 🔧 Override manual temporal para pruebas (BIN 545454)
+    // 🔧 Override manual temporal para pruebas locales con BIN 545454
     if (bin === '545454') {
       console.debug('[DEBUG] Override aplicado para BIN 545454');
       return {
@@ -30,13 +30,16 @@ async function parseBin(cardNumber) {
       bin,
       brand: data.scheme || null,
       type: data.type || null,               // 'debit' | 'credit'
-      category: data.category || null,       // 'prepaid', etc. (if available)
+      category: data.category || null,       // Ej: 'business', 'corporate', 'classic', etc.
       issuerCountry: data.country?.alpha2 || null,
       issuerName: data.bank?.name || null,
       isCorporate:
         data.prepaid === false &&
         data.type === 'credit' &&
-        data.bank?.name?.toLowerCase().includes('corporate'),
+        (
+          data.category?.toLowerCase().includes('business') ||
+          data.category?.toLowerCase().includes('corporate')
+        ),
       isPrepaid: data.prepaid === true
     };
   } catch (err) {
