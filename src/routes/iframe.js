@@ -1,42 +1,54 @@
 // src/routes/iframe.js
+
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const getMessage = require('../i18n/getMessage');
+const path = require('path');
+const Transaction = require('../models/Transaction');
+const crypto = require('crypto');
 
-router.post('/', async (req, res) => {
-  const langHeader = req.headers['accept-language'];
-  const lang = langHeader?.split(',')[0]?.split('-')[0]?.trim().toLowerCase() || 'en';
+function generateSignature(payload, secret) {
+  return crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+}
 
-  const ORQUESTADOR_URL = process.env.ORQUESTADOR_URL;
-  const API_KEY = process.env.API_KEY;
+router.get('/', async (req, res) => {
+  const { paymentId, signature } = req.query;
 
-  if (!ORQUESTADOR_URL || !API_KEY) {
-    console.error('❌ ORQUESTADOR_URL o API_KEY no definidas en las variables de entorno');
-    return res.status(500).json({
-      success: false,
-      message: getMessage(lang, 'error.internal')
-    });
+  if (!paymentId || !signature) {
+    return res.status(400).send('Missing required parameters');
   }
 
-  console.log('🧾 BODY RECIBIDO DESDE IFRAME:', JSON.stringify(req.body, null, 2));
-
   try {
-    const response = await axios.post(`${ORQUESTADOR_URL}/transactions`, req.body, {
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': API_KEY
-      }
-    });
+    const transaction = await Transaction.findOne({ paymentId });
 
-    console.log('✅ Transacción creada correctamente:', response.data);
-    res.status(response.status).json(response.data);
-  } catch (error) {
-    console.error('❌ Error al reenviar desde /iframe-process:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      message: getMessage(lang, 'transaction.create.error')
-    });
+    if (!transaction) {
+      return res.status(404).send('Transaction not found');
+    }
+
+    // Recuperar datos críticos para verificar firma
+    const payloadToVerify = {
+      paymentId: transaction.paymentId,
+      merchantId: transaction.merchantId,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      method: transaction.method,
+      timestamp: transaction.createdAt.toISOString()
+    };
+
+    const merchantSecret = process.env.MERCHANT_SECRET || 'default_merchant_secret';
+    const expectedSignature = generateSignature(payloadToVerify, merchantSecret);
+
+    if (expectedSignature !== signature) {
+      return res.status(403).send('Invalid signature');
+    }
+
+    // Si la firma es válida, servir el iFrame
+    return res.sendFile(path.join(__dirname, '../../public', 'iframe.html'));
+  } catch (err) {
+    console.error('Error verifying signature for iFrame:', err);
+    return res.status(500).send('Internal server error');
   }
 });
 
