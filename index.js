@@ -32,6 +32,7 @@ const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
 const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
 const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
 const pmsQueryRoutes = require('./src/routes/pmsQueryRoutes'); // Consulta de reservas
+const initializeRoutes = require('./src/routes/initializeRoutes'); // 🆕 Ruta de inicialización de transacciones
 
 // Configuración
 dotenv.config();
@@ -86,6 +87,9 @@ app.use('/iframe-process', require('./src/routes/iframe'));
 
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
+
+// ✅ Ruta pública para inicialización de transacciones
+app.use('/initialize', initializeRoutes); // 🆕 Añadido
 
 // ✅ Rutas protegidas PMS
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
