@@ -7,9 +7,9 @@ const transactionSchema = new mongoose.Schema({
   currency:      { type: String, required: true },
   method:        { type: String, required: true },
   status:        { type: String, required: true },
-  cardholderName:{ type: String, required: true },
-  expiryMonth:   { type: String, required: true },
-  expiryYear:    { type: String, required: true },
+  cardholderName:{ type: String, required: false }, // ✅ Hacemos opcional
+  expiryMonth:   { type: String, required: false }, // ✅ Hacemos opcional
+  expiryYear:    { type: String, required: false }, // ✅ Hacemos opcional
   authCode:      { type: String },
   processor:     { type: String },
   fallbackUsed:  { type: Boolean, default: false },
