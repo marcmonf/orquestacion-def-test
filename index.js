@@ -1,5 +1,7 @@
 // index.js
 
+//comentario anadido
+
 // Módulos principales
 const express = require('express');
 const mongoose = require('mongoose');
