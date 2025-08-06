@@ -26,6 +26,8 @@ function generateSignature(payload, secret) {
 
 // Handler principal del endpoint
 const initializeTransaction = async (req, res) => {
+  console.log('✅ [DEBUG] Endpoint /initialize alcanzado. Payload recibido:', req.body); // 🧪 DEBUG
+
   const { error } = initializationSchema.validate(req.body);
   if (error) {
     return res.status(400).json({ error: error.details[0].message });
