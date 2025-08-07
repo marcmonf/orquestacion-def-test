@@ -2,52 +2,47 @@
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
-  paymentId:      { type: String, required: true,  unique: true },
+  paymentId:      { type: String, required: true, unique: true },
   merchantId:     { type: String, required: true },
   amount:         { type: Number, required: true },
   currency:       { type: String, required: true },
   method:         { type: String, required: true },
   status:         { type: String, required: true },
 
-  // Datos de tarjeta (opcionales)
-  cardholderName: { type: String, required: false },
-  expiryMonth:    { type: String, required: false },
-  expiryYear:     { type: String, required: false },
+  // Tarjeta (solo cuando el merchant postea los datos)
+  cardholderName: { type: String },
+  expiryMonth:    { type: String },
+  expiryYear:     { type: String },
+  bin:            { type: String, length: 8 }, // 🆕
 
-  authCode:       { type: String },
-  processor:      { type: String },
+  /* BIN enrichment */
+  cardBrand:      { type: String },
+  cardType:       { type: String },
+  cardLevel:      { type: String },
+  issuerName:     { type: String },
+  issuerCountry:  { type: String },
+  bankPhone:      { type: String },
+  countryCurrency:{ type: String },
+
+  // Otros existentes…
+  authCode:       String,
+  processor:      String,
   fallbackUsed:   { type: Boolean, default: false },
-  phone:          { type: String },
-  apmReference:   { type: String },
-  apmExtraData:   { type: Object },
-  returnUrl:      { type: String },
+  returnUrl:      String,
 
-  // Hospitality-specific fields
-  reservationId:  { type: String },
-  guestName:      { type: String },
-  checkInDate:    { type: Date },
-  checkOutDate:   { type: Date },
-  roomType:       { type: String },
-  rateCode:       { type: String },
-  channel:        { type: String },
-  folioNumber:    { type: String },
-
-  // Tracking de iFrame
-  iframeServedAt:   { type: Date },
-  iframeClientIp:   { type: String },  // 🆕 IP del cliente
-  iframeUserAgent:  { type: String },  // 🆕 Navegador/dispositivo
+  // Tracking iFrame
+  iframeServedAt:   Date,
+  iframeClientIp:   String,
+  iframeUserAgent:  String,
 
   createdAt:      { type: Date, default: Date.now },
   updatedAt:      { type: Date, default: Date.now }
 });
 
-// Índices para optimizar búsquedas
 transactionSchema.index({ merchantId: 1 });
 transactionSchema.index({ createdAt: -1 });
-transactionSchema.index({ method: 1 });
-transactionSchema.index({ status: 1 });
-transactionSchema.index({ paymentId: 1 }, { unique: true });
+transactionSchema.index({ bin: 1 });
+transactionSchema.index({ issuerCountry: 1 });
 
-module.exports =
-  mongoose.models.Transaction ||
+module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);
