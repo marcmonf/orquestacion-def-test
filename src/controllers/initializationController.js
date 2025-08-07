@@ -24,7 +24,6 @@ function generateSignature(payload, secret) {
     .digest('hex');
 }
 
-// Handler principal del endpoint
 const initializeTransaction = async (req, res) => {
   const { error } = initializationSchema.validate(req.body);
   if (error) {
@@ -42,9 +41,15 @@ const initializeTransaction = async (req, res) => {
 
   try {
     const paymentId = uuidv4();
-    const timestamp = new Date().toISOString();
+    const timestamp = new Date();
 
-    // Este secreto debería venir de BD según el merchantId
+    // TTL de firma en minutos (por defecto 5)
+    const ttlMinutes = parseInt(
+      process.env.SIGNATURE_TTL_MINUTES || '5',
+      10
+    );
+    const expiresAt = new Date(timestamp.getTime() + ttlMinutes * 60000);
+
     const merchantSecret =
       process.env.MERCHANT_SECRET || 'default_merchant_secret';
 
@@ -54,12 +59,13 @@ const initializeTransaction = async (req, res) => {
       amount,
       currency,
       method,
-      timestamp
+      iat: timestamp.toISOString(), // issued-at
+      exp: expiresAt.toISOString()  // expiry
     };
 
     const signature = generateSignature(payloadToSign, merchantSecret);
 
-    // Creamos transacción en estado inicializado
+    // Guardar transacción inicializada
     const transaction = new Transaction({
       paymentId,
       merchantId,
@@ -79,9 +85,9 @@ const initializeTransaction = async (req, res) => {
       success: true,
       paymentId,
       signature,
-      timestamp,
-      // URL ya firmada y apuntando a la ruta segura
-      iframeUrl: `${process.env.IFRAME_BASE_URL}/?paymentId=${paymentId}&signature=${signature}`
+      timestamp: timestamp.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      iframeUrl: `${process.env.IFRAME_BASE_URL}/?paymentId=${paymentId}&signature=${signature}&exp=${expiresAt.toISOString()}`
     });
   } catch (err) {
     logger.error('Error initializing transaction', err);
