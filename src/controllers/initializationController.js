@@ -26,8 +26,6 @@ function generateSignature(payload, secret) {
 
 // Handler principal del endpoint
 const initializeTransaction = async (req, res) => {
-  console.log('✅ [DEBUG] Endpoint /initialize alcanzado. Payload recibido:', req.body); // 🧪 DEBUG
-
   const { error } = initializationSchema.validate(req.body);
   if (error) {
     return res.status(400).json({ error: error.details[0].message });
@@ -47,7 +45,8 @@ const initializeTransaction = async (req, res) => {
     const timestamp = new Date().toISOString();
 
     // Este secreto debería venir de BD según el merchantId
-    const merchantSecret = process.env.MERCHANT_SECRET || 'default_merchant_secret';
+    const merchantSecret =
+      process.env.MERCHANT_SECRET || 'default_merchant_secret';
 
     const payloadToSign = {
       paymentId,
@@ -81,7 +80,8 @@ const initializeTransaction = async (req, res) => {
       paymentId,
       signature,
       timestamp,
-      iframeUrl: `${process.env.IFRAME_BASE_URL}/?paymentId=${paymentId}`
+      // URL ya firmada y apuntando a la ruta segura
+      iframeUrl: `${process.env.IFRAME_BASE_URL}/?paymentId=${paymentId}&signature=${signature}`
     });
   } catch (err) {
     logger.error('Error initializing transaction', err);
