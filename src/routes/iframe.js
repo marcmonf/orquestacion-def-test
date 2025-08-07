@@ -1,9 +1,10 @@
 // src/routes/iframe.js
-const express = require('express');
-const router = express.Router();
-const path = require('path');
+const express   = require('express');
+const path      = require('path');
+const fs        = require('fs');
+const crypto    = require('crypto');
+const router    = express.Router();
 const Transaction = require('../models/Transaction');
-const crypto = require('crypto');
 
 function generateSignature(payload, secret) {
   return crypto
@@ -12,32 +13,43 @@ function generateSignature(payload, secret) {
     .digest('hex');
 }
 
+// Helper: servir página de error HTML
+function sendErrorPage(res, statusCode, fileName) {
+  const filePath = path.join(__dirname, `../../public/errors/${fileName}`);
+  fs.readFile(filePath, 'utf8', (err, html) => {
+    if (err) {
+      // Fallback por si falta el HTML
+      return res.status(statusCode).send(fileName.replace('.html', ''));
+    }
+    res.status(statusCode).send(html);
+  });
+}
+
 router.get('/', async (req, res) => {
   const { paymentId, signature, exp } = req.query;
 
   if (!paymentId || !signature || !exp) {
-    return res.status(400).send('Missing required parameters');
+    return sendErrorPage(res, 400, '400.html');
   }
 
-  // 1. Expiración de firma
-  const now = Date.now();
+  // 1. Expiración
   const expTime = Date.parse(exp);
-  if (Number.isNaN(expTime) || now > expTime) {
-    return res.status(410).send('Signature expired');
+  if (Number.isNaN(expTime) || Date.now() > expTime) {
+    return sendErrorPage(res, 410, '410.html');
   }
 
   try {
     const transaction = await Transaction.findOne({ paymentId });
     if (!transaction) {
-      return res.status(404).send('Transaction not found');
+      return sendErrorPage(res, 404, '404.html');
     }
 
-    // 2. Bloqueo contra recarga
+    // 2. Bloqueo de recarga
     if (transaction.iframeServedAt || transaction.status !== 'initialized') {
-      return res.status(409).send('This transaction has already been processed');
+      return sendErrorPage(res, 409, '409.html');
     }
 
-    // 3. Verificación de firma HMAC
+    // 3. Verificar HMAC
     const payloadToVerify = {
       paymentId: transaction.paymentId,
       merchantId: transaction.merchantId,
@@ -48,24 +60,21 @@ router.get('/', async (req, res) => {
       exp
     };
 
-    const merchantSecret =
-      process.env.MERCHANT_SECRET || 'default_merchant_secret';
-    const expectedSig = generateSignature(payloadToVerify, merchantSecret);
-
-    if (expectedSig !== signature) {
-      return res.status(403).send('Invalid signature');
+    const secret = process.env.MERCHANT_SECRET || 'default_merchant_secret';
+    if (generateSignature(payloadToVerify, secret) !== signature) {
+      return sendErrorPage(res, 403, '403.html');
     }
 
-    // 4. Registro de tracking (primera carga)
+    // 4. Registro de tracking
     transaction.iframeServedAt  = new Date();
     transaction.iframeClientIp  = req.ip;
     transaction.iframeUserAgent = req.headers['user-agent'] || '';
     await transaction.save();
 
-    // 5. Servir el iFrame
-    return res.sendFile(path.join(__dirname, '../../public', 'iframe.html'));
+    // 5. Servir iFrame
+    return res.sendFile(path.join(__dirname, '../../public/iframe.html'));
   } catch (err) {
-    console.error('Error verifying signature or serving iFrame:', err);
+    console.error('Error in /iframe-process:', err);
     return res.status(500).send('Internal server error');
   }
 });
