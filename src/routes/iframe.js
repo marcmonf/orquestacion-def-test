@@ -1,5 +1,4 @@
 // src/routes/iframe.js
-
 const express = require('express');
 const router = express.Router();
 const path = require('path');
@@ -14,10 +13,17 @@ function generateSignature(payload, secret) {
 }
 
 router.get('/', async (req, res) => {
-  const { paymentId, signature } = req.query;
+  const { paymentId, signature, exp } = req.query;
 
-  if (!paymentId || !signature) {
+  if (!paymentId || !signature || !exp) {
     return res.status(400).send('Missing required parameters');
+  }
+
+  // 1. Comprobar expiración
+  const now = Date.now();
+  const expTime = Date.parse(exp);
+  if (Number.isNaN(expTime) || now > expTime) {
+    return res.status(410).send('Signature expired');
   }
 
   try {
@@ -27,46 +33,37 @@ router.get('/', async (req, res) => {
       return res.status(404).send('Transaction not found');
     }
 
-    /** 
-     * 🚫 Bloqueo contra recargas:
-     *  - Si already has iframeServedAt ⇒ ya se mostró una vez
-     *  - O si status !== 'initialized' (por si el flujo cambia el estado antes)
-     */
+    // 2. Bloqueo de recarga
     if (transaction.iframeServedAt || transaction.status !== 'initialized') {
-      return res
-        .status(409)
-        .send('This transaction has already been processed');
+      return res.status(409).send('This transaction has already been processed');
     }
 
-    // ✔️ Verificación de firma HMAC
+    // 3. Verificar firma HMAC (incluyendo exp)
     const payloadToVerify = {
       paymentId: transaction.paymentId,
       merchantId: transaction.merchantId,
       amount: transaction.amount,
       currency: transaction.currency,
       method: transaction.method,
-      timestamp: transaction.createdAt.toISOString()
+      iat: transaction.createdAt.toISOString(),
+      exp
     };
 
     const merchantSecret =
       process.env.MERCHANT_SECRET || 'default_merchant_secret';
-    const expectedSignature = generateSignature(
-      payloadToVerify,
-      merchantSecret
-    );
+    const expectedSig = generateSignature(payloadToVerify, merchantSecret);
 
-    if (expectedSignature !== signature) {
+    if (expectedSig !== signature) {
       return res.status(403).send('Invalid signature');
     }
 
-    // 📝 Registrar la primera carga del iFrame
+    // 4. Registrar primera carga
     transaction.iframeServedAt = new Date();
     await transaction.save();
 
-    // ✅ Firma válida y primera carga permitida: servir iFrame
     return res.sendFile(path.join(__dirname, '../../public', 'iframe.html'));
   } catch (err) {
-    console.error('Error verifying signature for iFrame:', err);
+    console.error('Error verifying signature or serving iFrame:', err);
     return res.status(500).send('Internal server error');
   }
 });
