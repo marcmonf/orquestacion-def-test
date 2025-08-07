@@ -9,7 +9,7 @@ const transactionSchema = new mongoose.Schema({
   method:         { type: String, required: true },
   status:         { type: String, required: true },
 
-  // Datos de tarjeta (opcionales en estado initialized)
+  // Datos de tarjeta (opcionales)
   cardholderName: { type: String, required: false },
   expiryMonth:    { type: String, required: false },
   expiryYear:     { type: String, required: false },
@@ -32,8 +32,10 @@ const transactionSchema = new mongoose.Schema({
   channel:        { type: String },
   folioNumber:    { type: String },
 
-  // 🆕 Tracking de carga del iFrame
-  iframeServedAt: { type: Date },
+  // Tracking de iFrame
+  iframeServedAt:   { type: Date },
+  iframeClientIp:   { type: String },  // 🆕 IP del cliente
+  iframeUserAgent:  { type: String },  // 🆕 Navegador/dispositivo
 
   createdAt:      { type: Date, default: Date.now },
   updatedAt:      { type: Date, default: Date.now }
