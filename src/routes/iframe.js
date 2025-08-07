@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
     return res.status(400).send('Missing required parameters');
   }
 
-  // 1. Comprobar expiración
+  // 1. Expiración de firma
   const now = Date.now();
   const expTime = Date.parse(exp);
   if (Number.isNaN(expTime) || now > expTime) {
@@ -28,17 +28,16 @@ router.get('/', async (req, res) => {
 
   try {
     const transaction = await Transaction.findOne({ paymentId });
-
     if (!transaction) {
       return res.status(404).send('Transaction not found');
     }
 
-    // 2. Bloqueo de recarga
+    // 2. Bloqueo contra recarga
     if (transaction.iframeServedAt || transaction.status !== 'initialized') {
       return res.status(409).send('This transaction has already been processed');
     }
 
-    // 3. Verificar firma HMAC (incluyendo exp)
+    // 3. Verificación de firma HMAC
     const payloadToVerify = {
       paymentId: transaction.paymentId,
       merchantId: transaction.merchantId,
@@ -57,10 +56,13 @@ router.get('/', async (req, res) => {
       return res.status(403).send('Invalid signature');
     }
 
-    // 4. Registrar primera carga
-    transaction.iframeServedAt = new Date();
+    // 4. Registro de tracking (primera carga)
+    transaction.iframeServedAt  = new Date();
+    transaction.iframeClientIp  = req.ip;
+    transaction.iframeUserAgent = req.headers['user-agent'] || '';
     await transaction.save();
 
+    // 5. Servir el iFrame
     return res.sendFile(path.join(__dirname, '../../public', 'iframe.html'));
   } catch (err) {
     console.error('Error verifying signature or serving iFrame:', err);
