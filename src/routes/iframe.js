@@ -89,7 +89,7 @@ const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
 router.get('/', iframeLimiter, async (req, res) => {
   const { paymentId, signature, exp } = req.query;
   if (!paymentId || !signature || !exp) {
-    return sendErrorPage(res, 400, '400.html');
+    return sendErrorPage(res, 400, '400.html'); // (tienes 400.html / 422.html, usamos 400 para faltar params obligatorios aquí)
   }
 
   // Validación de exp
@@ -109,18 +109,8 @@ router.get('/', iframeLimiter, async (req, res) => {
     const tx = await Transaction.findOne({ paymentId }).lean(false);
     if (!tx) return sendErrorPage(res, 404, '404.html');
 
-    // Permitir servir SOLO si está "initialized" y no se sirvió antes
-    if (tx.iframeServedAt || tx.status !== 'initialized') {
-      auditLogger.info({
-        action: 'IFRAME_ALREADY_SERVED',
-        user: tx.merchantId || 'unknown',
-        details: { paymentId: tx.paymentId, status: tx.status, servedAt: tx.iframeServedAt },
-        metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
-      });
-      return sendErrorPage(res, 409, '409.html');
-    }
-
-    // Construir payload firmado
+    // --- NUEVO ORDEN ---
+    // 1) Verificamos primero la firma, para no revelar estado “ya servido” a quien no presenta credenciales correctas.
     const payload = {
       paymentId: tx.paymentId,
       merchantId: tx.merchantId,
@@ -153,6 +143,17 @@ router.get('/', iframeLimiter, async (req, res) => {
         metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
       });
       return sendErrorPage(res, 403, '403.html');
+    }
+
+    // 2) Con firma válida, comprobamos si ya se sirvió o si el estado no es initialized
+    if (tx.iframeServedAt || tx.status !== 'initialized') {
+      auditLogger.info({
+        action: 'IFRAME_ALREADY_SERVED',
+        user: tx.merchantId || 'unknown',
+        details: { paymentId: tx.paymentId, status: tx.status, servedAt: tx.iframeServedAt },
+        metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
+      });
+      return sendErrorPage(res, 409, '409.html');
     }
 
     // Tracking (primera carga) — guardar con IP anonimizada
