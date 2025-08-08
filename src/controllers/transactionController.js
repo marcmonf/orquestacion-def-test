@@ -1,26 +1,26 @@
 // src/controllers/transactionController.js
-const Joi = require('joi');
-const { v4: uuidv4 } = require('uuid');
-const Transaction = require('../models/Transaction');
-const logger = require('../utils/logger');
-const auditLogger = require('../logs/auditLogger');
-const transactionSchema = require('../validators/transactionValidator');
-const { createTokenForCard } = require('../services/tokenService');
-const RecurrentProfile = require('../models/RecurrentProfile');
+const Joi                       = require('joi');
+const { v4: uuidv4 }            = require('uuid');
+const Transaction               = require('../models/Transaction');
+const logger                    = require('../utils/logger');
+const auditLogger               = require('../logs/auditLogger');
+const transactionSchema         = require('../validators/transactionValidator');
+const { createTokenForCard }    = require('../services/tokenService');
+const RecurrentProfile          = require('../models/RecurrentProfile');
 
-const { selectConnector } = require('../orchestrator/orchestrationEngine');
-const { executeCardPayment } = require('../orchestrator/fallbackEngine'); // ← NUEVO
+const { selectConnector }       = require('../orchestrator/orchestrationEngine');
+const { executeCardPayment }    = require('../orchestrator/fallbackEngine'); // ← NUEVO
 
-const mbwayConnector = require('../channels/apms/hub/connectors/mbwayConnector');
+const mbwayConnector            = require('../channels/apms/hub/connectors/mbwayConnector');
 const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
-const { initiatePayment: initiatePixPayment } = require('../channels/apms/hub/connectors/pixConnector');
+const { initiatePayment: initiatePixPayment }   = require('../channels/apms/hub/connectors/pixConnector');
 
-const visaAcquirer = require('../channels/acquirers/visaAcquirer');
-const mcAcquirer = require('../channels/acquirers/mcAcquirer');
-const amexAcquirer = require('../channels/acquirers/amexAcquirer');
-const defaultCardAcquirer = require('../channels/acquirers/defaultCardAcquirer');
+const visaAcquirer              = require('../channels/acquirers/visaAcquirer');
+const mcAcquirer                = require('../channels/acquirers/mcAcquirer');
+const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
+const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
 
-const { parseBin } = require('../utils/cardInfoParser');
+const { parseBin }              = require('../utils/cardInfoParser');
 
 /* ---------------------------------------------------------------------------
    GET /transactions
