@@ -6,9 +6,6 @@
 //
 // No modifica ningún HTML. Sólo decide qué archivo servir según el error.
 
-// =====================
-// Dependencias
-// =====================
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -21,17 +18,18 @@ const router = express.Router();
 // =====================
 const HMAC_ALGO = 'sha256';
 const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe estar definido en entorno
-const PUBLIC_DIR = path.join(process.cwd(), 'public'); // carpeta desde donde se sirven los HTML estáticos
+// Usamos __dirname relativo a /src/routes → subimos dos niveles a /
+const PUBLIC_DIR = path.resolve(__dirname, '../../public'); // carpeta con los HTML estáticos
 const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html'); // iFrame real
 
-// Mapa de páginas de error (ajústalo a los nombres reales de tus HTML si difieren)
+// Mapa de páginas de error (ajusta a los nombres reales de tus HTML si difieren)
 const ERROR_PAGE_MAP = {
-  missing_params:  { file: '400.html', status: 400 }, // parámetros incompletos
-  expired:         { file: '410.html', status: 410 }, // sesión expirada
+  missing_params:   { file: '400.html', status: 400 }, // parámetros incompletos
+  expired:          { file: '410.html', status: 410 }, // sesión expirada
   invalid_signature:{ file: '422.html', status: 422 }, // firma inválida / unprocessable
-  not_found:       { file: '404.html', status: 404 }, // transacción no encontrada
+  not_found:        { file: '404.html', status: 404 }, // transacción no encontrada
   already_processed:{ file: '409.html', status: 409 }, // reintento sobre pago ya procesado
-  default:         { file: '403.html', status: 403 }, // fallback de seguridad / acceso denegado
+  default:          { file: '403.html', status: 403 }, // fallback de seguridad / acceso denegado
 };
 
 // =====================
