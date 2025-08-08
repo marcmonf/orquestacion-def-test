@@ -3,6 +3,7 @@ const Joi = require('joi');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
+const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
@@ -16,7 +17,7 @@ const initializationSchema = Joi.object({
   callbackUrl: Joi.string().uri().required()
 });
 
-// Generador de firma HMAC
+// Generador de firma HMAC (idéntico a iframe.js)
 function generateSignature(payload, secret) {
   return crypto
     .createHmac('sha256', secret)
@@ -44,15 +45,30 @@ const initializeTransaction = async (req, res) => {
     const timestamp = new Date();
 
     // TTL de firma en minutos (por defecto 5)
-    const ttlMinutes = parseInt(
-      process.env.SIGNATURE_TTL_MINUTES || '5',
-      10
-    );
-    const expiresAt = new Date(timestamp.getTime() + ttlMinutes * 60000);
+    const ttlMinutes = parseInt(process.env.SIGNATURE_TTL_MINUTES || '5', 10);
+    const requestedExp = new Date(timestamp.getTime() + ttlMinutes * 60000);
+
+    // Coherencia con iframe.js: si existe IFRAME_MAX_TTL_MS, no permitimos exp superiores
+    const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
+      ? parseInt(process.env.IFRAME_MAX_TTL_MS, 10)
+      : null;
+    const expiresAt = MAX_TTL_MS
+      ? new Date(Math.min(requestedExp.getTime(), timestamp.getTime() + MAX_TTL_MS))
+      : requestedExp;
+
+    // Secreto por merchant si existe, con fallback a MERCHANT_SECRET
+    const merchant = await Merchant.findOne(
+      { merchantId },
+      { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
+    ).lean();
 
     const merchantSecret =
-      process.env.MERCHANT_SECRET || 'default_merchant_secret';
+      merchant?.signingSecret ||
+      merchant?.hmacSecret ||
+      merchant?.secret ||
+      (process.env.MERCHANT_SECRET || 'default_merchant_secret');
 
+    // Payload a firmar (idéntico al verificado en iframe.js)
     const payloadToSign = {
       paymentId,
       merchantId,
@@ -79,7 +95,16 @@ const initializeTransaction = async (req, res) => {
     });
 
     await transaction.save();
-    auditLogger.info(`Initialized transaction ${paymentId}`);
+
+    auditLogger.info({
+      action: 'TRANSACTION_INITIALIZED',
+      user: merchantId || 'unknown',
+      details: { paymentId, method, amount, currency },
+      metadata: { createdAt: timestamp.toISOString() }
+    });
+
+    // Base URL del iframe (por defecto a la ruta real montada en index.js)
+    const baseUrl = process.env.IFRAME_BASE_URL || '/iframe-process';
 
     return res.status(200).json({
       success: true,
@@ -87,10 +112,15 @@ const initializeTransaction = async (req, res) => {
       signature,
       timestamp: timestamp.toISOString(),
       expiresAt: expiresAt.toISOString(),
-      iframeUrl: `${process.env.IFRAME_BASE_URL}/?paymentId=${paymentId}&signature=${signature}&exp=${expiresAt.toISOString()}`
+      iframeUrl: `${baseUrl}?paymentId=${encodeURIComponent(paymentId)}&signature=${encodeURIComponent(signature)}&exp=${encodeURIComponent(expiresAt.toISOString())}`
     });
   } catch (err) {
-    logger.error('Error initializing transaction', err);
+    logger.error('Error initializing transaction', { error: err.message });
+    auditLogger.info({
+      action: 'TRANSACTION_INITIALIZE_ERROR',
+      user: merchantId || 'unknown',
+      details: { error: err.message }
+    });
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
