@@ -1,15 +1,14 @@
 'use strict';
 
 // src/routes/iframe.js
-// Carga segura del iFrame con validación HMAC, expiración, control de múltiples accesos
-// y SERVIDO DE PÁGINAS DE ERROR ESPECÍFICAS (cada una con su HTML propio y branding).
-//
-// No modifica ningún HTML. Sólo decide qué archivo servir según el error.
+// Carga segura del iFrame con validación HMAC, expiración y control de múltiples accesos.
+// Sirve PÁGINAS DE ERROR ESPECÍFICAS con branding (400/404/409/410/422/403).
+// Acepta enlaces con paymentId en PATH (/prefix/:paymentId) o en QUERY (/prefix?paymentId=...).
 
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
-const Transaction = require('../models/Transaction'); // Mongoose model
+const Transaction = require('../models/Transaction');
 
 const router = express.Router();
 
@@ -17,39 +16,30 @@ const router = express.Router();
 // Configuración
 // =====================
 const HMAC_ALGO = 'sha256';
-const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe estar definido en entorno
-// Usamos __dirname relativo a /src/routes → subimos dos niveles a /
-const PUBLIC_DIR = path.resolve(__dirname, '../../public'); // carpeta con los HTML estáticos
-const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html'); // iFrame real
+const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe existir en entorno
+const PUBLIC_DIR = path.resolve(__dirname, '../../public'); // <raíz>/public
+const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html');
 
-// Mapa de páginas de error (ajusta a los nombres reales de tus HTML si difieren)
+// Mapa de páginas de error (ajusta nombres si tus archivos difieren)
 const ERROR_PAGE_MAP = {
-  missing_params:   { file: '400.html', status: 400 }, // parámetros incompletos
-  expired:          { file: '410.html', status: 410 }, // sesión expirada
-  invalid_signature:{ file: '422.html', status: 422 }, // firma inválida / unprocessable
-  not_found:        { file: '404.html', status: 404 }, // transacción no encontrada
-  already_processed:{ file: '409.html', status: 409 }, // reintento sobre pago ya procesado
-  default:          { file: '403.html', status: 403 }, // fallback de seguridad / acceso denegado
+  missing_params:    { file: '400.html', status: 400 }, // parámetros incompletos
+  expired:           { file: '410.html', status: 410 }, // sesión expirada
+  invalid_signature: { file: '422.html', status: 422 }, // firma inválida / unprocessable
+  not_found:         { file: '404.html', status: 404 }, // transacción no encontrada
+  already_processed: { file: '409.html', status: 409 }, // reintento sobre pago ya procesado
+  default:           { file: '403.html', status: 403 }, // fallback de seguridad / acceso denegado
 };
 
 // =====================
 // Helpers
 // =====================
 
-/**
- * Sirve el HTML de error con branding específico.
- * No redirige: entrega directamente el archivo estático correspondiente.
- * Si el archivo específico no existe, sirve el fallback 403.
- * @param {express.Response} res
- * @param {keyof ERROR_PAGE_MAP} code
- */
 function serveBrandedError(res, code) {
   const entry = ERROR_PAGE_MAP[code] || ERROR_PAGE_MAP.default;
   const absPath = path.join(PUBLIC_DIR, entry.file);
   res.status(entry.status);
   res.sendFile(absPath, (err) => {
     if (err) {
-      // Fallback ultra defensivo a 403 si el archivo mapeado no existe o falla el envío
       const fb = ERROR_PAGE_MAP.default;
       res.status(fb.status).sendFile(path.join(PUBLIC_DIR, fb.file));
     }
@@ -57,99 +47,124 @@ function serveBrandedError(res, code) {
 }
 
 /**
- * Construye la firma esperada y compara en tiempo constante.
- * Ajusta el orden del canónico si tu /initialize firma en otro orden.
+ * Devuelve parámetros normalizados desde PATH o QUERY.
+ * Soporta:
+ *  - /prefix/:paymentId?signature=...&exp=...
+ *  - /prefix?paymentId=...&signature=...&exp=...
  */
-function verifySignature(params, signature) {
-  if (!IFRAME_HMAC_SECRET) return false;
+function extractParams(req) {
+  const paymentId = req.params.paymentId || req.query.paymentId;
+  const signature = req.query.signature;
+  const expRaw = req.query.exp;
+  // Campos opcionales por si algún día se incluyen en la firma/logs:
+  const merchantId = req.query.merchantId;
+  const amount = req.query.amount;
+  const currency = req.query.currency;
 
-  // Orden canónico propuesto: merchantId|paymentId|amount|currency|exp
-  const canon = [
-    params.merchantId ?? '',
-    params.paymentId ?? '',
-    params.amount ?? '',
-    params.currency ?? '',
-    params.exp ?? '', // epoch seconds
-  ].join('|');
+  return { paymentId, signature, expRaw, merchantId, amount, currency };
+}
 
-  const h = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
+/** true si exp está caducado. Acepta ISO 8601 o epoch seconds. */
+function isExpired(expRaw) {
+  if (expRaw == null) return true;
 
+  // Si parece todo dígitos, interpretamos como epoch seconds.
+  if (/^\d+$/.test(String(expRaw))) {
+    const now = Math.floor(Date.now() / 1000);
+    const expNum = Number(expRaw);
+    if (!Number.isFinite(expNum)) return true;
+    return now > expNum;
+  }
+
+  // ISO 8601
+  const ms = Date.parse(String(expRaw));
+  if (Number.isNaN(ms)) return true;
+  return Date.now() > ms;
+}
+
+/**
+ * Comparación constante de dos hex strings (digest vs firma).
+ */
+function safeEqualHex(expectedHex, providedHex) {
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(h, 'utf8'),
-      Buffer.from(String(signature || ''), 'utf8')
-    );
+    const a = Buffer.from(String(expectedHex), 'hex');
+    const b = Buffer.from(String(providedHex), 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
-/** Devuelve true si exp (epoch seconds) está caducado. */
-function isExpired(exp) {
-  const now = Math.floor(Date.now() / 1000);
-  const expNum = Number(exp);
-  if (!Number.isFinite(expNum)) return true;
-  return now > expNum;
+/**
+ * Verifica la firma HMAC. Intenta variantes de canónico:
+ *  - A) paymentId|exp     (formato actual de /initialize)
+ *  - B) merchantId|paymentId|amount|currency|exp (por compatibilidad futura)
+ * La comparación se hace en tiempo constante y en binario (hex).
+ */
+function verifySignature({ paymentId, expRaw, merchantId, amount, currency }, signature) {
+  if (!IFRAME_HMAC_SECRET) return false;
+
+  const variants = [];
+
+  // Variante A: canónico actual (paymentId|exp). Usamos el exp tal cual viene en la URL.
+  variants.push([paymentId ?? '', expRaw ?? ''].join('|'));
+
+  // Variante B: extendida (si algún día añadimos más campos al iFrameUrl)
+  if (merchantId || amount || currency) {
+    variants.push([
+      merchantId ?? '',
+      paymentId ?? '',
+      amount ?? '',
+      currency ?? '',
+      expRaw ?? '',
+    ].join('|'));
+  }
+
+  for (const canon of variants) {
+    const h = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
+    if (safeEqualHex(h, signature)) return true;
+  }
+  return false;
 }
 
-// =====================
-// GET /:paymentId  (¡ojo!: el mount define el prefijo final, p.ej. /iframe/:paymentId)
-// =====================
+async function logEvent(paymentId, event) {
+  try {
+    await Transaction.updateOne(
+      { _id: paymentId },
+      { $push: { events: { ...event, at: new Date() } } }
+    );
+  } catch (_) {
+    // logging no bloqueante
+  }
+}
 
-router.get('/:paymentId', async (req, res) => {
-  const { paymentId } = req.params;
-  const {
-    signature, // HMAC hex
-    merchantId,
-    amount,
-    currency,
-    exp, // epoch seconds
-  } = req.query;
+async function handler(req, res) {
+  const { paymentId, signature, expRaw, merchantId, amount, currency } = extractParams(req);
 
   // 1) Validaciones básicas
-  if (!paymentId || !signature || !merchantId || !amount || !currency || !exp) {
+  if (!paymentId || !signature || !expRaw) {
     return serveBrandedError(res, 'missing_params');
   }
 
   // 2) Expiración
-  if (isExpired(exp)) {
-    try {
-      await Transaction.updateOne(
-        { _id: paymentId },
-        {
-          $push: {
-            events: {
-              type: 'iframe_load_failed',
-              reason: 'expired',
-              at: new Date(),
-              meta: { merchantId, amount, currency, exp },
-            },
-          },
-        }
-      );
-    } catch (_) {}
+  if (isExpired(expRaw)) {
+    await logEvent(paymentId, {
+      type: 'iframe_load_failed',
+      reason: 'expired',
+      meta: { merchantId, amount, currency, exp: expRaw },
+    });
     return serveBrandedError(res, 'expired');
   }
 
   // 3) Firma
-  const paramsForSign = { merchantId, paymentId, amount, currency, exp };
-  const ok = verifySignature(paramsForSign, signature);
+  const ok = verifySignature({ paymentId, expRaw, merchantId, amount, currency }, signature);
   if (!ok) {
-    try {
-      await Transaction.updateOne(
-        { _id: paymentId },
-        {
-          $push: {
-            events: {
-              type: 'iframe_load_failed',
-              reason: 'invalid_signature',
-              at: new Date(),
-              meta: { merchantId, amount, currency },
-            },
-          },
-        }
-      );
-    } catch (_) {}
+    await logEvent(paymentId, {
+      type: 'iframe_load_failed',
+      reason: 'invalid_signature',
+      meta: { merchantId, amount, currency },
+    });
     return serveBrandedError(res, 'invalid_signature');
   }
 
@@ -160,27 +175,16 @@ router.get('/:paymentId', async (req, res) => {
   } catch {
     return serveBrandedError(res, 'not_found');
   }
-
   if (!tx) {
     return serveBrandedError(res, 'not_found');
   }
 
   if (tx.status !== 'initialized') {
-    try {
-      await Transaction.updateOne(
-        { _id: paymentId },
-        {
-          $push: {
-            events: {
-              type: 'iframe_load_blocked',
-              reason: 'already_processed',
-              at: new Date(),
-              meta: { currentStatus: tx.status },
-            },
-          },
-        }
-      );
-    } catch (_) {}
+    await logEvent(paymentId, {
+      type: 'iframe_load_blocked',
+      reason: 'already_processed',
+      meta: { currentStatus: tx.status },
+    });
     return serveBrandedError(res, 'already_processed');
   }
 
@@ -193,21 +197,28 @@ router.get('/:paymentId', async (req, res) => {
         $push: {
           events: {
             type: 'iframe_served',
-            at: new Date(),
             meta: { merchantId, amount, currency },
+            at: new Date(),
           },
         },
       }
     );
   } catch (_) {}
 
-  // 6) Entregar el iFrame real tras pasar validaciones
+  // 6) Entregar el iFrame real
   return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
-    if (err) {
-      // Si por cualquier motivo no se puede servir el iframe, devolvemos 403 branded
-      serveBrandedError(res, 'default');
-    }
+    if (err) serveBrandedError(res, 'default');
   });
-});
+}
+
+// =====================
+// Rutas soportadas
+// =====================
+
+// Forma 1: /iframe-process/:paymentId?signature=...&exp=...
+router.get('/:paymentId', handler);
+
+// Forma 2: /iframe-process?paymentId=...&signature=...&exp=...
+router.get('/', handler);
 
 module.exports = router;
