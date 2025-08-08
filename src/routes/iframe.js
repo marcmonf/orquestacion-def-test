@@ -93,10 +93,10 @@ function isExpired(exp) {
 }
 
 // =====================
-// GET /iframe/:paymentId
+// GET /:paymentId  (¡ojo!: el mount define el prefijo final, p.ej. /iframe/:paymentId)
 // =====================
 
-router.get('/iframe/:paymentId', async (req, res) => {
+router.get('/:paymentId', async (req, res) => {
   const { paymentId } = req.params;
   const {
     signature, // HMAC hex
