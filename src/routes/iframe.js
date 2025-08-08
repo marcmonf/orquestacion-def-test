@@ -1,231 +1,205 @@
+'use strict';
+
 // src/routes/iframe.js
-const express     = require('express');
-const path        = require('path');
-const fs          = require('fs');
-const crypto      = require('crypto');
-const rateLimit   = require('express-rate-limit');
-const router      = express.Router();
+// Ruta del iFrame con validación HMAC, expiración y control de múltiples accesos.
+// Cualquier error redirige SIEMPRE a /403.html (branding unificado).
 
-const Transaction = require('../models/Transaction');
-const Merchant    = require('../models/Merchant');
-const auditLogger = require('../logs/auditLogger');
+const express = require('express');
+const crypto = require('crypto');
+const path = require('path');
+const Transaction = require('../models/Transaction'); // Mongoose model
 
-// ---------- Helpers de seguridad ----------
+const router = express.Router();
 
-function anonymizeIp(ip) {
-  if (!ip) return '';
-  // Express puede traer IPv6 con prefijo "::ffff:" para IPv4
-  const clean = ip.replace('::ffff:', '');
-  // IPv4
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(clean)) {
-    const parts = clean.split('.');
-    parts[3] = '0';
-    return parts.join('.');
-  }
-  // IPv6: anonimiza el último segmento
-  if (clean.includes(':')) {
-    const segs = clean.split(':');
-    segs[segs.length - 1] = '0';
-    return segs.join(':');
-  }
-  return '';
-}
+// =====================
+// Configuración
+// =====================
+const HMAC_ALGO = 'sha256';
+const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe estar definido en entorno
+const REDIRECT_403_PATH = '/403.html'; // Ruta pública del HTML con branding
+const IFRAME_HTML_ABS_PATH = path.join(process.cwd(), 'public', 'iframe.html'); // Ruta del iFrame real (estático)
 
-function generateSignature(payload, secret) {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(payload))
-    .digest('hex');
-}
+// =====================
+// Helpers
+// =====================
 
-function safeCompare(a, b) {
+/**
+ * Redirige a 403.html con branding, pasando code y msg como querystring.
+ * @param {express.Response} res
+ * @param {string} code - Código corto de error (p.ej. 'expired', 'invalid_signature', 'already_processed')
+ * @param {string} msg  - Mensaje legible (opcional; se puede usar o ignorar en 403.html)
+ */
+function redirectBranded403(res, code, msg) {
   try {
-    const ba = Buffer.from(a || '', 'utf8');
-    const bb = Buffer.from(b || '', 'utf8');
-    if (ba.length !== bb.length) return false;
-    return crypto.timingSafeEqual(ba, bb);
+    const host = res.req.headers.host || 'localhost';
+    const url = new URL(REDIRECT_403_PATH, `http://${host}`);
+    if (code) url.searchParams.set('code', code);
+    if (msg) url.searchParams.set('msg', msg);
+    return res.redirect(302, url.pathname + (url.search || ''));
+  } catch {
+    // Fallback ultra defensivo
+    return res.redirect(302, REDIRECT_403_PATH);
+  }
+}
+
+/**
+ * Verifica la firma HMAC recibida.
+ * @param {object} params - Objeto con los parámetros que fueron firmados.
+ * @param {string} signature - Firma recibida en la query.
+ * @returns {boolean}
+ */
+function verifySignature(params, signature) {
+  if (!IFRAME_HMAC_SECRET) return false;
+
+  // Construcción canónica: AJUSTA el orden a tu convención real de firmado.
+  const canon = [
+    params.merchantId ?? '',
+    params.paymentId ?? '',
+    params.amount ?? '',
+    params.currency ?? '',
+    params.exp ?? '', // epoch seconds
+  ].join('|');
+
+  const hmac = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
+
+  try {
+    // Comparación en tiempo constante
+    return crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(String(signature), 'utf8'));
   } catch {
     return false;
   }
 }
 
-// Helper para servir HTML de error (fallback plano)
-function sendErrorPage(res, code, file) {
-  const p = path.join(__dirname, `../../public/errors/${file}`);
-  fs.readFile(p, 'utf8', (e, html) =>
-    res.status(code).send(e ? file.replace('.html', '') : html)
-  );
+/**
+ * Comprueba expiración basada en epoch seconds (exp).
+ * @param {string|number} exp
+ * @returns {boolean} true si está expirada
+ */
+function isExpired(exp) {
+  const now = Math.floor(Date.now() / 1000);
+  const expNum = Number(exp);
+  if (!Number.isFinite(expNum)) return true;
+  return now > expNum;
 }
 
-// Helper para inyectar branding en el HTML (como en el iFrame)
-function injectBranding(html, branding) {
-  const { logoUrl, brandColor, accentColor } = branding || {};
+// =====================
+// GET /iframe/:paymentId
+// =====================
 
-  let out = html;
+router.get('/iframe/:paymentId', async (req, res) => {
+  const { paymentId } = req.params;
+  const {
+    signature, // firma HMAC hex
+    merchantId,
+    amount,
+    currency,
+    exp, // epoch seconds
+  } = req.query;
 
-  // Reemplazar logo si existe
-  if (logoUrl) {
-    // Cambia la referencia al logo por el del merchant si está
-    out = out.replace(/src=["']\/Logo_Monetiser\.png["']/g, `src="${logoUrl}"`);
+  // 1) Validaciones básicas de parámetros
+  if (!paymentId || !signature || !merchantId || !amount || !currency || !exp) {
+    return redirectBranded403(res, 'missing_params', 'Faltan parámetros obligatorios para cargar el iFrame.');
   }
 
-  // Reemplazar variables CSS si existen en la hoja
-  if (brandColor) {
-    out = out.replace(/--brand:\s*#[0-9a-fA-F]{3,6}/g, `--brand: ${brandColor}`);
-  }
-  if (accentColor) {
-    out = out.replace(/--accent:\s*#[0-9a-fA-F]{3,6}/g, `--accent: ${accentColor}`);
-  }
-
-  return out;
-}
-
-// Rate limit específico de iFrame por paymentId+IP (capa adicional)
-const iframeLimiter = rateLimit({
-  windowMs: 60 * 1000,         // 60s
-  max: 8,                      // 8 req/min por paymentId+IP
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const pid = req.query?.paymentId || 'na';
-    const ip  = req.ip || '';
-    return `${pid}:${ip}`;
-  }
-});
-
-// TTL adicional opcional (defensa anti-replay prolongado)
-const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
-  ? parseInt(process.env.IFRAME_MAX_TTL_MS, 10)
-  : null;
-
-// ---------- Ruta ----------
-router.get('/', iframeLimiter, async (req, res) => {
-  const { paymentId, signature, exp } = req.query;
-
-  // Helper local: sirve error con branding si hay paymentId/merchant
-  const serveError = async (code, file) => {
+  // 2) Verificar expiración
+  if (isExpired(exp)) {
+    // Log de intento con token caducado
     try {
-      const pid = req.query?.paymentId;
-      if (!pid) return sendErrorPage(res, code, file);
-
-      const tx = await Transaction.findOne({ paymentId: pid }, { merchantId: 1 }).lean();
-      if (!tx) return sendErrorPage(res, code, file);
-
-      const merchant = await Merchant.findOne(
-        { merchantId: tx.merchantId },
-        { logoUrl: 1, brandColor: 1, accentColor: 1, _id: 0 }
-      ).lean();
-
-      const p = path.join(__dirname, `../../public/errors/${file}`);
-      fs.readFile(p, 'utf8', (e, html) => {
-        if (e || !html) return sendErrorPage(res, code, file);
-        const branded = injectBranding(html, merchant);
-        return res.status(code).send(branded);
-      });
-    } catch {
-      return sendErrorPage(res, code, file);
-    }
-  };
-
-  // Validación parámetros mínimos
-  if (!paymentId || !signature || !exp) {
-    return serveError(400, '400.html'); // params ausentes/incorrectos
+      await Transaction.updateOne(
+        { _id: paymentId },
+        {
+          $push: {
+            events: {
+              type: 'iframe_load_failed',
+              reason: 'expired',
+              at: new Date(),
+              meta: { merchantId, amount, currency, exp },
+            },
+          },
+        }
+      );
+    } catch (_) {}
+    return redirectBranded403(res, 'expired', 'La sesión de pago ha expirado. Por favor, inicia de nuevo el proceso.');
   }
 
-  // Validación de exp
-  const expMs = Date.parse(exp);
-  if (Number.isNaN(expMs) || Date.now() > expMs) {
-    return serveError(410, '410.html');
-  }
-  if (MAX_TTL_MS) {
-    const now = Date.now();
-    if (expMs - now > MAX_TTL_MS) {
-      // exp demasiado lejano → rechazamos
-      return serveError(410, '410.html');
-    }
+  // 3) Verificar firma
+  const paramsForSign = { merchantId, paymentId, amount, currency, exp };
+  const ok = verifySignature(paramsForSign, signature);
+  if (!ok) {
+    try {
+      await Transaction.updateOne(
+        { _id: paymentId },
+        {
+          $push: {
+            events: {
+              type: 'iframe_load_failed',
+              reason: 'invalid_signature',
+              at: new Date(),
+              meta: { merchantId, amount, currency },
+            },
+          },
+        }
+      );
+    } catch (_) {}
+    return redirectBranded403(res, 'invalid_signature', 'No hemos podido validar la firma de seguridad.');
   }
 
+  // 4) Buscar transacción y validar estado
+  let tx;
   try {
-    const tx = await Transaction.findOne({ paymentId }).lean(false);
-    if (!tx) return serveError(404, '404.html');
-
-    // 1) Verificamos primero la firma para no filtrar estado
-    const payload = {
-      paymentId: tx.paymentId,
-      merchantId: tx.merchantId,
-      amount: tx.amount,
-      currency: tx.currency,
-      method: tx.method,
-      iat: tx.createdAt.toISOString(),
-      exp
-    };
-
-    // Obtener secreto de firma por merchant (si existe), con fallback a env
-    const merchant = await Merchant.findOne(
-      { merchantId: tx.merchantId },
-      { signingSecret: 1, hmacSecret: 1, secret: 1, logoUrl: 1, brandColor: 1, accentColor: 1, _id: 0 }
-    ).lean();
-
-    const secret =
-      merchant?.signingSecret ||
-      merchant?.hmacSecret ||
-      merchant?.secret ||
-      process.env.MERCHANT_SECRET ||
-      'default_merchant_secret';
-
-    const expected = generateSignature(payload, secret);
-    if (!safeCompare(expected, signature)) {
-      auditLogger.warn({
-        action: 'IFRAME_SIGNATURE_INVALID',
-        user: tx.merchantId || 'unknown',
-        details: { paymentId: tx.paymentId },
-        metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
-      });
-      return serveError(403, '403.html');
-    }
-
-    // 2) Con firma válida, comprobamos si ya se sirvió o si el estado no es initialized
-    if (tx.iframeServedAt || tx.status !== 'initialized') {
-      auditLogger.info({
-        action: 'IFRAME_ALREADY_SERVED',
-        user: tx.merchantId || 'unknown',
-        details: { paymentId: tx.paymentId, status: tx.status, servedAt: tx.iframeServedAt },
-        metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
-      });
-      return serveError(409, '409.html');
-    }
-
-    // Tracking (primera carga) — guardar con IP anonimizada
-    tx.iframeServedAt  = new Date();
-    tx.iframeClientIp  = anonymizeIp(req.ip);
-    tx.iframeUserAgent = req.headers['user-agent'] || '';
-    await tx.save();
-
-    auditLogger.info({
-      action: 'IFRAME_SERVED',
-      user: tx.merchantId || 'unknown',
-      details: { paymentId: tx.paymentId },
-      metadata: { ip: tx.iframeClientIp, ua: tx.iframeUserAgent }
-    });
-
-    // Branding del merchant (si existe)
-    const branding = merchant
-      ? { logoUrl: merchant.logoUrl, brandColor: merchant.brandColor, accentColor: merchant.accentColor }
-      : {};
-
-    // Leer HTML base e inyectar branding
-    const basePath = path.join(__dirname, '../../public/iframe.html');
-    fs.readFile(basePath, 'utf8', (err, htmlBase) => {
-      if (err) return res.status(500).send('Error loading iframe');
-
-      // Reutilizamos la misma inyección que en el iframe principal
-      const brandedHtml = injectBranding(htmlBase, branding);
-      res.send(brandedHtml);
-    });
-  } catch (err) {
-    console.error('Error in /iframe-process:', err);
-    return sendErrorPage(res, 500, '500.html');
+    tx = await Transaction.findById(paymentId).lean();
+  } catch (e) {
+    return redirectBranded403(res, 'not_found', 'No se ha encontrado la transacción solicitada.');
   }
+
+  if (!tx) {
+    return redirectBranded403(res, 'not_found', 'No se ha encontrado la transacción solicitada.');
+  }
+
+  // Solo servimos el iFrame si la transacción está "initialized"
+  if (tx.status !== 'initialized') {
+    // Si ya está aprobada, denegada o en otro estado, bloqueamos recarga / reenvío
+    try {
+      await Transaction.updateOne(
+        { _id: paymentId },
+        {
+          $push: {
+            events: {
+              type: 'iframe_load_blocked',
+              reason: 'already_processed',
+              at: new Date(),
+              meta: { currentStatus: tx.status },
+            },
+          },
+        }
+      );
+    } catch (_) {}
+    return redirectBranded403(
+      res,
+      'already_processed',
+      'Este pago ya ha sido procesado y no puede volver a cargarse.'
+    );
+  }
+
+  // 5) Registrar trazabilidad de servicio del iFrame (no bloqueante)
+  try {
+    await Transaction.updateOne(
+      { _id: paymentId },
+      {
+        $set: { iframeServedAt: new Date() },
+        $push: {
+          events: {
+            type: 'iframe_served',
+            at: new Date(),
+            meta: { merchantId, amount, currency },
+          },
+        },
+      }
+    );
+  } catch (_) {}
+
+  // 6) Entregar el iFrame real tras pasar todas las validaciones
+  return res.sendFile(IFRAME_HTML_ABS_PATH);
 });
 
 module.exports = router;
