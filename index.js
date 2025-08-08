@@ -35,6 +35,7 @@ const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neu
 const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
 const pmsQueryRoutes = require('./src/routes/pmsQueryRoutes'); // Consulta de reservas
 const initializeRoutes = require('./src/routes/initializeRoutes'); // 🆕 Ruta de inicialización de transacciones
+const iframeRouter = require('./src/routes/iframe'); // 🆕 Router del iFrame (paramétrico)
 
 // Configuración
 dotenv.config();
@@ -80,12 +81,15 @@ app.use(i18nMiddleware);
 
 // Servir contenido estático seguro (iFrame)
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Opción legacy: servir iframe.html plano en /iframe (sin parámetros)
 app.get('/iframe', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
 });
 
-// ✅ Ruta pública para iFrame seguro
-app.use('/iframe-process', require('./src/routes/iframe'));
+// ✅ Router del iFrame con parámetros (acepta /iframe/:paymentId y /iframe-process/:paymentId)
+app.use('/iframe', iframeRouter);
+app.use('/iframe-process', iframeRouter);
 
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
