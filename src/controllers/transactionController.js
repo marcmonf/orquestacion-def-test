@@ -9,6 +9,8 @@ const { createTokenForCard } = require('../services/tokenService');
 const RecurrentProfile = require('../models/RecurrentProfile');
 
 const { selectConnector } = require('../orchestrator/orchestrationEngine');
+const { executeCardPayment } = require('../orchestrator/fallbackEngine'); // ← NUEVO
+
 const mbwayConnector = require('../channels/apms/hub/connectors/mbwayConnector');
 const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
 const { initiatePayment: initiatePixPayment } = require('../channels/apms/hub/connectors/pixConnector');
@@ -20,18 +22,20 @@ const defaultCardAcquirer = require('../channels/acquirers/defaultCardAcquirer')
 
 const { parseBin } = require('../utils/cardInfoParser');
 
-// GET /transactions
+/* ---------------------------------------------------------------------------
+   GET /transactions
+--------------------------------------------------------------------------- */
 const getAllTransactions = async (req, res) => {
   try {
     const { merchantId, status, method, fromDate, toDate, page = 1, limit = 20 } = req.query;
     const query = {};
     if (merchantId) query.merchantId = merchantId;
-    if (status) query.status = status;
-    if (method) query.method = method;
+    if (status)     query.status     = status;
+    if (method)     query.method     = method;
     if (fromDate || toDate) {
       query.createdAt = {};
       if (fromDate) query.createdAt.$gte = new Date(fromDate);
-      if (toDate) query.createdAt.$lte = new Date(toDate);
+      if (toDate)   query.createdAt.$lte = new Date(toDate);
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -51,14 +55,17 @@ const getAllTransactions = async (req, res) => {
   }
 };
 
-// POST /transactions
+/* ---------------------------------------------------------------------------
+   POST /transactions
+--------------------------------------------------------------------------- */
 const createTransaction = async (req, res) => {
+  /* -------------------- Validación -------------------- */
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
     const messageKey = error.details[0].message;
     const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
-    logger.warn('Validación fallida en creación', { details: messageKey });
 
+    logger.warn('Validación fallida en creación', { details: messageKey });
     auditLogger.info({
       action: 'TRANSACTION_VALIDATION_FAILED',
       user: req.merchantId || 'unknown',
@@ -66,60 +73,51 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    return res.status(400).json({
-      success: false,
-      message: translated
-    });
+    return res.status(400).json({ success: false, message: translated });
   }
 
   try {
     const generatedPaymentId = uuidv4();
 
+    /* -------------------- Recurrencia CIT/MIT -------------------- */
     let recurrenceId = value.recurrenceId || null;
-    let token = value.token || null;
-    let qrCodeImage = null;
+    let token        = value.token        || null;
 
     if (value.transactionType === 'CIT' && value.isRecurring) {
       recurrenceId = uuidv4();
-
       token = await createTokenForCard({
-        cardNumber: value.cardNumber,
-        cardholderName: value.cardholderName,
-        expiryMonth: value.expiryMonth,
-        expiryYear: value.expiryYear,
-        cvv: value.cvv
+        cardNumber:      value.cardNumber,
+        cardholderName:  value.cardholderName,
+        expiryMonth:     value.expiryMonth,
+        expiryYear:      value.expiryYear,
+        cvv:             value.cvv
       });
 
       await new RecurrentProfile({
         recurrenceId,
         token,
-        merchantId: value.merchantId,
-        cardholderName: value.cardholderName,
-        expiryMonth: value.expiryMonth,
-        expiryYear: value.expiryYear
+        merchantId:      value.merchantId,
+        cardholderName:  value.cardholderName,
+        expiryMonth:     value.expiryMonth,
+        expiryYear:      value.expiryYear
       }).save();
     }
 
     if (value.transactionType === 'MIT') {
       const previous = await Transaction.findOne({
-        recurrenceId: value.recurrenceId,
-        token: value.token,
+        recurrenceId:  value.recurrenceId,
+        token:         value.token,
         transactionType: 'CIT'
       });
 
       if (!previous) {
-        logger.warn('MIT sin CIT previa vinculada', {
-          recurrenceId: value.recurrenceId,
-          token: value.token
-        });
-
+        logger.warn('MIT sin CIT previa vinculada', { recurrenceId: value.recurrenceId, token: value.token });
         auditLogger.info({
           action: 'MIT_WITHOUT_CIT',
           user: req.merchantId || 'unknown',
           details: { recurrenceId: value.recurrenceId, token: value.token },
           metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
         });
-
         return res.status(400).json({
           success: false,
           message: res.getMessage('transaction.invalid.mit.noMatch')
@@ -127,23 +125,20 @@ const createTransaction = async (req, res) => {
       }
     }
 
+    /* -------------------- Sanitizar input -------------------- */
     const sanitizedValue = { ...value };
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
+    if (value.returnUrl) sanitizedValue.returnUrl = value.returnUrl;
 
-    if (value.returnUrl) {
-      sanitizedValue.returnUrl = value.returnUrl;
-    }
-
+    /* -------------------- BIN enrichment -------------------- */
     let cardInfo = null;
     if (value.method === 'card' && value.cardNumber) {
       cardInfo = await parseBin(value.cardNumber);
     }
 
-    const selectedConnector = await selectConnector({
-      ...value,
-      cardInfo
-    });
+    /* -------------------- Orquestación -------------------- */
+    const selectedConnector = await selectConnector({ ...value, cardInfo });
 
     logger.info(`🧠 Orchestrator selected connector: ${selectedConnector}`);
     auditLogger.info({
@@ -151,97 +146,109 @@ const createTransaction = async (req, res) => {
       user: req.merchantId || 'unknown',
       details: {
         selectedConnector,
-        method: value.method,
-        merchantId: value.merchantId,
-        cardScheme: value.cardScheme
+        method:      value.method,
+        merchantId:  value.merchantId,
+        cardScheme:  value.cardScheme
       },
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
+    /* -------------------- Ejecución -------------------- */
     let response;
-    switch (selectedConnector) {
-      case 'mbwayConnector':
-        response = await mbwayConnector.process(value);
-        break;
-      case 'bizumConnector':
-        response = await initiateBizumPayment(value);
-        break;
-      case 'pixConnector':
-        response = await initiatePixPayment(value);
-        sanitizedValue.qrCodePayload = response.qrCodePayload;
-        sanitizedValue.paymentUrl = response.paymentUrl;
-        qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
-        break;
-      case 'visaAcquirer':
-        response = await visaAcquirer.initiatePayment(value);
-        break;
-      case 'mcAcquirer':
-        response = await mcAcquirer.initiatePayment(value);
-        break;
-      case 'amexAcquirer':
-        response = await amexAcquirer.initiatePayment(value);
-        break;
-      case 'defaultCardAcquirer':
-        response = await defaultCardAcquirer.initiatePayment(value);
-        break;
-      default:
-        throw new Error(`Unsupported connector: ${selectedConnector}`);
+    let qrCodeImage = null;
+
+    if (value.method === 'card') {
+      /* ------------- NUEVO: smart-retries + fail-over ------------- */
+      response = await executeCardPayment({
+        paymentRequest:   value,
+        paymentId:        generatedPaymentId,
+        primaryConnector: selectedConnector
+      });
+
+    } else {
+      switch (selectedConnector) {
+        case 'mbwayConnector':
+          response = await mbwayConnector.process(value);
+          break;
+        case 'bizumConnector':
+          response = await initiateBizumPayment(value);
+          break;
+        case 'pixConnector':
+          response = await initiatePixPayment(value);
+          sanitizedValue.qrCodePayload = response.qrCodePayload;
+          sanitizedValue.paymentUrl    = response.paymentUrl;
+          qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
+          break;
+        case 'visaAcquirer':
+          response = await visaAcquirer.initiatePayment(value);
+          break;
+        case 'mcAcquirer':
+          response = await mcAcquirer.initiatePayment(value);
+          break;
+        case 'amexAcquirer':
+          response = await amexAcquirer.initiatePayment(value);
+          break;
+        case 'defaultCardAcquirer':
+          response = await defaultCardAcquirer.initiatePayment(value);
+          break;
+        default:
+          throw new Error(`Unsupported connector: ${selectedConnector}`);
+      }
     }
 
-    sanitizedValue.status = response.status;
-    sanitizedValue.processor = response.processor;
+    /* -------------------- Persistencia -------------------- */
+    sanitizedValue.status        = response.status;
+    sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
-    if (response.authCode) sanitizedValue.authCode = response.authCode;
-    if (response.timestamp) sanitizedValue.timestamp = response.timestamp;
-    if (cardInfo) sanitizedValue.cardInfo = cardInfo;
+    if (response.authCode)   sanitizedValue.authCode   = response.authCode;
+    if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
+    if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
 
     const newTransaction = new Transaction({
       ...sanitizedValue,
-      paymentId: generatedPaymentId,
+      paymentId:     generatedPaymentId,
       recurrenceId,
       token
     });
-
     await newTransaction.save();
 
     logger.info('Transacción creada', {
-      paymentId: newTransaction.paymentId,
-      method: newTransaction.method,
-      token: newTransaction.token,
+      paymentId:       newTransaction.paymentId,
+      method:          newTransaction.method,
+      token:           newTransaction.token,
       transactionType: newTransaction.transactionType,
-      isRecurring: newTransaction.isRecurring,
-      recurrenceId: newTransaction.recurrenceId
+      isRecurring:     newTransaction.isRecurring,
+      recurrenceId:    newTransaction.recurrenceId
     });
-
     auditLogger.info({
       action: 'TRANSACTION_CREATED',
       user: req.merchantId || 'unknown',
       details: {
-        paymentId: newTransaction.paymentId,
-        method: newTransaction.method,
+        paymentId:       newTransaction.paymentId,
+        method:          newTransaction.method,
         transactionType: newTransaction.transactionType,
-        isRecurring: newTransaction.isRecurring,
-        recurrenceId: newTransaction.recurrenceId
+        isRecurring:     newTransaction.isRecurring,
+        recurrenceId:    newTransaction.recurrenceId
       },
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    res.status(201).json({
-      success: true,
-      message: res.getMessage('transaction.created'),
-      transaction: newTransaction,
+    res.status(response.status === 'approved' ? 201 : 402).json({
+      success:       response.status === 'approved',
+      message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
+      transaction:   newTransaction,
       recurrenceId,
       token,
       qrCodeImage
     });
+
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
-
     auditLogger.info({
       action: 'TRANSACTION_CREATE_ERROR',
-      user: req.merchantId || 'unknown',
-      details: { error: err.message },
-      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+      user:   req.merchantId || 'unknown',
+      details:{ error: err.message },
+      metadata:{ ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
     res.status(500).json({
@@ -251,7 +258,9 @@ const createTransaction = async (req, res) => {
   }
 };
 
-// GET /transactions/:paymentId
+/* ---------------------------------------------------------------------------
+   GET /transactions/:paymentId
+--------------------------------------------------------------------------- */
 const getTransactionById = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -275,12 +284,18 @@ const getTransactionById = async (req, res) => {
   }
 };
 
-// PUT /transactions/:paymentId
+/* ---------------------------------------------------------------------------
+   PUT /transactions/:paymentId
+--------------------------------------------------------------------------- */
 const updateTransaction = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const updates = req.body;
-    const transaction = await Transaction.findOneAndUpdate({ paymentId }, { $set: updates }, { new: true });
+    const transaction = await Transaction.findOneAndUpdate(
+      { paymentId },
+      { $set: updates },
+      { new: true }
+    );
 
     if (!transaction) {
       logger.warn('Transacción no encontrada para actualizar', { paymentId });
@@ -305,7 +320,9 @@ const updateTransaction = async (req, res) => {
   }
 };
 
-// DELETE /transactions/:paymentId
+/* ---------------------------------------------------------------------------
+   DELETE /transactions/:paymentId
+--------------------------------------------------------------------------- */
 const deleteTransaction = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -333,7 +350,9 @@ const deleteTransaction = async (req, res) => {
   }
 };
 
-// ANALYTICS
+/* ---------------------------------------------------------------------------
+   ANALYTICS
+--------------------------------------------------------------------------- */
 const getTransactionVolume = async (req, res) => {
   try {
     const result = await Transaction.aggregate([
@@ -354,9 +373,9 @@ const getTransactionVolume = async (req, res) => {
 
 const getApprovalRate = async (req, res) => {
   try {
-    const total = await Transaction.countDocuments();
-    const approved = await Transaction.countDocuments({ status: 'approved' });
-    const rate = total ? ((approved / total) * 100).toFixed(2) : '0';
+    const total     = await Transaction.countDocuments();
+    const approved  = await Transaction.countDocuments({ status: 'approved' });
+    const rate      = total ? ((approved / total) * 100).toFixed(2) : '0';
     logger.info('Tasa de aprobación obtenida', { total, approved, rate });
     res.status(200).json({ approvalRate: `${rate}%` });
   } catch (err) {
@@ -388,22 +407,22 @@ const getAverageMSC = async (req, res) => {
 
 const getTransactionSummary = async (req, res) => {
   try {
-    const total = await Transaction.countDocuments();
-    const approved = await Transaction.countDocuments({ status: 'approved' });
-    const declined = await Transaction.countDocuments({ status: 'declined' });
-    const volumeResult = await Transaction.aggregate([
+    const total     = await Transaction.countDocuments();
+    const approved  = await Transaction.countDocuments({ status: 'approved' });
+    const declined  = await Transaction.countDocuments({ status: 'declined' });
+    const volumeRes = await Transaction.aggregate([
       { $match: { status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
-    const volume = volumeResult[0]?.total || 0;
+    const volume = volumeRes[0]?.total || 0;
 
     logger.info('Resumen de métricas obtenido', { total, approved, declined, volume });
     res.status(200).json({
-      totalTransactions: total,
-      approvedTransactions: approved,
-      declinedTransactions: declined,
-      approvalRate: total ? ((approved / total) * 100).toFixed(2) + '%' : '0%',
-      totalVolume: volume
+      totalTransactions:     total,
+      approvedTransactions:  approved,
+      declinedTransactions:  declined,
+      approvalRate:          total ? ((approved / total) * 100).toFixed(2) + '%' : '0%',
+      totalVolume:           volume
     });
   } catch (err) {
     logger.error('Error al obtener resumen de métricas', { error: err.message });
@@ -414,6 +433,9 @@ const getTransactionSummary = async (req, res) => {
   }
 };
 
+/* ---------------------------------------------------------------------------
+   EXPORTS
+--------------------------------------------------------------------------- */
 module.exports = {
   getAllTransactions,
   createTransaction,
