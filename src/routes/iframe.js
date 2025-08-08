@@ -3,19 +3,42 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const Transaction = require('../models/Transaction');
 
 const router = express.Router();
 
-// =====================
-// Ubicación de public/errors (idéntica a index.js)
-// =====================
-const ROOT_DIR = path.dirname(require.main.filename); // raíz del proyecto
-const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
-const ERRORS_DIR = path.join(PUBLIC_DIR, 'errors');
-const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html');
+/* ============================
+   Resolución robusta de /public
+   ============================ */
+function pickPublicDir() {
+  const candidates = [
+    // Render suele ejecutar con cwd = /opt/render/project/src
+    path.join(process.cwd(), 'public'),
+    // relativo a este archivo (src/routes -> ../../public)
+    path.resolve(__dirname, '../../public'),
+    // por si la build cambia niveles
+    path.resolve(__dirname, '../../../public'),
+  ];
 
-// Mapa de páginas de error (dentro de /public/errors)
+  for (const p of candidates) {
+    const errors403 = path.join(p, 'errors', '403.html');
+    if (fs.existsSync(errors403)) return p;
+  }
+  // último recurso: si existe /public aunque no tenga 403.html (no debería)
+  for (const p of candidates) {
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+  }
+  return null;
+}
+
+const PUBLIC_DIR = pickPublicDir();
+const ERRORS_DIR = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'errors') : null;
+const IFRAME_HTML_ABS_PATH = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'iframe.html') : null;
+
+/* ============================
+   Páginas de error (branding)
+   ============================ */
 const ERROR_PAGE_MAP = {
   missing_params:    { file: '400.html', status: 400 },
   expired:           { file: '410.html', status: 410 },
@@ -25,10 +48,10 @@ const ERROR_PAGE_MAP = {
   default:           { file: '403.html', status: 403 },
 };
 
-// =====================
-// Helpers
-// =====================
 function serveBrandedError(res, code) {
+  if (!ERRORS_DIR) {
+    return res.status(500).json({ success: false, message: 'Public directory not found.' });
+  }
   const entry = ERROR_PAGE_MAP[code] || ERROR_PAGE_MAP.default;
   const absPath = path.join(ERRORS_DIR, entry.file);
   res.status(entry.status);
@@ -44,6 +67,9 @@ function serveBrandedError(res, code) {
   });
 }
 
+/* ============================
+   Utilidades
+   ============================ */
 function extractParams(req) {
   const paymentId = req.params.paymentId || req.query.paymentId;
   const signature = req.query.signature;
@@ -56,13 +82,13 @@ function extractParams(req) {
 
 function parseExpToMs(expRaw) {
   if (expRaw == null) return null;
-  const asString = String(expRaw);
-  if (/^\d+$/.test(asString)) {
-    const sec = Number(asString);
+  const s = String(expRaw);
+  if (/^\d+$/.test(s)) {
+    const sec = Number(s);
     if (!Number.isFinite(sec)) return null;
     return sec * 1000;
   }
-  const ms = Date.parse(asString);
+  const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }
 
@@ -90,6 +116,7 @@ function signatureMatches(tx, providedSig) {
 
   for (const expected of candidates) {
     if (safeEqual(expected, providedSig)) return true;
+    // también intentamos comparar como hex
     try {
       const eHex = Buffer.from(String(expected), 'hex');
       const pHex = Buffer.from(String(providedSig), 'hex');
@@ -99,21 +126,30 @@ function signatureMatches(tx, providedSig) {
   return false;
 }
 
-async function logEvent(paymentId, event) {
+async function logEventByEitherId(paymentId, event) {
   try {
     await Transaction.updateOne(
-      { $or: [{ _id: paymentId }, { paymentId }] }, // 👈 buscar por ambos, siempre
+      { $or: [{ _id: paymentId }, { paymentId }] },
       { $push: { events: { ...event, at: new Date() } } }
     );
-  } catch {}
+  } catch {
+    // no bloquea
+  }
 }
 
-/** Recupera la transacción buscando por _id (string UUID) o por campo paymentId */
-async function findTransactionByPaymentId(paymentId) {
+async function findTransactionByEitherId(paymentId) {
   return Transaction.findOne({ $or: [{ _id: paymentId }, { paymentId }] }).lean();
 }
 
+/* ============================
+   Handler principal
+   ============================ */
 async function handler(req, res) {
+  // si no encontramos public, no sigas: así evitamos ENOENT
+  if (!PUBLIC_DIR) {
+    return res.status(500).json({ success: false, message: 'Public directory not found at runtime.' });
+  }
+
   const { paymentId, signature, expRaw, merchantId, amount, currency } = extractParams(req);
 
   // (1) Presencia mínima
@@ -121,23 +157,21 @@ async function handler(req, res) {
     return serveBrandedError(res, 'missing_params');
   }
 
-  // (2) Cargar transacción (soporta UUID en _id o en paymentId)
-  const tx = await findTransactionByPaymentId(paymentId);
+  // (2) Buscar transacción por _id o paymentId (UUID string)
+  const tx = await findTransactionByEitherId(paymentId);
   if (!tx) {
     return serveBrandedError(res, 'not_found');
   }
 
-  // (3) Expiración: BBDD como fuente de verdad, query como respaldo
+  // (3) Expiración: BBDD > query
   let expiresAtMs = null;
   if (tx.expiresAt) {
     const ms = Date.parse(String(tx.expiresAt));
     if (!Number.isNaN(ms)) expiresAtMs = ms;
   }
-  if (expiresAtMs == null) {
-    expiresAtMs = parseExpToMs(expRaw);
-  }
+  if (expiresAtMs == null) expiresAtMs = parseExpToMs(expRaw);
   if (expiresAtMs == null || Date.now() > expiresAtMs) {
-    await logEvent(paymentId, {
+    await logEventByEitherId(paymentId, {
       type: 'iframe_load_failed',
       reason: 'expired',
       meta: { merchantId, amount, currency, exp: expRaw, expiresAt: tx.expiresAt || null },
@@ -145,9 +179,9 @@ async function handler(req, res) {
     return serveBrandedError(res, 'expired');
   }
 
-  // (4) Firma: comparar con lo guardado por /initialize
+  // (4) Firma tal cual se guardó en /initialize
   if (!signatureMatches(tx, signature)) {
-    await logEvent(paymentId, {
+    await logEventByEitherId(paymentId, {
       type: 'iframe_load_failed',
       reason: 'invalid_signature',
       meta: { merchantId, amount, currency },
@@ -155,9 +189,9 @@ async function handler(req, res) {
     return serveBrandedError(res, 'invalid_signature');
   }
 
-  // (5) Estado de la transacción
+  // (5) Estado
   if (tx.status !== 'initialized') {
-    await logEvent(paymentId, {
+    await logEventByEitherId(paymentId, {
       type: 'iframe_load_blocked',
       reason: 'already_processed',
       meta: { currentStatus: tx.status },
@@ -165,7 +199,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'already_processed');
   }
 
-  // (6) Trazabilidad de servicio del iFrame (no bloqueante)
+  // (6) Log de servicio iFrame
   try {
     await Transaction.updateOne(
       { _id: tx._id },
@@ -182,16 +216,18 @@ async function handler(req, res) {
     );
   } catch {}
 
-  // (7) Entregar el iFrame real
+  // (7) Entregar iFrame
   return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
     if (err) serveBrandedError(res, 'default');
   });
 }
 
-// =====================
-// Rutas
-// =====================
-router.get('/:paymentId', handler); // /iframe-process/:paymentId?...
-router.get('/', handler);           // /iframe-process?paymentId=...
+/* ============================
+   Rutas
+   ============================ */
+// /iframe-process/:paymentId?signature=...&exp=...
+router.get('/:paymentId', handler);
+// /iframe-process?paymentId=...&signature=...&exp=...
+router.get('/', handler);
 
 module.exports = router;
