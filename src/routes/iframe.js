@@ -3,7 +3,6 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
-const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
 
 const router = express.Router();
@@ -103,27 +102,15 @@ function signatureMatches(tx, providedSig) {
 async function logEvent(paymentId, event) {
   try {
     await Transaction.updateOne(
-      // cuando _id sea UUID/str, esto funciona; si fuera ObjectId, igual
-      { $or: [
-        ...(mongoose.isValidObjectId(paymentId) ? [{ _id: paymentId }] : []),
-        { paymentId }
-      ]},
+      { $or: [{ _id: paymentId }, { paymentId }] }, // 👈 buscar por ambos, siempre
       { $push: { events: { ...event, at: new Date() } } }
     );
   } catch {}
 }
 
-/**
- * Recupera la transacción de forma robusta:
- *  - Si paymentId es ObjectId válido → busca por _id
- *  - Siempre intenta también buscar por campo paymentId (UUID/string)
- */
+/** Recupera la transacción buscando por _id (string UUID) o por campo paymentId */
 async function findTransactionByPaymentId(paymentId) {
-  const or = [{ paymentId }];
-  if (mongoose.isValidObjectId(paymentId)) {
-    or.unshift({ _id: paymentId });
-  }
-  return Transaction.findOne({ $or: or }).lean();
+  return Transaction.findOne({ $or: [{ _id: paymentId }, { paymentId }] }).lean();
 }
 
 async function handler(req, res) {
@@ -134,7 +121,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'missing_params');
   }
 
-  // (2) Cargar transacción (soporta UUID o _id ObjectId)
+  // (2) Cargar transacción (soporta UUID en _id o en paymentId)
   const tx = await findTransactionByPaymentId(paymentId);
   if (!tx) {
     return serveBrandedError(res, 'not_found');
