@@ -1,9 +1,14 @@
 'use strict';
 
 // src/routes/iframe.js
-// Ruta del iFrame con validación HMAC, expiración y control de múltiples accesos.
-// Cualquier error redirige SIEMPRE a /403.html (branding unificado).
+// Carga segura del iFrame con validación HMAC, expiración, control de múltiples accesos
+// y SERVIDO DE PÁGINAS DE ERROR ESPECÍFICAS (cada una con su HTML propio y branding).
+//
+// No modifica ningún HTML. Sólo decide qué archivo servir según el error.
 
+// =====================
+// Dependencias
+// =====================
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -16,42 +21,51 @@ const router = express.Router();
 // =====================
 const HMAC_ALGO = 'sha256';
 const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe estar definido en entorno
-const REDIRECT_403_PATH = '/403.html'; // Ruta pública del HTML con branding
-const IFRAME_HTML_ABS_PATH = path.join(process.cwd(), 'public', 'iframe.html'); // Ruta del iFrame real (estático)
+const PUBLIC_DIR = path.join(process.cwd(), 'public'); // carpeta desde donde se sirven los HTML estáticos
+const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html'); // iFrame real
+
+// Mapa de páginas de error (ajústalo a los nombres reales de tus HTML si difieren)
+const ERROR_PAGE_MAP = {
+  missing_params:  { file: '400.html', status: 400 }, // parámetros incompletos
+  expired:         { file: '410.html', status: 410 }, // sesión expirada
+  invalid_signature:{ file: '422.html', status: 422 }, // firma inválida / unprocessable
+  not_found:       { file: '404.html', status: 404 }, // transacción no encontrada
+  already_processed:{ file: '409.html', status: 409 }, // reintento sobre pago ya procesado
+  default:         { file: '403.html', status: 403 }, // fallback de seguridad / acceso denegado
+};
 
 // =====================
 // Helpers
 // =====================
 
 /**
- * Redirige a 403.html con branding, pasando code y msg como querystring.
+ * Sirve el HTML de error con branding específico.
+ * No redirige: entrega directamente el archivo estático correspondiente.
+ * Si el archivo específico no existe, sirve el fallback 403.
  * @param {express.Response} res
- * @param {string} code - Código corto de error (p.ej. 'expired', 'invalid_signature', 'already_processed')
- * @param {string} msg  - Mensaje legible (opcional; se puede usar o ignorar en 403.html)
+ * @param {keyof ERROR_PAGE_MAP} code
  */
-function redirectBranded403(res, code, msg) {
-  try {
-    const host = res.req.headers.host || 'localhost';
-    const url = new URL(REDIRECT_403_PATH, `http://${host}`);
-    if (code) url.searchParams.set('code', code);
-    if (msg) url.searchParams.set('msg', msg);
-    return res.redirect(302, url.pathname + (url.search || ''));
-  } catch {
-    // Fallback ultra defensivo
-    return res.redirect(302, REDIRECT_403_PATH);
-  }
+function serveBrandedError(res, code) {
+  const entry = ERROR_PAGE_MAP[code] || ERROR_PAGE_MAP.default;
+  const absPath = path.join(PUBLIC_DIR, entry.file);
+  res.status(entry.status);
+  res.sendFile(absPath, (err) => {
+    if (err) {
+      // Fallback ultra defensivo a 403 si el archivo mapeado no existe o falla el envío
+      const fb = ERROR_PAGE_MAP.default;
+      res.status(fb.status).sendFile(path.join(PUBLIC_DIR, fb.file));
+    }
+  });
 }
 
 /**
- * Verifica la firma HMAC recibida.
- * @param {object} params - Objeto con los parámetros que fueron firmados.
- * @param {string} signature - Firma recibida en la query.
- * @returns {boolean}
+ * Construye la firma esperada y compara en tiempo constante.
+ * Ajusta el orden del canónico si tu /initialize firma en otro orden.
  */
 function verifySignature(params, signature) {
   if (!IFRAME_HMAC_SECRET) return false;
 
-  // Construcción canónica: AJUSTA el orden a tu convención real de firmado.
+  // Orden canónico propuesto: merchantId|paymentId|amount|currency|exp
   const canon = [
     params.merchantId ?? '',
     params.paymentId ?? '',
@@ -60,21 +74,19 @@ function verifySignature(params, signature) {
     params.exp ?? '', // epoch seconds
   ].join('|');
 
-  const hmac = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
+  const h = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
 
   try {
-    // Comparación en tiempo constante
-    return crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(String(signature), 'utf8'));
+    return crypto.timingSafeEqual(
+      Buffer.from(h, 'utf8'),
+      Buffer.from(String(signature || ''), 'utf8')
+    );
   } catch {
     return false;
   }
 }
 
-/**
- * Comprueba expiración basada en epoch seconds (exp).
- * @param {string|number} exp
- * @returns {boolean} true si está expirada
- */
+/** Devuelve true si exp (epoch seconds) está caducado. */
 function isExpired(exp) {
   const now = Math.floor(Date.now() / 1000);
   const expNum = Number(exp);
@@ -89,21 +101,20 @@ function isExpired(exp) {
 router.get('/iframe/:paymentId', async (req, res) => {
   const { paymentId } = req.params;
   const {
-    signature, // firma HMAC hex
+    signature, // HMAC hex
     merchantId,
     amount,
     currency,
     exp, // epoch seconds
   } = req.query;
 
-  // 1) Validaciones básicas de parámetros
+  // 1) Validaciones básicas
   if (!paymentId || !signature || !merchantId || !amount || !currency || !exp) {
-    return redirectBranded403(res, 'missing_params', 'Faltan parámetros obligatorios para cargar el iFrame.');
+    return serveBrandedError(res, 'missing_params');
   }
 
-  // 2) Verificar expiración
+  // 2) Expiración
   if (isExpired(exp)) {
-    // Log de intento con token caducado
     try {
       await Transaction.updateOne(
         { _id: paymentId },
@@ -119,10 +130,10 @@ router.get('/iframe/:paymentId', async (req, res) => {
         }
       );
     } catch (_) {}
-    return redirectBranded403(res, 'expired', 'La sesión de pago ha expirado. Por favor, inicia de nuevo el proceso.');
+    return serveBrandedError(res, 'expired');
   }
 
-  // 3) Verificar firma
+  // 3) Firma
   const paramsForSign = { merchantId, paymentId, amount, currency, exp };
   const ok = verifySignature(paramsForSign, signature);
   if (!ok) {
@@ -141,24 +152,22 @@ router.get('/iframe/:paymentId', async (req, res) => {
         }
       );
     } catch (_) {}
-    return redirectBranded403(res, 'invalid_signature', 'No hemos podido validar la firma de seguridad.');
+    return serveBrandedError(res, 'invalid_signature');
   }
 
-  // 4) Buscar transacción y validar estado
+  // 4) Transacción y estado
   let tx;
   try {
     tx = await Transaction.findById(paymentId).lean();
-  } catch (e) {
-    return redirectBranded403(res, 'not_found', 'No se ha encontrado la transacción solicitada.');
+  } catch {
+    return serveBrandedError(res, 'not_found');
   }
 
   if (!tx) {
-    return redirectBranded403(res, 'not_found', 'No se ha encontrado la transacción solicitada.');
+    return serveBrandedError(res, 'not_found');
   }
 
-  // Solo servimos el iFrame si la transacción está "initialized"
   if (tx.status !== 'initialized') {
-    // Si ya está aprobada, denegada o en otro estado, bloqueamos recarga / reenvío
     try {
       await Transaction.updateOne(
         { _id: paymentId },
@@ -174,14 +183,10 @@ router.get('/iframe/:paymentId', async (req, res) => {
         }
       );
     } catch (_) {}
-    return redirectBranded403(
-      res,
-      'already_processed',
-      'Este pago ya ha sido procesado y no puede volver a cargarse.'
-    );
+    return serveBrandedError(res, 'already_processed');
   }
 
-  // 5) Registrar trazabilidad de servicio del iFrame (no bloqueante)
+  // 5) Trazabilidad de servicio del iFrame (no bloqueante)
   try {
     await Transaction.updateOne(
       { _id: paymentId },
@@ -198,8 +203,13 @@ router.get('/iframe/:paymentId', async (req, res) => {
     );
   } catch (_) {}
 
-  // 6) Entregar el iFrame real tras pasar todas las validaciones
-  return res.sendFile(IFRAME_HTML_ABS_PATH);
+  // 6) Entregar el iFrame real tras pasar validaciones
+  return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
+    if (err) {
+      // Si por cualquier motivo no se puede servir el iframe, devolvemos 403 branded
+      serveBrandedError(res, 'default');
+    }
+  });
 });
 
 module.exports = router;
