@@ -49,7 +49,7 @@ function safeCompare(a, b) {
   }
 }
 
-// Helper para servir HTML de error
+// Helper para servir HTML de error (fallback plano)
 function sendErrorPage(res, code, file) {
   const p = path.join(__dirname, `../../public/errors/${file}`);
   fs.readFile(p, 'utf8', (e, html) =>
@@ -57,13 +57,27 @@ function sendErrorPage(res, code, file) {
   );
 }
 
-// Helper para inyectar branding en el HTML
+// Helper para inyectar branding en el HTML (como en el iFrame)
 function injectBranding(html, branding) {
   const { logoUrl, brandColor, accentColor } = branding || {};
-  return html
-    .replace(/__LOGO_SRC__/g, logoUrl || '/Logo_Monetiser.png')
-    .replace(/__BRAND_COLOR__/g, brandColor || '#2b6cb0')
-    .replace(/__ACCENT_COLOR__/g, accentColor || '#e67e22');
+
+  let out = html;
+
+  // Reemplazar logo si existe
+  if (logoUrl) {
+    // Cambia la referencia al logo por el del merchant si está
+    out = out.replace(/src=["']\/Logo_Monetiser\.png["']/g, `src="${logoUrl}"`);
+  }
+
+  // Reemplazar variables CSS si existen en la hoja
+  if (brandColor) {
+    out = out.replace(/--brand:\s*#[0-9a-fA-F]{3,6}/g, `--brand: ${brandColor}`);
+  }
+  if (accentColor) {
+    out = out.replace(/--accent:\s*#[0-9a-fA-F]{3,6}/g, `--accent: ${accentColor}`);
+  }
+
+  return out;
 }
 
 // Rate limit específico de iFrame por paymentId+IP (capa adicional)
@@ -85,32 +99,57 @@ const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
   : null;
 
 // ---------- Ruta ----------
-
 router.get('/', iframeLimiter, async (req, res) => {
   const { paymentId, signature, exp } = req.query;
+
+  // Helper local: sirve error con branding si hay paymentId/merchant
+  const serveError = async (code, file) => {
+    try {
+      const pid = req.query?.paymentId;
+      if (!pid) return sendErrorPage(res, code, file);
+
+      const tx = await Transaction.findOne({ paymentId: pid }, { merchantId: 1 }).lean();
+      if (!tx) return sendErrorPage(res, code, file);
+
+      const merchant = await Merchant.findOne(
+        { merchantId: tx.merchantId },
+        { logoUrl: 1, brandColor: 1, accentColor: 1, _id: 0 }
+      ).lean();
+
+      const p = path.join(__dirname, `../../public/errors/${file}`);
+      fs.readFile(p, 'utf8', (e, html) => {
+        if (e || !html) return sendErrorPage(res, code, file);
+        const branded = injectBranding(html, merchant);
+        return res.status(code).send(branded);
+      });
+    } catch {
+      return sendErrorPage(res, code, file);
+    }
+  };
+
+  // Validación parámetros mínimos
   if (!paymentId || !signature || !exp) {
-    return sendErrorPage(res, 400, '400.html'); // (tienes 400.html / 422.html, usamos 400 para faltar params obligatorios aquí)
+    return serveError(400, '400.html'); // params ausentes/incorrectos
   }
 
   // Validación de exp
   const expMs = Date.parse(exp);
   if (Number.isNaN(expMs) || Date.now() > expMs) {
-    return sendErrorPage(res, 410, '410.html');
+    return serveError(410, '410.html');
   }
   if (MAX_TTL_MS) {
     const now = Date.now();
     if (expMs - now > MAX_TTL_MS) {
       // exp demasiado lejano → rechazamos
-      return sendErrorPage(res, 410, '410.html');
+      return serveError(410, '410.html');
     }
   }
 
   try {
     const tx = await Transaction.findOne({ paymentId }).lean(false);
-    if (!tx) return sendErrorPage(res, 404, '404.html');
+    if (!tx) return serveError(404, '404.html');
 
-    // --- NUEVO ORDEN ---
-    // 1) Verificamos primero la firma, para no revelar estado “ya servido” a quien no presenta credenciales correctas.
+    // 1) Verificamos primero la firma para no filtrar estado
     const payload = {
       paymentId: tx.paymentId,
       merchantId: tx.merchantId,
@@ -142,7 +181,7 @@ router.get('/', iframeLimiter, async (req, res) => {
         details: { paymentId: tx.paymentId },
         metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
       });
-      return sendErrorPage(res, 403, '403.html');
+      return serveError(403, '403.html');
     }
 
     // 2) Con firma válida, comprobamos si ya se sirvió o si el estado no es initialized
@@ -153,7 +192,7 @@ router.get('/', iframeLimiter, async (req, res) => {
         details: { paymentId: tx.paymentId, status: tx.status, servedAt: tx.iframeServedAt },
         metadata: { ip: anonymizeIp(req.ip), ua: req.headers['user-agent'] || '' }
       });
-      return sendErrorPage(res, 409, '409.html');
+      return serveError(409, '409.html');
     }
 
     // Tracking (primera carga) — guardar con IP anonimizada
@@ -179,12 +218,13 @@ router.get('/', iframeLimiter, async (req, res) => {
     fs.readFile(basePath, 'utf8', (err, htmlBase) => {
       if (err) return res.status(500).send('Error loading iframe');
 
+      // Reutilizamos la misma inyección que en el iframe principal
       const brandedHtml = injectBranding(htmlBase, branding);
       res.send(brandedHtml);
     });
   } catch (err) {
     console.error('Error in /iframe-process:', err);
-    res.status(500).send('Internal server error');
+    return sendErrorPage(res, 500, '500.html');
   }
 });
 
