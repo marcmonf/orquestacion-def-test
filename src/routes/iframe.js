@@ -6,20 +6,50 @@
 // - Expiración usando expiresAt guardado en la BBDD (o exp de query como respaldo).
 // - Control de múltiples accesos (status !== 'initialized').
 // - Páginas de error específicas con branding (400/404/409/410/422/403).
-// - Soporta tanto /iframe-process?paymentId=... como /iframe-process/:paymentId.
+// - Soporta /iframe-process?paymentId=... y /iframe-process/:paymentId.
+// - **Autodetección robusta de la carpeta public** (raíz o src/public) para evitar ENOENT.
 
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const Transaction = require('../models/Transaction');
 
 const router = express.Router();
 
-// =====================
-// Configuración
-// =====================
-const PUBLIC_DIR = path.resolve(__dirname, '../../public'); // <raíz>/public
-const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html');
+/** Detecta la carpeta 'public' correcta en tiempo de ejecución. */
+function resolvePublicDir() {
+  const candidates = [
+    // 1) típica cuando este archivo está en src/routes y public en raíz del repo
+    path.resolve(__dirname, '../../public'),
+    // 2) típica cuando todo vive bajo src/
+    path.resolve(__dirname, '../public'),
+    path.resolve(__dirname, '../../../public'),
+    // 3) basada en CWD (Render suele usar /opt/render/project/src como cwd)
+    path.resolve(process.cwd(), 'public'),
+    // 4) por si se despliega en /app
+    '/app/public',
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+        return p;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+const PUBLIC_DIR = resolvePublicDir();
+if (!PUBLIC_DIR) {
+  // Último recurso: evita crashear; serviremos 403 desde una ruta imposible y devolveremos 500 si falla
+  console.error('[iframe] No se encontró la carpeta public. Revisa la ubicación de /public/*');
+}
+
+function absPublicFile(file) {
+  if (!PUBLIC_DIR) return null;
+  return path.join(PUBLIC_DIR, file);
+}
 
 // Mapa de páginas de error (ajusta nombres si tus archivos difieren)
 const ERROR_PAGE_MAP = {
@@ -37,14 +67,18 @@ const ERROR_PAGE_MAP = {
 
 function serveBrandedError(res, code) {
   const entry = ERROR_PAGE_MAP[code] || ERROR_PAGE_MAP.default;
-  const absPath = path.join(PUBLIC_DIR, entry.file);
-  res.status(entry.status);
-  res.sendFile(absPath, (err) => {
-    if (err) {
-      const fb = ERROR_PAGE_MAP.default;
-      res.status(fb.status).sendFile(path.join(PUBLIC_DIR, fb.file));
-    }
-  });
+  const target = absPublicFile(entry.file);
+  if (target) {
+    res.status(entry.status);
+    return res.sendFile(target, (err) => {
+      if (err) {
+        const fb = absPublicFile(ERROR_PAGE_MAP.default.file);
+        if (fb) return res.status(ERROR_PAGE_MAP.default.status).sendFile(fb);
+        return res.status(500).json({ success: false, message: 'Static error page not found.' });
+      }
+    });
+  }
+  return res.status(500).json({ success: false, message: 'Public folder not found.' });
 }
 
 /** Extrae params desde PATH o QUERY */
@@ -75,23 +109,22 @@ function parseExpToMs(expRaw) {
   return Number.isNaN(ms) ? null : ms;
 }
 
-/** Comparación segura, admite hex o string plano. */
+/** Comparación segura, admite string plano. */
 function safeEqual(a, b) {
   try {
     const A = Buffer.from(String(a), 'utf8');
     const B = Buffer.from(String(b), 'utf8');
     if (A.length !== B.length) return false;
-    return crypto.timingSafeEqual(A, B);
+    return require('crypto').timingSafeEqual(A, B);
   } catch {
     return false;
   }
 }
 
-/** Compara firmas con varias fuentes posibles en la tx */
+/** Compara firmas con varias posibles ubicaciones en la tx */
 function signatureMatches(tx, providedSig) {
   if (!providedSig) return false;
 
-  // Candidatas habituales donde /initialize pudo guardar la firma
   const candidates = [
     tx.signature,
     tx.iframeSignature,
@@ -102,17 +135,13 @@ function signatureMatches(tx, providedSig) {
   ].filter(Boolean);
 
   for (const expected of candidates) {
-    // Igualdad directa (texto)
     if (safeEqual(expected, providedSig)) return true;
-
-    // Igualdad asumiendo que expected/provided sean hex (comparación binaria)
+    // También probamos como hex binario
     try {
       const eHex = Buffer.from(String(expected), 'hex');
       const pHex = Buffer.from(String(providedSig), 'hex');
-      if (eHex.length === pHex.length && crypto.timingSafeEqual(eHex, pHex)) return true;
-    } catch {
-      // ignorar y continuar
-    }
+      if (eHex.length === pHex.length && require('crypto').timingSafeEqual(eHex, pHex)) return true;
+    } catch {}
   }
 
   return false;
@@ -148,9 +177,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'not_found');
   }
 
-  // (3) Expiración usando BBDD como fuente de verdad
-  // - Si existe tx.expiresAt, usamos eso.
-  // - Si no, utilizamos exp de la query como respaldo.
+  // (3) Expiración: BBDD como fuente de verdad, query como respaldo
   let expiresAtMs = null;
   if (tx.expiresAt) {
     const ms = Date.parse(String(tx.expiresAt));
@@ -168,7 +195,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'expired');
   }
 
-  // (4) Firma: comparar con lo guardado por /initialize (sin recalcular)
+  // (4) Firma: comparar con lo guardado por /initialize
   if (!signatureMatches(tx, signature)) {
     await logEvent(paymentId, {
       type: 'iframe_load_failed',
@@ -205,10 +232,14 @@ async function handler(req, res) {
     );
   } catch {}
 
-  // (7) Entregar el iFrame real
-  return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
-    if (err) serveBrandedError(res, 'default');
-  });
+  // (7) Entregar el iFrame real (si no existe, caemos a 403)
+  const iframeHtml = absPublicFile('iframe.html');
+  if (iframeHtml) {
+    return res.sendFile(iframeHtml, (err) => {
+      if (err) serveBrandedError(res, 'default');
+    });
+  }
+  return serveBrandedError(res, 'default');
 }
 
 // =====================
