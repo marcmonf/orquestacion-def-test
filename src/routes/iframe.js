@@ -3,6 +3,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
 
 const router = express.Router();
@@ -34,7 +35,6 @@ function serveBrandedError(res, code) {
   res.status(entry.status);
   return res.sendFile(absPath, (err) => {
     if (err) {
-      // Fallback al 403 del mismo directorio
       const fbPath = path.join(ERRORS_DIR, ERROR_PAGE_MAP.default.file);
       return res.status(ERROR_PAGE_MAP.default.status).sendFile(fbPath, (err2) => {
         if (err2) {
@@ -103,29 +103,44 @@ function signatureMatches(tx, providedSig) {
 async function logEvent(paymentId, event) {
   try {
     await Transaction.updateOne(
-      { _id: paymentId },
+      // cuando _id sea UUID/str, esto funciona; si fuera ObjectId, igual
+      { $or: [
+        ...(mongoose.isValidObjectId(paymentId) ? [{ _id: paymentId }] : []),
+        { paymentId }
+      ]},
       { $push: { events: { ...event, at: new Date() } } }
     );
   } catch {}
 }
 
+/**
+ * Recupera la transacción de forma robusta:
+ *  - Si paymentId es ObjectId válido → busca por _id
+ *  - Siempre intenta también buscar por campo paymentId (UUID/string)
+ */
+async function findTransactionByPaymentId(paymentId) {
+  const or = [{ paymentId }];
+  if (mongoose.isValidObjectId(paymentId)) {
+    or.unshift({ _id: paymentId });
+  }
+  return Transaction.findOne({ $or: or }).lean();
+}
+
 async function handler(req, res) {
   const { paymentId, signature, expRaw, merchantId, amount, currency } = extractParams(req);
 
+  // (1) Presencia mínima
   if (!paymentId || !signature) {
     return serveBrandedError(res, 'missing_params');
   }
 
-  let tx;
-  try {
-    tx = await Transaction.findById(paymentId).lean();
-  } catch {
-    return serveBrandedError(res, 'not_found');
-  }
+  // (2) Cargar transacción (soporta UUID o _id ObjectId)
+  const tx = await findTransactionByPaymentId(paymentId);
   if (!tx) {
     return serveBrandedError(res, 'not_found');
   }
 
+  // (3) Expiración: BBDD como fuente de verdad, query como respaldo
   let expiresAtMs = null;
   if (tx.expiresAt) {
     const ms = Date.parse(String(tx.expiresAt));
@@ -143,6 +158,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'expired');
   }
 
+  // (4) Firma: comparar con lo guardado por /initialize
   if (!signatureMatches(tx, signature)) {
     await logEvent(paymentId, {
       type: 'iframe_load_failed',
@@ -152,6 +168,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'invalid_signature');
   }
 
+  // (5) Estado de la transacción
   if (tx.status !== 'initialized') {
     await logEvent(paymentId, {
       type: 'iframe_load_blocked',
@@ -161,9 +178,10 @@ async function handler(req, res) {
     return serveBrandedError(res, 'already_processed');
   }
 
+  // (6) Trazabilidad de servicio del iFrame (no bloqueante)
   try {
     await Transaction.updateOne(
-      { _id: paymentId },
+      { _id: tx._id },
       {
         $set: { iframeServedAt: new Date() },
         $push: {
@@ -177,6 +195,7 @@ async function handler(req, res) {
     );
   } catch {}
 
+  // (7) Entregar el iFrame real
   return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
     if (err) serveBrandedError(res, 'default');
   });
@@ -185,7 +204,7 @@ async function handler(req, res) {
 // =====================
 // Rutas
 // =====================
-router.get('/:paymentId', handler);
-router.get('/', handler);
+router.get('/:paymentId', handler); // /iframe-process/:paymentId?...
+router.get('/', handler);           // /iframe-process?paymentId=...
 
 module.exports = router;
