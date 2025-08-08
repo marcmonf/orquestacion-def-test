@@ -1,9 +1,12 @@
 'use strict';
 
 // src/routes/iframe.js
-// Carga segura del iFrame con validación HMAC, expiración y control de múltiples accesos.
-// Sirve PÁGINAS DE ERROR ESPECÍFICAS con branding (400/404/409/410/422/403).
-// Acepta enlaces con paymentId en PATH (/prefix/:paymentId) o en QUERY (/prefix?paymentId=...).
+// iFrame seguro con:
+// - Validación de firma contra lo almacenado en la BBDD por /initialize (no “recalculamos”).
+// - Expiración usando expiresAt guardado en la BBDD (o exp de query como respaldo).
+// - Control de múltiples accesos (status !== 'initialized').
+// - Páginas de error específicas con branding (400/404/409/410/422/403).
+// - Soporta tanto /iframe-process?paymentId=... como /iframe-process/:paymentId.
 
 const express = require('express');
 const crypto = require('crypto');
@@ -15,8 +18,6 @@ const router = express.Router();
 // =====================
 // Configuración
 // =====================
-const HMAC_ALGO = 'sha256';
-const IFRAME_HMAC_SECRET = process.env.IFRAME_HMAC_SECRET; // Debe existir en entorno
 const PUBLIC_DIR = path.resolve(__dirname, '../../public'); // <raíz>/public
 const IFRAME_HTML_ABS_PATH = path.join(PUBLIC_DIR, 'iframe.html');
 
@@ -46,85 +47,74 @@ function serveBrandedError(res, code) {
   });
 }
 
-/**
- * Devuelve parámetros normalizados desde PATH o QUERY.
- * Soporta:
- *  - /prefix/:paymentId?signature=...&exp=...
- *  - /prefix?paymentId=...&signature=...&exp=...
- */
+/** Extrae params desde PATH o QUERY */
 function extractParams(req) {
   const paymentId = req.params.paymentId || req.query.paymentId;
   const signature = req.query.signature;
-  const expRaw = req.query.exp;
-  // Campos opcionales por si algún día se incluyen en la firma/logs:
+  const expRaw = req.query.exp; // respaldo si no estuviera en BBDD
+  // Opcionales (para logs/futuro):
   const merchantId = req.query.merchantId;
   const amount = req.query.amount;
   const currency = req.query.currency;
-
   return { paymentId, signature, expRaw, merchantId, amount, currency };
 }
 
-/** true si exp está caducado. Acepta ISO 8601 o epoch seconds. */
-function isExpired(expRaw) {
-  if (expRaw == null) return true;
+/** Parsea exp (ISO o epoch seconds) → ms, o null si inválido */
+function parseExpToMs(expRaw) {
+  if (expRaw == null) return null;
+  const asString = String(expRaw);
 
-  // Si parece todo dígitos, interpretamos como epoch seconds.
-  if (/^\d+$/.test(String(expRaw))) {
-    const now = Math.floor(Date.now() / 1000);
-    const expNum = Number(expRaw);
-    if (!Number.isFinite(expNum)) return true;
-    return now > expNum;
+  // epoch seconds
+  if (/^\d+$/.test(asString)) {
+    const sec = Number(asString);
+    if (!Number.isFinite(sec)) return null;
+    return sec * 1000;
   }
-
   // ISO 8601
-  const ms = Date.parse(String(expRaw));
-  if (Number.isNaN(ms)) return true;
-  return Date.now() > ms;
+  const ms = Date.parse(asString);
+  return Number.isNaN(ms) ? null : ms;
 }
 
-/**
- * Comparación constante de dos hex strings (digest vs firma).
- */
-function safeEqualHex(expectedHex, providedHex) {
+/** Comparación segura, admite hex o string plano. */
+function safeEqual(a, b) {
   try {
-    const a = Buffer.from(String(expectedHex), 'hex');
-    const b = Buffer.from(String(providedHex), 'hex');
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    const A = Buffer.from(String(a), 'utf8');
+    const B = Buffer.from(String(b), 'utf8');
+    if (A.length !== B.length) return false;
+    return crypto.timingSafeEqual(A, B);
   } catch {
     return false;
   }
 }
 
-/**
- * Verifica la firma HMAC. Intenta variantes de canónico:
- *  - A) paymentId|exp     (formato actual de /initialize)
- *  - B) merchantId|paymentId|amount|currency|exp (por compatibilidad futura)
- * La comparación se hace en tiempo constante y en binario (hex).
- */
-function verifySignature({ paymentId, expRaw, merchantId, amount, currency }, signature) {
-  if (!IFRAME_HMAC_SECRET) return false;
+/** Compara firmas con varias fuentes posibles en la tx */
+function signatureMatches(tx, providedSig) {
+  if (!providedSig) return false;
 
-  const variants = [];
+  // Candidatas habituales donde /initialize pudo guardar la firma
+  const candidates = [
+    tx.signature,
+    tx.iframeSignature,
+    tx.initializeSignature,
+    tx.hmac,
+    tx.security && tx.security.signature,
+    tx.security && tx.security.iframeSignature,
+  ].filter(Boolean);
 
-  // Variante A: canónico actual (paymentId|exp). Usamos el exp tal cual viene en la URL.
-  variants.push([paymentId ?? '', expRaw ?? ''].join('|'));
+  for (const expected of candidates) {
+    // Igualdad directa (texto)
+    if (safeEqual(expected, providedSig)) return true;
 
-  // Variante B: extendida (si algún día añadimos más campos al iFrameUrl)
-  if (merchantId || amount || currency) {
-    variants.push([
-      merchantId ?? '',
-      paymentId ?? '',
-      amount ?? '',
-      currency ?? '',
-      expRaw ?? '',
-    ].join('|'));
+    // Igualdad asumiendo que expected/provided sean hex (comparación binaria)
+    try {
+      const eHex = Buffer.from(String(expected), 'hex');
+      const pHex = Buffer.from(String(providedSig), 'hex');
+      if (eHex.length === pHex.length && crypto.timingSafeEqual(eHex, pHex)) return true;
+    } catch {
+      // ignorar y continuar
+    }
   }
 
-  for (const canon of variants) {
-    const h = crypto.createHmac(HMAC_ALGO, IFRAME_HMAC_SECRET).update(canon).digest('hex');
-    if (safeEqualHex(h, signature)) return true;
-  }
   return false;
 }
 
@@ -134,7 +124,7 @@ async function logEvent(paymentId, event) {
       { _id: paymentId },
       { $push: { events: { ...event, at: new Date() } } }
     );
-  } catch (_) {
+  } catch {
     // logging no bloqueante
   }
 }
@@ -142,33 +132,12 @@ async function logEvent(paymentId, event) {
 async function handler(req, res) {
   const { paymentId, signature, expRaw, merchantId, amount, currency } = extractParams(req);
 
-  // 1) Validaciones básicas
-  if (!paymentId || !signature || !expRaw) {
+  // (1) Presencia mínima
+  if (!paymentId || !signature) {
     return serveBrandedError(res, 'missing_params');
   }
 
-  // 2) Expiración
-  if (isExpired(expRaw)) {
-    await logEvent(paymentId, {
-      type: 'iframe_load_failed',
-      reason: 'expired',
-      meta: { merchantId, amount, currency, exp: expRaw },
-    });
-    return serveBrandedError(res, 'expired');
-  }
-
-  // 3) Firma
-  const ok = verifySignature({ paymentId, expRaw, merchantId, amount, currency }, signature);
-  if (!ok) {
-    await logEvent(paymentId, {
-      type: 'iframe_load_failed',
-      reason: 'invalid_signature',
-      meta: { merchantId, amount, currency },
-    });
-    return serveBrandedError(res, 'invalid_signature');
-  }
-
-  // 4) Transacción y estado
+  // (2) Cargar transacción
   let tx;
   try {
     tx = await Transaction.findById(paymentId).lean();
@@ -179,6 +148,37 @@ async function handler(req, res) {
     return serveBrandedError(res, 'not_found');
   }
 
+  // (3) Expiración usando BBDD como fuente de verdad
+  // - Si existe tx.expiresAt, usamos eso.
+  // - Si no, utilizamos exp de la query como respaldo.
+  let expiresAtMs = null;
+  if (tx.expiresAt) {
+    const ms = Date.parse(String(tx.expiresAt));
+    if (!Number.isNaN(ms)) expiresAtMs = ms;
+  }
+  if (expiresAtMs == null) {
+    expiresAtMs = parseExpToMs(expRaw);
+  }
+  if (expiresAtMs == null || Date.now() > expiresAtMs) {
+    await logEvent(paymentId, {
+      type: 'iframe_load_failed',
+      reason: 'expired',
+      meta: { merchantId, amount, currency, exp: expRaw, expiresAt: tx.expiresAt || null },
+    });
+    return serveBrandedError(res, 'expired');
+  }
+
+  // (4) Firma: comparar con lo guardado por /initialize (sin recalcular)
+  if (!signatureMatches(tx, signature)) {
+    await logEvent(paymentId, {
+      type: 'iframe_load_failed',
+      reason: 'invalid_signature',
+      meta: { merchantId, amount, currency },
+    });
+    return serveBrandedError(res, 'invalid_signature');
+  }
+
+  // (5) Estado de la transacción
   if (tx.status !== 'initialized') {
     await logEvent(paymentId, {
       type: 'iframe_load_blocked',
@@ -188,7 +188,7 @@ async function handler(req, res) {
     return serveBrandedError(res, 'already_processed');
   }
 
-  // 5) Trazabilidad de servicio del iFrame (no bloqueante)
+  // (6) Trazabilidad de servicio del iFrame (no bloqueante)
   try {
     await Transaction.updateOne(
       { _id: paymentId },
@@ -203,16 +203,16 @@ async function handler(req, res) {
         },
       }
     );
-  } catch (_) {}
+  } catch {}
 
-  // 6) Entregar el iFrame real
+  // (7) Entregar el iFrame real
   return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
     if (err) serveBrandedError(res, 'default');
   });
 }
 
 // =====================
-// Rutas soportadas
+// Rutas soportadas (ambos formatos)
 // =====================
 
 // Forma 1: /iframe-process/:paymentId?signature=...&exp=...
