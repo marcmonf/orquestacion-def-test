@@ -102,28 +102,19 @@ app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsQueryRoute
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
 
-// ✅ Aplicar idempotency SOLO en POST /transactions
-app.use('/transactions', (req, res, next) => {
-  if (req.method === 'POST') {
-    return validateApiKey(req, res, () =>
-      checkRole(['admin', 'merchant'])(req, res, () =>
-        rateLimiter(req, res, () =>
-          idempotencyMiddleware(req, res, () =>
-            transactionsRouter(req, res, next)
-          )
-        )
-      )
-    );
-  } else {
-    return validateApiKey(req, res, () =>
-      checkRole(['admin', 'merchant'])(req, res, () =>
-        rateLimiter(req, res, () =>
-          transactionsRouter(req, res, next)
-        )
-      )
-    );
-  }
-});
+// ✅ Aplicar idempotency SOLO en POST /transactions pero montando el router de forma estándar
+app.use('/transactions',
+  validateApiKey,
+  checkRole(['admin', 'merchant']),
+  rateLimiter,
+  (req, res, next) => {
+    if (req.method === 'POST') {
+      return idempotencyMiddleware(req, res, next);
+    }
+    next();
+  },
+  transactionsRouter
+);
 
 app.use('/tokens', validateTokenApiKey, checkRole(['admin']), rateLimiterTokens, require('./src/tokens/tokenRoutes'));
 app.use('/analytics', validateApiKey, checkRole(['admin', 'analyst']), rateLimiter, require('./src/routes/analytics'));
