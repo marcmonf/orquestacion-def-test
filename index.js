@@ -61,10 +61,18 @@ app.get('/health', (req, res) => {
 });
 
 // ===== Rutas principales =====
-// Initialize
+
+// Initialize con try/catch y log de exportación
+let initializeRoutesExport;
+try {
+  initializeRoutesExport = require('./src/routes/initializeRoutes');
+  console.log('🟢 [DEBUG] require("./src/routes/initializeRoutes") devolvió:', initializeRoutesExport);
+} catch (err) {
+  console.error('❌ [ERROR] No se pudo hacer require("./src/routes/initializeRoutes"):', err);
+}
 app.use(
   '/initialize',
-  ensureRouter(require('./src/routes/initializeRoutes'), 'initializeRoutes')
+  ensureRouter(initializeRoutesExport, 'initializeRoutes')
 );
 
 // Iframe (sin parámetros → iframe.html dentro del router; con parámetros → flujo pago)
