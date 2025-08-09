@@ -1,7 +1,5 @@
 // index.js
 
-//comentario anadido
-
 // Módulos principales
 const express = require('express');
 const mongoose = require('mongoose');
@@ -34,9 +32,10 @@ const pmsRoutes = require('./src/routes/pmsRoutes'); // Cloudbeds
 const pmsUploadRoutes = require('./src/routes/pmsUploadRoutes'); // Conector neutro
 const pmsCsvRoutes = require('./src/routes/pmsCsvRoutes');
 const pmsQueryRoutes = require('./src/routes/pmsQueryRoutes'); // Consulta de reservas
-const initializeRoutes = require('./src/routes/initializeRoutes'); // 🆕 Ruta de inicialización de transacciones
-const iframeRouter = require('./src/routes/iframe'); // 🆕 Router del iFrame (paramétrico)
+const initializeRoutes = require('./src/routes/initializeRoutes'); // Ruta de inicialización de transacciones
+const iframeRouter = require('./src/routes/iframe'); // Router del iFrame (paramétrico)
 
+// Configuración
 dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
@@ -130,21 +129,23 @@ app.use('/test', require('./src/routes/testRoutes'));
 // Endpoint de health check
 app.use('/health', require('./src/routes/health'));
 
-// Rutas públicas para webhooks
-const webhooksRoutes = require('./src/routes/webhooks'); // debe ser un Router
-app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes);
+// ====== Rutas públicas para webhooks (montaje tolerante) ======
+try {
+  const webhooksRoutes = require('./src/routes/webhooks');
 
-// ⚠️ Montaje tolerante del receiver (por si exporta {router} o {handler} o fn)
-const webhookReceiver = require('./src/webhooks/webhookReceiver');
-if (typeof webhookReceiver === 'function') {
-  app.use('/webhooks', webhookReceiver);
-} else if (webhookReceiver && typeof webhookReceiver.router === 'function') {
-  app.use('/webhooks', webhookReceiver.router);
-} else if (webhookReceiver && typeof webhookReceiver.handler === 'function') {
-  app.post('/webhooks', webhookReceiver.handler);
-} else {
-  console.warn('⚠️ Export inesperado en ./src/webhooks/webhookReceiver; se omite el montaje para evitar crash.');
+  if (typeof webhooksRoutes === 'function') {
+    app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes);
+  } else if (webhooksRoutes && typeof webhooksRoutes.router === 'function') {
+    app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes.router);
+  } else {
+    console.warn('⚠️ ./src/routes/webhooks no exporta un middleware/Router válido; se omite su montaje.');
+  }
+} catch (e) {
+  console.warn('⚠️ ./src/routes/webhooks no se pudo cargar, se omite su montaje:', e.message);
 }
+
+// Este sí debería exportar un Router/middleware válido
+app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 
 // Middleware para rutas no encontradas
 app.use(notFoundHandler);
