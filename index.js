@@ -37,7 +37,6 @@ const pmsQueryRoutes = require('./src/routes/pmsQueryRoutes'); // Consulta de re
 const initializeRoutes = require('./src/routes/initializeRoutes'); // 🆕 Ruta de inicialización de transacciones
 const iframeRouter = require('./src/routes/iframe'); // 🆕 Router del iFrame (paramétrico)
 
-// Configuración
 dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
@@ -52,8 +51,7 @@ const validateApiKey = (req, res, next) => {
     return res.status(403).json({ error: getMessage(lang, 'error.invalidApiKey') });
   }
 
-  // ⚠️ TEMPORAL: Inyectar rol desde backend para entorno de pruebas
-  req.userRole = 'admin';
+  req.userRole = 'admin'; // ⚠️ Temporal para entorno de pruebas
   next();
 };
 
@@ -79,34 +77,39 @@ app.use(mongoSanitize());
 app.use(hpp());
 app.use(i18nMiddleware);
 
-// Servir contenido estático seguro (público)
+// Contenido estático
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ✅ Router del iFrame con parámetros primero
+// ✅ /iframe sin parámetros → iframe.html plano
+app.get('/iframe', (req, res, next) => {
+  if (!req.query.paymentId && !req.params.paymentId) {
+    return res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
+  }
+  next();
+});
+
+// ✅ Router del iFrame con parámetros
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
 
-// Opción legacy: servir iframe.html plano sólo si no hay parámetros
+// Opción legacy explícita
 app.get('/iframe-legacy', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
 });
 
-// ✅ Ruta pública para validación de Apple Pay
+// ✅ Rutas públicas
 app.use('/apple-pay', applePayRoutes);
-
-// ✅ Ruta pública para inicialización de transacciones
 app.use('/initialize', initializeRoutes);
 
-// ✅ Rutas protegidas PMS
+// ✅ Rutas PMS protegidas
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsUploadRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsQueryRoutes);
 
-// Rutas protegidas por API Key y roles
+// ✅ Rutas protegidas
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
 
-// ✅ Aplicar idempotency SOLO en POST /transactions
 app.use('/transactions',
   validateApiKey,
   checkRole(['admin', 'merchant']),
@@ -125,23 +128,18 @@ app.use('/analytics', validateApiKey, checkRole(['admin', 'analyst']), rateLimit
 app.use('/merchants', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/routes/merchantRoutes'));
 app.use('/recurrent-profiles', validateApiKey, checkRole(['admin', 'merchant']), rateLimiter, require('./src/routes/recurrentprofiles'));
 
-// Ruta de prueba protegida
 app.use('/test', require('./src/routes/testRoutes'));
-
-// Endpoint de health check
 app.use('/health', require('./src/routes/health'));
 
-// Rutas públicas para webhooks
+// Webhooks públicos
 app.use('/webhooks', rateLimiterWebhooks, require('./src/routes/webhooks'));
 app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
 
-// Middleware para rutas no encontradas
+// Not found & error handler
 app.use(notFoundHandler);
-
-// Middleware de gestión de errores centralizada
 app.use(errorHandler);
 
-// Inicio del servidor
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Pasarela escuchando en puerto ${PORT}`);
