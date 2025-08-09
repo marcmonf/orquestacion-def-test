@@ -79,34 +79,34 @@ app.use(mongoSanitize());
 app.use(hpp());
 app.use(i18nMiddleware);
 
-// Servir contenido estático seguro (iFrame)
+// Servir contenido estático seguro (público)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Opción legacy: servir iframe.html plano en /iframe (sin parámetros)
-app.get('/iframe', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
-});
-
-// ✅ Router del iFrame con parámetros (acepta /iframe/:paymentId y /iframe-process/:paymentId)
+// ✅ Router del iFrame con parámetros primero
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
+
+// Opción legacy: servir iframe.html plano sólo si no hay parámetros
+app.get('/iframe-legacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
+});
 
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
 
 // ✅ Ruta pública para inicialización de transacciones
-app.use('/initialize', initializeRoutes); // 🆕 Añadido
+app.use('/initialize', initializeRoutes);
 
 // ✅ Rutas protegidas PMS
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsUploadRoutes);
 app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsCsvRoutes);
-app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsQueryRoutes); // ← nueva ruta para consultas de reservas
+app.use('/pms', validateApiKey, checkRole(['admin']), rateLimiter, pmsQueryRoutes);
 
 // Rutas protegidas por API Key y roles
 app.use('/apms', validateApiKey, checkRole(['admin']), rateLimiter, require('./src/channels/apms/apmsHandler'));
 
-// ✅ Aplicar idempotency SOLO en POST /transactions pero montando el router de forma estándar
+// ✅ Aplicar idempotency SOLO en POST /transactions
 app.use('/transactions',
   validateApiKey,
   checkRole(['admin', 'merchant']),
