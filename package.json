@@ -21,6 +21,7 @@
     "uuid": "^9.0.0",
     "winston": "^3.10.0",
     "xss-clean": "^0.1.1",
-    "csv-parser": "^3.0.0"
+    "csv-parser": "^3.0.0",
+    "morgan": "^1.10.0"
   }
 }
