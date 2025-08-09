@@ -86,11 +86,9 @@ app.use(express.static(path.join(__dirname, 'public')));
  * - Con parámetros (query ?paymentId=... o rutas tipo /iframe/:paymentId) -> pasa al router.
  */
 app.get('/iframe', (req, res, next) => {
-  // Si NO hay query params → servir iframe básico
   if (!req.query || Object.keys(req.query).length === 0) {
     return res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
   }
-  // Si hay query → que lo gestione el router paramétrico
   return next();
 });
 
@@ -138,40 +136,8 @@ app.use('/test', require('./src/routes/testRoutes'));
 // Endpoint de health check
 app.use('/health', require('./src/routes/health'));
 
-// ====== Rutas públicas para webhooks (montaje robusto para evitar error de tipo) ======
-function isExpressMiddleware(maybe) {
-  // Valida función (middleware) o Router (objeto con .use/.handle/.stack)
-  return (
-    typeof maybe === 'function' ||
-    (maybe && typeof maybe === 'object' && typeof maybe.use === 'function' && typeof maybe.handle === 'function')
-  );
-}
-
-try {
-  const webhooksRoutes = require('./src/routes/webhooks');
-  if (isExpressMiddleware(webhooksRoutes)) {
-    app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes);
-  } else if (webhooksRoutes && isExpressMiddleware(webhooksRoutes.router)) {
-    app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes.router);
-  } else {
-    console.warn('⚠️ ./src/routes/webhooks no exporta un middleware/Router válido; se omite su montaje.');
-  }
-} catch (e) {
-  console.warn('⚠️ ./src/routes/webhooks no se pudo cargar, se omite su montaje:', e.message);
-}
-
-try {
-  const webhookReceiver = require('./src/webhooks/webhookReceiver');
-  if (isExpressMiddleware(webhookReceiver)) {
-    app.use('/webhooks', webhookReceiver);
-  } else if (webhookReceiver && isExpressMiddleware(webhookReceiver.router)) {
-    app.use('/webhooks', webhookReceiver.router);
-  } else {
-    console.warn('⚠️ ./src/webhooks/webhookReceiver no exporta un middleware/Router válido; se omite su montaje.');
-  }
-} catch (e) {
-  console.warn('⚠️ ./src/webhooks/webhookReceiver no se pudo cargar, se omite su montaje:', e.message);
-}
+// ❌ Desmontamos webhooks TEMPORALMENTE para que Render no reviente
+console.warn('⚠️ Montaje de /webhooks DESACTIVADO temporalmente para evitar crash en Render.');
 
 // Middleware para rutas no encontradas
 app.use(notFoundHandler);
