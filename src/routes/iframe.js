@@ -116,6 +116,7 @@ function signatureMatches(tx, providedSig) {
 
   for (const expected of candidates) {
     if (safeEqual(expected, providedSig)) return true;
+    // también intentamos comparar como hex
     try {
       const eHex = Buffer.from(String(expected), 'hex');
       const pHex = Buffer.from(String(providedSig), 'hex');
@@ -131,7 +132,9 @@ async function logEventByEitherId(paymentId, event) {
       { $or: [{ _id: paymentId }, { paymentId }] },
       { $push: { events: { ...event, at: new Date() } } }
     );
-  } catch {}
+  } catch {
+    // no bloquea
+  }
 }
 
 async function findTransactionByEitherId(paymentId) {
