@@ -80,14 +80,23 @@ app.use(i18nMiddleware);
 // Servir contenido estático seguro (público)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ✅ Router del iFrame con parámetros primero
+/**
+ * /iframe:
+ * - Sin parámetros (ni query ni path) -> sirve el HTML plano (como siempre).
+ * - Con parámetros (query ?paymentId=... o rutas tipo /iframe/:paymentId) -> pasa al router.
+ */
+app.get('/iframe', (req, res, next) => {
+  // Si NO hay query params → servir iframe básico
+  if (!req.query || Object.keys(req.query).length === 0) {
+    return res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
+  }
+  // Si hay query → que lo gestione el router paramétrico
+  return next();
+});
+
+// ✅ Router del iFrame con parámetros (acepta /iframe y /iframe-process)
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
-
-// Opción legacy: servir iframe.html plano sólo si no hay parámetros
-app.get('/iframe-legacy', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'iframe.html'));
-});
 
 // ✅ Ruta pública para validación de Apple Pay
 app.use('/apple-pay', applePayRoutes);
@@ -129,12 +138,20 @@ app.use('/test', require('./src/routes/testRoutes'));
 // Endpoint de health check
 app.use('/health', require('./src/routes/health'));
 
-// ====== Rutas públicas para webhooks (montaje tolerante) ======
+// ====== Rutas públicas para webhooks (montaje robusto para evitar error de tipo) ======
+function isExpressMiddleware(maybe) {
+  // Valida función (middleware) o Router (objeto con .use/.handle/.stack)
+  return (
+    typeof maybe === 'function' ||
+    (maybe && typeof maybe === 'object' && typeof maybe.use === 'function' && typeof maybe.handle === 'function')
+  );
+}
+
 try {
   const webhooksRoutes = require('./src/routes/webhooks');
-  if (typeof webhooksRoutes === 'function') {
+  if (isExpressMiddleware(webhooksRoutes)) {
     app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes);
-  } else if (webhooksRoutes && typeof webhooksRoutes.router === 'function') {
+  } else if (webhooksRoutes && isExpressMiddleware(webhooksRoutes.router)) {
     app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes.router);
   } else {
     console.warn('⚠️ ./src/routes/webhooks no exporta un middleware/Router válido; se omite su montaje.');
@@ -145,9 +162,9 @@ try {
 
 try {
   const webhookReceiver = require('./src/webhooks/webhookReceiver');
-  if (typeof webhookReceiver === 'function') {
+  if (isExpressMiddleware(webhookReceiver)) {
     app.use('/webhooks', webhookReceiver);
-  } else if (webhookReceiver && typeof webhookReceiver.router === 'function') {
+  } else if (webhookReceiver && isExpressMiddleware(webhookReceiver.router)) {
     app.use('/webhooks', webhookReceiver.router);
   } else {
     console.warn('⚠️ ./src/webhooks/webhookReceiver no exporta un middleware/Router válido; se omite su montaje.');
@@ -163,7 +180,7 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // Inicio del servidor
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Pasarela escuchando en puerto ${PORT}`);
 });
