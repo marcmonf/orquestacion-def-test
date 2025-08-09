@@ -2,59 +2,42 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 const Transaction = require('../models/Transaction');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
-// Clave HMAC desde variables de entorno
-const HMAC_SECRET = process.env.HMAC_SECRET;
-if (!HMAC_SECRET) {
-  console.error('ERROR: Falta la variable de entorno HMAC_SECRET');
+const PUBLIC_DIR = path.join(__dirname, '../../public');
+const ERRORS_DIR = path.join(PUBLIC_DIR, 'errors');
+
+const ERROR_PAGE_MAP = {
+  default: { file: '403.html', status: 403 }
+};
+
+function serveBrandedError(res, code) {
+  const entry = ERROR_PAGE_MAP[code] || ERROR_PAGE_MAP.default;
+  const absPath = path.join(ERRORS_DIR, entry.file);
+  return res.status(entry.status).sendFile(absPath);
 }
 
-// Tiempo de expiración (en segundos) definido por configuración/entorno
-const EXPIRATION_SECONDS = parseInt(process.env.IFRAME_EXPIRATION_SECONDS || '300', 10); // 300 = 5 minutos
-
-// Función para generar firma HMAC
-function generateSignature(payload) {
-  return crypto
-    .createHmac('sha256', HMAC_SECRET)
-    .update(JSON.stringify(payload))
-    .digest('hex');
-}
-
-// Ruta /initialize
 router.post('/', async (req, res) => {
+  const { merchantId, amount, currency, method, returnUrl, callbackUrl } = req.body;
+
+  if (!merchantId || !amount || !currency || !method || !returnUrl || !callbackUrl) {
+    return res.status(400).json({ success: false, message: 'Faltan parámetros obligatorios.' });
+  }
+
   try {
-    const { merchantId, amount, currency, method, returnUrl, callbackUrl } = req.body;
-
-    // Validar parámetros obligatorios
-    if (!merchantId || !amount || !currency || !method || !returnUrl || !callbackUrl) {
-      return res.status(400).json({ success: false, message: 'Missing required parameters' });
-    }
-
-    // Generar paymentId único
     const paymentId = uuidv4();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
 
-    // Calcular expiración usando la variable
-    const expiresAt = new Date(Date.now() + EXPIRATION_SECONDS * 1000);
+    const signature = crypto
+      .createHmac('sha256', process.env.HMAC_SECRET)
+      .update(`${paymentId}|${merchantId}|${amount}|${currency}`)
+      .digest('hex');
 
-    // Datos para firmar
-    const payload = {
-      paymentId,
-      merchantId,
-      amount,
-      currency,
-      method,
-      exp: Math.floor(expiresAt.getTime() / 1000)
-    };
-
-    // Generar firma
-    const signature = generateSignature(payload);
-
-    // Guardar transacción en BBDD
-    await Transaction.create({
+    const tx = await Transaction.create({
       paymentId,
       merchantId,
       amount,
@@ -63,26 +46,20 @@ router.post('/', async (req, res) => {
       returnUrl,
       callbackUrl,
       signature,
-      expiresAt,
       status: 'initialized',
+      expiresAt,
       createdAt: new Date()
     });
 
-    // Construir iframeUrl
-    const iframeUrl = `${process.env.IFRAME_BASE_URL}/iframe-process/${paymentId}?signature=${signature}&exp=${payload.exp}&merchantId=${merchantId}&amount=${amount}&currency=${currency}`;
-
-    // Responder
     return res.json({
       success: true,
       paymentId,
       signature,
-      expiresAt,
-      iframeUrl
+      iframeUrl: `${process.env.BASE_URL}/iframe-process/${paymentId}?signature=${signature}&exp=${Math.floor(expiresAt.getTime() / 1000)}`
     });
-
   } catch (err) {
     console.error('Error en /initialize:', err);
-    return res.status(500).json({ success: false, message: 'Internal server error' });
+    return serveBrandedError(res, 'default');
   }
 });
 
