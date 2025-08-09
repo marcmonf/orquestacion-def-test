@@ -13,11 +13,8 @@ const router = express.Router();
    ============================ */
 function pickPublicDir() {
   const candidates = [
-    // Render suele ejecutar con cwd = /opt/render/project/src
     path.join(process.cwd(), 'public'),
-    // relativo a este archivo (src/routes -> ../../public)
     path.resolve(__dirname, '../../public'),
-    // por si la build cambia niveles
     path.resolve(__dirname, '../../../public'),
   ];
 
@@ -25,7 +22,6 @@ function pickPublicDir() {
     const errors403 = path.join(p, 'errors', '403.html');
     if (fs.existsSync(errors403)) return p;
   }
-  // último recurso: si existe /public aunque no tenga 403.html (no debería)
   for (const p of candidates) {
     if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
   }
@@ -116,7 +112,6 @@ function signatureMatches(tx, providedSig) {
 
   for (const expected of candidates) {
     if (safeEqual(expected, providedSig)) return true;
-    // también intentamos comparar como hex
     try {
       const eHex = Buffer.from(String(expected), 'hex');
       const pHex = Buffer.from(String(providedSig), 'hex');
@@ -132,9 +127,7 @@ async function logEventByEitherId(paymentId, event) {
       { $or: [{ _id: paymentId }, { paymentId }] },
       { $push: { events: { ...event, at: new Date() } } }
     );
-  } catch {
-    // no bloquea
-  }
+  } catch {}
 }
 
 async function findTransactionByEitherId(paymentId) {
