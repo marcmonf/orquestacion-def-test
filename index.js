@@ -132,7 +132,6 @@ app.use('/health', require('./src/routes/health'));
 // ====== Rutas públicas para webhooks (montaje tolerante) ======
 try {
   const webhooksRoutes = require('./src/routes/webhooks');
-
   if (typeof webhooksRoutes === 'function') {
     app.use('/webhooks', rateLimiterWebhooks, webhooksRoutes);
   } else if (webhooksRoutes && typeof webhooksRoutes.router === 'function') {
@@ -144,8 +143,18 @@ try {
   console.warn('⚠️ ./src/routes/webhooks no se pudo cargar, se omite su montaje:', e.message);
 }
 
-// Este sí debería exportar un Router/middleware válido
-app.use('/webhooks', require('./src/webhooks/webhookReceiver'));
+try {
+  const webhookReceiver = require('./src/webhooks/webhookReceiver');
+  if (typeof webhookReceiver === 'function') {
+    app.use('/webhooks', webhookReceiver);
+  } else if (webhookReceiver && typeof webhookReceiver.router === 'function') {
+    app.use('/webhooks', webhookReceiver.router);
+  } else {
+    console.warn('⚠️ ./src/webhooks/webhookReceiver no exporta un middleware/Router válido; se omite su montaje.');
+  }
+} catch (e) {
+  console.warn('⚠️ ./src/webhooks/webhookReceiver no se pudo cargar, se omite su montaje:', e.message);
+}
 
 // Middleware para rutas no encontradas
 app.use(notFoundHandler);
