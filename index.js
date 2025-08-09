@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
+const mongoose = require('mongoose'); // ⬅️ añadido
 
 // morgan opcional (no rompe si no está instalado)
 let morgan = null;
@@ -108,8 +109,37 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// ===== Servidor =====
+// ===== Conexión a MongoDB y arranque del servidor =====
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
+const MONGO_URI = process.env.MONGO_URI;
+
+if (!MONGO_URI) {
+  console.error('❌ [FATAL] MONGO_URI no está definido en las variables de entorno.');
+  process.exit(1);
+}
+
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 20000, // más margen en Render
+  socketTimeoutMS: 45000
+})
+.then(() => {
+  console.log('✅ MongoDB conectado');
+  app.listen(PORT, () => {
+    console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
+  });
+})
+.catch(err => {
+  console.error('❌ Error conectando a MongoDB:', err);
+  process.exit(1); // no arranca si no hay DB
+});
+
+// Cierre gracioso
+process.on('SIGINT', async () => {
+  try {
+    await mongoose.connection.close();
+  } finally {
+    process.exit(0);
+  }
 });
