@@ -13,6 +13,9 @@ if (!HMAC_SECRET) {
   console.error('ERROR: Falta la variable de entorno HMAC_SECRET');
 }
 
+// Tiempo de expiración (en segundos) definido por configuración/entorno
+const EXPIRATION_SECONDS = parseInt(process.env.IFRAME_EXPIRATION_SECONDS || '300', 10); // 300 = 5 minutos
+
 // Función para generar firma HMAC
 function generateSignature(payload) {
   return crypto
@@ -34,8 +37,8 @@ router.post('/', async (req, res) => {
     // Generar paymentId único
     const paymentId = uuidv4();
 
-    // Tiempo de expiración (5 minutos)
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    // Calcular expiración usando la variable
+    const expiresAt = new Date(Date.now() + EXPIRATION_SECONDS * 1000);
 
     // Datos para firmar
     const payload = {
