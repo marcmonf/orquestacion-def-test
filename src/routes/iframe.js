@@ -116,7 +116,6 @@ function signatureMatches(tx, providedSig) {
 
   for (const expected of candidates) {
     if (safeEqual(expected, providedSig)) return true;
-    // también intentamos comparar como hex
     try {
       const eHex = Buffer.from(String(expected), 'hex');
       const pHex = Buffer.from(String(providedSig), 'hex');
@@ -132,9 +131,7 @@ async function logEventByEitherId(paymentId, event) {
       { $or: [{ _id: paymentId }, { paymentId }] },
       { $push: { events: { ...event, at: new Date() } } }
     );
-  } catch {
-    // no bloquea
-  }
+  } catch {}
 }
 
 async function findTransactionByEitherId(paymentId) {
@@ -145,25 +142,21 @@ async function findTransactionByEitherId(paymentId) {
    Handler principal
    ============================ */
 async function handler(req, res) {
-  // si no encontramos public, no sigas: así evitamos ENOENT
   if (!PUBLIC_DIR) {
     return res.status(500).json({ success: false, message: 'Public directory not found at runtime.' });
   }
 
   const { paymentId, signature, expRaw, merchantId, amount, currency } = extractParams(req);
 
-  // (1) Presencia mínima
   if (!paymentId || !signature) {
     return serveBrandedError(res, 'missing_params');
   }
 
-  // (2) Buscar transacción por _id o paymentId (UUID string)
   const tx = await findTransactionByEitherId(paymentId);
   if (!tx) {
     return serveBrandedError(res, 'not_found');
   }
 
-  // (3) Expiración: BBDD > query
   let expiresAtMs = null;
   if (tx.expiresAt) {
     const ms = Date.parse(String(tx.expiresAt));
@@ -179,7 +172,6 @@ async function handler(req, res) {
     return serveBrandedError(res, 'expired');
   }
 
-  // (4) Firma tal cual se guardó en /initialize
   if (!signatureMatches(tx, signature)) {
     await logEventByEitherId(paymentId, {
       type: 'iframe_load_failed',
@@ -189,7 +181,6 @@ async function handler(req, res) {
     return serveBrandedError(res, 'invalid_signature');
   }
 
-  // (5) Estado
   if (tx.status !== 'initialized') {
     await logEventByEitherId(paymentId, {
       type: 'iframe_load_blocked',
@@ -199,7 +190,6 @@ async function handler(req, res) {
     return serveBrandedError(res, 'already_processed');
   }
 
-  // (6) Log de servicio iFrame
   try {
     await Transaction.updateOne(
       { _id: tx._id },
@@ -216,7 +206,6 @@ async function handler(req, res) {
     );
   } catch {}
 
-  // (7) Entregar iFrame
   return res.sendFile(IFRAME_HTML_ABS_PATH, (err) => {
     if (err) serveBrandedError(res, 'default');
   });
@@ -225,9 +214,7 @@ async function handler(req, res) {
 /* ============================
    Rutas
    ============================ */
-// /iframe-process/:paymentId?signature=...&exp=...
 router.get('/:paymentId', handler);
-// /iframe-process?paymentId=...&signature=...&exp=...
 router.get('/', handler);
 
 module.exports = router;
