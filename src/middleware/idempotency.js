@@ -1,51 +1,58 @@
 // src/middleware/idempotency.js
-const IdempotencyRecord = require('../models/IdempotencyRecord');
+const crypto = require('crypto');
+const IdempotencyKey = require('../models/IdempotencyKey');
 
-const idempotencyMiddleware = async (req, res, next) => {
-  try {
-    const key = req.headers['idempotency-key'];
+function normalizeBody(body) {
+  // Ordenar claves para hash estable
+  return JSON.stringify(body, Object.keys(body).sort());
+}
 
-    if (!key) {
-      return next(); // Si no se envía la clave, no se aplica idempotencia
-    }
+function hashRequest(path, body) {
+  const h = crypto.createHash('sha256');
+  h.update(path + '|' + normalizeBody(body || {}));
+  return h.digest('hex');
+}
 
-    const existingRecord = await IdempotencyRecord.findOne({
-      idempotencyKey: key,
-      method: req.method,
-      endpoint: req.originalUrl
-    });
+module.exports = async function idempotency(req, res, next) {
+  // Solo en POST que crean recursos (p.ej. /transactions)
+  const key = req.get('Idempotency-Key');
+  if (!key) return next();
 
-    if (existingRecord) {
-      return res.status(existingRecord.statusCode).json(existingRecord.responseBody);
-    }
+  const bodyHash = hashRequest(req.path, req.body);
+  const existing = await IdempotencyKey.findOne({ key });
 
-    // Redefinimos res.json para capturar la respuesta real
-    const originalJson = res.json.bind(res);
-
-    res.json = async (body) => {
-      try {
-        const newRecord = new IdempotencyRecord({
-          idempotencyKey: key,
-          method: req.method,
-          endpoint: req.originalUrl,
-          requestBody: req.body,
-          responseBody: body,
-          statusCode: res.statusCode
-        });
-
-        await newRecord.save();
-      } catch (err) {
-        console.error('Error guardando respuesta idempotente:', err.message);
-      }
-
-      return originalJson(body);
-    };
-
-    next();
-  } catch (err) {
-    console.error('Error en middleware de idempotencia:', err.message);
-    return res.status(500).json({ success: false, message: 'Error procesando clave de idempotencia.' });
+  // Reintento idéntico
+  if (existing && existing.bodyHash === bodyHash && existing.response) {
+    return res.status(existing.response.statusCode || 200).json(existing.response.body);
   }
-};
 
-module.exports = idempotencyMiddleware;
+  // Conflicto si la clave existe pero el body cambió
+  if (existing && existing.bodyHash !== bodyHash) {
+    return res.status(409).json({
+      success: false,
+      message: 'Idempotency key conflict: different payload for same key.'
+    });
+  }
+
+  // Marcar inicio
+  await IdempotencyKey.create({
+    key,
+    bodyHash,
+    response: null,
+  });
+
+  // Al responder, guardamos
+  const originalJson = res.json.bind(res);
+  res.json = async (payload) => {
+    try {
+      const statusCode = res.statusCode || 200;
+      await IdempotencyKey.updateOne(
+        { key },
+        { $set: { response: { statusCode, body: payload } } }
+      );
+    } catch (_) { /* no-op */ }
+    return originalJson(payload);
+  };
+
+  next();
+};
