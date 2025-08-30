@@ -25,20 +25,40 @@ function generateSignature(payload, secret) {
     .digest('hex');
 }
 
+// Allowlist opcional para returnUrl/callbackUrl (no rompe si no está configurado)
+const allowedHosts = (process.env.ALLOWED_REDIRECT_HOSTS || '')
+  .split(',')
+  .map(v => v.trim().toLowerCase())
+  .filter(Boolean);
+
+function isUrlAllowed(u) {
+  // Si no hay allowlist → permitir todo (compatibilidad)
+  if (!allowedHosts.length) return true;
+  try {
+    const parsed = new URL(u);
+    if (!['https:', 'http:'].includes(parsed.protocol)) return false;
+    const host = parsed.hostname.toLowerCase();
+    // Coincidencia exacta o sufijo si la regla empieza por "."
+    return allowedHosts.some(rule =>
+      rule.startsWith('.') ? host.endsWith(rule) : host === rule
+    );
+  } catch {
+    return false;
+  }
+}
+
 const initializeTransaction = async (req, res) => {
   const { error } = initializationSchema.validate(req.body);
-  if (error) {
-    return res.status(400).json({ error: error.details[0].message });
-  }
+  if (error) return res.status(400).json({ error: error.details[0].message });
 
-  const {
-    merchantId,
-    amount,
-    currency,
-    method,
-    returnUrl,
-    callbackUrl
-  } = req.body;
+  const { merchantId, amount, currency, method, returnUrl, callbackUrl } = req.body;
+
+  // Check de allowlist (solo si hay reglas definidas)
+  if (allowedHosts.length) {
+    if (!isUrlAllowed(returnUrl) || !isUrlAllowed(callbackUrl)) {
+      return res.status(400).json({ error: 'Redirect URL not allowed' });
+    }
+  }
 
   try {
     const paymentId = uuidv4();
@@ -48,7 +68,7 @@ const initializeTransaction = async (req, res) => {
     const ttlMinutes = parseInt(process.env.SIGNATURE_TTL_MINUTES || '5', 10);
     const requestedExp = new Date(timestamp.getTime() + ttlMinutes * 60000);
 
-    // Coherencia con iframe.js: si existe IFRAME_MAX_TTL_MS, no permitimos exp superiores
+    // Coherencia con iframe.js: limitar expiración si se define IFRAME_MAX_TTL_MS
     const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
       ? parseInt(process.env.IFRAME_MAX_TTL_MS, 10)
       : null;
@@ -68,15 +88,15 @@ const initializeTransaction = async (req, res) => {
       merchant?.secret ||
       (process.env.MERCHANT_SECRET || 'default_merchant_secret');
 
-    // Payload a firmar (idéntico al verificado en iframe.js)
+    // Payload a firmar (mismo orden/estructura que en iframe.js)
     const payloadToSign = {
       paymentId,
       merchantId,
       amount,
       currency,
       method,
-      iat: timestamp.toISOString(), // issued-at
-      exp: expiresAt.toISOString()  // expiry
+      iat: timestamp.toISOString(),
+      exp: expiresAt.toISOString()
     };
 
     const signature = generateSignature(payloadToSign, merchantSecret);
@@ -93,7 +113,6 @@ const initializeTransaction = async (req, res) => {
       status: 'initialized',
       createdAt: timestamp
     });
-
     await transaction.save();
 
     auditLogger.info({
