@@ -1,10 +1,8 @@
 /**
+ * src/orchestrator/fallbackEngine.js
  * Motor de smart-retries + fail-over para pagos con tarjeta.
- * - Reintenta los “soft-declines” en el mismo PSP hasta MAX_RETRIES_PER_CONNECTOR
- * - Salta a los PSP alternativos definidos en FALLBACK_MAP
- * - Registra cada intento en PaymentAttempt (auditoría / métricas)
+ * Interfaz unificada: cada conector expone async process(tx).
  */
-
 const PaymentAttempt = require('../models/PaymentAttempt');
 
 const visaAcquirer        = require('../channels/acquirers/visaAcquirer');
@@ -12,14 +10,18 @@ const mcAcquirer          = require('../channels/acquirers/mcAcquirer');
 const amexAcquirer        = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer = require('../channels/acquirers/defaultCardAcquirer');
 
-const connectorProcessors = {
-  visaAcquirer:        visaAcquirer.initiatePayment,
-  mcAcquirer:          mcAcquirer.initiatePayment,
-  amexAcquirer:        amexAcquirer.initiatePayment,
-  defaultCardAcquirer: defaultCardAcquirer.initiatePayment
+const connectorModules = {
+  visaAcquirer,
+  mcAcquirer,
+  amexAcquirer,
+  defaultCardAcquirer
 };
 
-// Orden de preferencia cuando falla el PSP principal
+function getProcessor(mod) {
+  // Compatibilidad: algunos exportaban initiatePayment
+  return mod.process || mod.initiatePayment;
+}
+
 const FALLBACK_MAP = {
   visaAcquirer:        ['mcAcquirer', 'defaultCardAcquirer'],
   mcAcquirer:          ['visaAcquirer', 'defaultCardAcquirer'],
@@ -27,9 +29,8 @@ const FALLBACK_MAP = {
   defaultCardAcquirer: []
 };
 
-const MAX_RETRIES_PER_CONNECTOR = parseInt(process.env.MAX_RETRIES_PER_CONNECTOR, 10) || 2;
+const MAX_RETRIES_PER_CONNECTOR = parseInt(process.env.MAX_RETRIES_PER_CONNECTOR || '2', 10);
 
-// Códigos que consideramos “soft” (se pueden volver a intentar)
 const SOFT_DECLINE_CODES = new Set([
   'issuer_unavailable',
   'processing_error',
@@ -42,58 +43,45 @@ const SOFT_DECLINE_CODES = new Set([
 
 function isSoftDecline(result = {}) {
   if (result.declineType === 'soft') return true;
-  if (result.reasonCode && SOFT_DECLINE_CODES.has(result.reasonCode.toLowerCase()))
-    return true;
+  if (result.reasonCode && SOFT_DECLINE_CODES.has(String(result.reasonCode).toLowerCase())) return true;
   return false;
 }
 
-/**
- * @param {Object}  params
- * @param {Object}  params.paymentRequest   – payload normalizado (amount, cardNumber, etc.)
- * @param {String}  params.paymentId
- * @param {String}  params.primaryConnector
- * @returns {Object} Resultado final (status, processor, transactionId, authCode?, timestamp?, reasonCode?, fallbackUsed)
- */
 async function executeCardPayment({ paymentRequest, paymentId, primaryConnector }) {
   const connectors = [primaryConnector, ...(FALLBACK_MAP[primaryConnector] || [])];
   let attemptNumber = 0;
-  let fallbackUsed  = false;
+  let fallbackUsed = false;
 
-  for (const connectorName of connectors) {
-    const processor = connectorProcessors[connectorName];
-    if (!processor) continue;                                     // seguridad
+  for (const name of connectors) {
+    const mod = connectorModules[name];
+    const processor = mod && getProcessor(mod);
+    if (!processor) continue;
 
     for (let retry = 0; retry < MAX_RETRIES_PER_CONNECTOR; retry++) {
       attemptNumber += 1;
       let result;
-
       try {
         result = await processor(paymentRequest);
       } catch (err) {
-        result = { status: 'error', reasonCode: err.message };
+        result = { status: 'error', reasonCode: err.message, processor: name };
       }
 
-      // Registro persistente del intento
       await PaymentAttempt.create({
         paymentId,
-        connector: connectorName,
+        connector: name,
         attemptNumber,
         status: result.status,
         reasonCode: result.reasonCode || null
       });
 
       if (result.status === 'approved') {
-        if (connectorName !== primaryConnector) fallbackUsed = true;
+        if (name !== primaryConnector) fallbackUsed = true;
         return { ...result, fallbackUsed };
       }
-
-      // Decline
-      if (!isSoftDecline(result)) break;                          // hard-decline → saltar a otro PSP
+      if (!isSoftDecline(result)) break;
     }
-    // agotados los retries de este PSP → probar siguiente
   }
 
-  // Todos fallaron
   return {
     status: 'declined',
     processor: primaryConnector,
