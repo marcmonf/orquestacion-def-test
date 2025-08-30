@@ -1,186 +1,127 @@
-const apiUrl = '/iframe-process';
+// src/routes/iframe.js
+'use strict';
+const express  = require('express');
+const path     = require('path');
+const fs       = require('fs');
+const crypto   = require('crypto');
+const router   = express.Router();
 
-document.addEventListener('DOMContentLoaded', () => {
-  const methodHeader = document.getElementById('method-card');
-  const cardForm = document.getElementById('card-form');
+const Transaction = require('../models/Transaction');
+const Merchant    = require('../models/Merchant');
 
-  methodHeader.addEventListener('click', () => {
-    const isOpen = cardForm.classList.contains('show');
-    methodHeader.classList.toggle('active', !isOpen);
-    cardForm.classList.toggle('show', !isOpen);
-  });
+// CSP estricta solo para esta ruta (evita romper otras)
+// FIX: permite Google Pay; se mantiene sin inline scripts
+const CSP_HEADER = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://pay.google.com https://*.google.com https://*.gstatic.com; frame-ancestors 'none';";
 
-  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const isAndroid = /Android/i.test(navigator.userAgent);
+/* ------------ util ------------- */
+function safeCompare(a, b) {
+  try {
+    const A = Buffer.from(String(a || ''), 'utf8');
+    const B = Buffer.from(String(b || ''), 'utf8');
+    if (A.length !== B.length) return false;
+    return crypto.timingSafeEqual(A, B);
+  } catch { return false; }
+}
+function generateSignature(payload, secret) {
+  return crypto.createHmac('sha256', String(secret)).update(JSON.stringify(payload)).digest('hex');
+}
+function readHtml(absPath) {
+  try { return fs.readFileSync(absPath, 'utf8'); } catch { return null; }
+}
+// FIX: alinea con placeholders reales y aplica defaults seguros
+function injectBranding(html, branding) {
+  if (!html) return null;
+  const {
+    logoUrl = '/Logo_Monetiser.png',
+    brandColor = '#0070f3',
+    accentColor = '#0053b3'
+  } = branding || {};
+  let out = html;
+  out = out.replace(/__LOGO_SRC__/g, logoUrl);
+  out = out.replace(/__BRAND_COLOR__/g, brandColor);
+  out = out.replace(/__ACCENT_COLOR__/g, accentColor);
+  return out;
+}
+function brandedError(res, code) {
+  const map = { 400:'400.html',403:'403.html',404:'404.html',409:'409.html',410:'410.html',500:'500.html' };
+  const abs = path.join(__dirname, '../../public/errors', map[code] || '403.html');
+  const html = readHtml(abs);
+  return res.status(code).send(html || String(code));
+}
 
-  const applePayBtn = document.querySelector('img[alt="Apple Pay"]');
-  const googlePayBtn = document.querySelector('img[alt="Google Pay"]');
+/* ------------ handler ------------- */
+// ⚠️ Mantener get('/') porque el router se monta en /iframe y /iframe-process
+router.get('/', async (req, res) => {
+  res.setHeader('Content-Security-Policy', CSP_HEADER);
 
-  if (isIOS) {
-    googlePayBtn.style.display = 'none';
-  } else if (isAndroid) {
-    applePayBtn.style.display = 'none';
+  const { paymentId, signature, exp } = req.query || {};
+
+  // 1) SIN PARÁMETROS -> servir iframe plano (con branding por defecto)
+  if (!paymentId && !signature && !exp) {
+    const abs = path.join(__dirname, '../../public/iframe.html');
+    const base = readHtml(abs);
+    if (!base) return res.status(500).send('Error cargando iframe');
+    const html = injectBranding(base, {}); // defaults
+    return res.send(html);
   }
 
-  if (isIOS && window.ApplePaySession && ApplePaySession.canMakePayments()) {
-    applePayBtn.addEventListener('click', startApplePaySession);
-  }
+  // 2) CON PARÁMETROS -> validar y servir
+  if (!paymentId || !signature || !exp) return brandedError(res, 400);
 
-  if (isAndroid && window.google) {
-    googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
+  const expMs = Date.parse(String(exp));
+  if (Number.isNaN(expMs) || Date.now() > expMs) return brandedError(res, 410);
+
+  try {
+    const tx = await Transaction.findOne({ paymentId }).lean(false);
+    if (!tx) return brandedError(res, 404);
+
+    const payload = {
+      paymentId: tx.paymentId,
+      merchantId: tx.merchantId,
+      amount: tx.amount,
+      currency: tx.currency,
+      method: tx.method,
+      iat: tx.createdAt?.toISOString?.() || new Date().toISOString(),
+      exp
+    };
+
+    const merchant = await Merchant.findOne(
+      { merchantId: tx.merchantId },
+      { signingSecret: 1, hmacSecret: 1, secret: 1, logoUrl: 1, brandColor: 1, accentColor: 1, _id: 0 }
+    ).lean();
+
+    const secret =
+      merchant?.signingSecret ||
+      merchant?.hmacSecret  ||
+      merchant?.secret      ||
+      process.env.MERCHANT_SECRET ||
+      'default_merchant_secret';
+
+    const expected = generateSignature(payload, secret);
+    if (!safeCompare(expected, signature)) return brandedError(res, 403);
+
+    if (tx.iframeServedAt || tx.status !== 'initialized') return brandedError(res, 409);
+
+    tx.iframeServedAt = new Date();
+    await tx.save();
+
+    const branding = merchant ? {
+      logoUrl: merchant.logoUrl,
+      brandColor: merchant.brandColor,
+      accentColor: merchant.accentColor
+    } : {};
+
+    const basePath = path.join(__dirname, '../../public/iframe.html');
+    const baseHtml = readHtml(basePath);
+    if (!baseHtml) return res.status(500).send('Error cargando iframe');
+
+    const html = injectBranding(baseHtml, branding) || baseHtml;
+    return res.send(html);
+
+  } catch (err) {
+    console.error('Error en /iframe:', err);
+    return brandedError(res, 500);
   }
 });
 
-function mostrarMensajeExito(transaction) {
-  const returnUrl = transaction.returnUrl || 'https://orquestacion-def-test.onrender.com';
-  const successDiv = document.getElementById('success-message');
-  successDiv.innerHTML = `
-    <strong>✅ ¡Pago realizado con éxito!</strong>
-    Importe: ${transaction.amount.toFixed(2)} ${transaction.currency}<br>
-    ID: <small>${transaction._id}</small><br>
-    Merchant: <small>${transaction.merchantId}</small><br><br>
-    <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
-  `;
-  successDiv.style.display = 'block';
-
-  const formCard = document.getElementById('card-form');
-  const headerCard = document.getElementById('method-card');
-  if (formCard) formCard.style.display = 'none';
-  if (headerCard) headerCard.style.display = 'none';
-}
-
-document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  const data = {
-    cardholderName: document.getElementById('cardholderName').value,
-    cardNumber: document.getElementById('cardNumber').value,
-    expiryMonth: document.getElementById('expiryMonth').value,
-    expiryYear: document.getElementById('expiryYear').value,
-    cvv: document.getElementById('cvv').value,
-    amount: parseFloat(document.getElementById('amount').value),
-    currency: document.getElementById('currency').value,
-    merchantId: 'demo-merchant',
-    method: 'card',
-    status: 'approved',
-    transactionType: 'CIT',
-    returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
-  };
-
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
-
-  const result = await res.json();
-  if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction);
-  } else {
-    alert(result.message || 'Error en el pago.');
-  }
-});
-
-function startApplePaySession() {
-  const session = new ApplePaySession(3, {
-    countryCode: 'ES',
-    currencyCode: 'EUR',
-    supportedNetworks: ['visa', 'masterCard'],
-    merchantCapabilities: ['supports3DS'],
-    total: { label: 'Demo Merchant', amount: '99.90' }
-  });
-
-  session.onvalidatemerchant = async (event) => {
-    const res = await fetch('/apple-pay/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ validationURL: event.validationURL })
-    });
-    const merchantSession = await res.json();
-    session.completeMerchantValidation(merchantSession);
-  };
-
-  session.onpaymentauthorized = async (event) => {
-    const paymentData = event.payment.token.paymentData;
-
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        method: 'applepay',
-        paymentData,
-        amount: 99.90,
-        currency: 'EUR',
-        merchantId: 'demo-merchant',
-        transactionType: 'CIT',
-        returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
-      })
-    });
-
-    const result = await response.json();
-    if (result.success && result.transaction) {
-      session.completePayment(ApplePaySession.STATUS_SUCCESS);
-      mostrarMensajeExito(result.transaction);
-    } else {
-      session.completePayment(ApplePaySession.STATUS_FAILURE);
-      alert(result.message || 'Apple Pay falló');
-    }
-  };
-
-  session.begin();
-}
-
-async function onGooglePayButtonClicked() {
-  const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
-
-  const paymentData = await client.loadPaymentData({
-    apiVersion: 2,
-    apiVersionMinor: 0,
-    allowedPaymentMethods: [{
-      type: 'CARD',
-      parameters: {
-        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-        allowedCardNetworks: ['VISA', 'MASTERCARD']
-      },
-      tokenizationSpecification: {
-        type: 'PAYMENT_GATEWAY',
-        parameters: {
-          gateway: 'stripe',
-          gatewayMerchantId: 'demo_merchant'
-        }
-      }
-    }],
-    transactionInfo: {
-      totalPriceStatus: 'FINAL',
-      totalPrice: '99.90',
-      currencyCode: 'EUR',
-      countryCode: 'ES'
-    },
-    merchantInfo: { merchantName: 'Demo Merchant' }
-  });
-
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      method: 'googlepay',
-      paymentData,
-      amount: 99.90,
-      currency: 'EUR',
-      merchantId: 'demo-merchant',
-      transactionType: 'CIT',
-      returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
-    })
-  });
-
-  const result = await res.json();
-  if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction);
-  } else {
-    alert(result.message || 'Google Pay falló');
-  }
-}
-
-// 👇 Exponer funciones globalmente
-window.startApplePaySession = startApplePaySession;
-window.onGooglePayButtonClicked = onGooglePayButtonClicked;
+module.exports = router;
