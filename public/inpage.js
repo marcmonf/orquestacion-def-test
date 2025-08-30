@@ -12,20 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const isAndroid = /Android/i.test(navigator.userAgent);
-
   const applePayBtn = document.querySelector('img[alt="Apple Pay"]');
   const googlePayBtn = document.querySelector('img[alt="Google Pay"]');
 
-  if (isIOS) {
-    googlePayBtn.style.display = 'none';
-  } else if (isAndroid) {
-    applePayBtn.style.display = 'none';
-  }
+  if (isIOS) googlePayBtn.style.display = 'none';
+  else if (isAndroid) applePayBtn.style.display = 'none';
 
   if (isIOS && window.ApplePaySession && ApplePaySession.canMakePayments()) {
     applePayBtn.addEventListener('click', startApplePaySession);
   }
-
   if (isAndroid && window.google) {
     googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
   }
@@ -36,13 +31,12 @@ function mostrarMensajeExito(transaction) {
   const successDiv = document.getElementById('success-message');
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
-    Importe: ${transaction.amount.toFixed(2)} ${transaction.currency}<br>
+    Importe: ${Number(transaction.amount).toFixed(2)} ${transaction.currency}<br>
     ID: <small>${transaction._id}</small><br>
     Merchant: <small>${transaction.merchantId}</small><br><br>
     <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
   `;
   successDiv.style.display = 'block';
-
   const formCard = document.getElementById('card-form');
   const headerCard = document.getElementById('method-card');
   if (formCard) formCard.style.display = 'none';
@@ -51,7 +45,6 @@ function mostrarMensajeExito(transaction) {
 
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
     cardNumber: document.getElementById('cardNumber').value,
@@ -102,7 +95,6 @@ function startApplePaySession() {
 
   session.onpaymentauthorized = async (event) => {
     const paymentData = event.payment.token.paymentData;
-
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -132,30 +124,15 @@ function startApplePaySession() {
 
 async function onGooglePayButtonClicked() {
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
-
   const paymentData = await client.loadPaymentData({
     apiVersion: 2,
     apiVersionMinor: 0,
     allowedPaymentMethods: [{
       type: 'CARD',
-      parameters: {
-        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-        allowedCardNetworks: ['VISA', 'MASTERCARD']
-      },
-      tokenizationSpecification: {
-        type: 'PAYMENT_GATEWAY',
-        parameters: {
-          gateway: 'stripe',
-          gatewayMerchantId: 'demo_merchant'
-        }
-      }
+      parameters: { allowedAuthMethods: ['PAN_ONLY','CRYPTOGRAM_3DS'], allowedCardNetworks: ['VISA','MASTERCARD'] },
+      tokenizationSpecification: { type: 'PAYMENT_GATEWAY', parameters: { gateway: 'stripe', gatewayMerchantId: 'demo_merchant' } }
     }],
-    transactionInfo: {
-      totalPriceStatus: 'FINAL',
-      totalPrice: '99.90',
-      currencyCode: 'EUR',
-      countryCode: 'ES'
-    },
+    transactionInfo: { totalPriceStatus: 'FINAL', totalPrice: '99.90', currencyCode: 'EUR', countryCode: 'ES' },
     merchantInfo: { merchantName: 'Demo Merchant' }
   });
 
@@ -181,6 +158,5 @@ async function onGooglePayButtonClicked() {
   }
 }
 
-// 👇 Exponer funciones globalmente
 window.startApplePaySession = startApplePaySession;
 window.onGooglePayButtonClicked = onGooglePayButtonClicked;
