@@ -1,3 +1,4 @@
+// src/models/PaymentAttempt.js
 const mongoose = require('mongoose');
 
 const paymentAttemptSchema = new mongoose.Schema(
@@ -10,5 +11,9 @@ const paymentAttemptSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Índices útiles para consultas y métricas
+paymentAttemptSchema.index({ paymentId: 1, connector: 1 });
+paymentAttemptSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('PaymentAttempt', paymentAttemptSchema);
