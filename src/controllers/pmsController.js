@@ -1,19 +1,18 @@
 // src/controllers/pmsController.js
-const { fetchReservations } = require('../channels/pms/connectors/cloudbedsConnector');
+const { fetchReservationsPaginated } = require('../channels/pms/connectors/cloudbedsConnector');
 const Transaction = require('../models/Transaction');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 
 const fetchAndStoreCloudbedsReservations = async (req, res) => {
   try {
-    const reservations = await fetchReservations();
+    const { limit = 500 } = req.query; // límite de reservas a traer en esta ejecución
+    const reservations = await fetchReservationsPaginated({ maxItems: Number(limit) });
 
-    const createdTransactions = [];
+    let created = 0;
 
     for (const resv of reservations) {
       const reservationId = resv.reservation_id;
-
-      // Verificamos si ya existe una transacción para esta reserva
       const existing = await Transaction.findOne({ reservationId });
       if (existing) {
         logger.info(`Reservation ${reservationId} already registered.`);
@@ -22,13 +21,13 @@ const fetchAndStoreCloudbedsReservations = async (req, res) => {
 
       const transaction = new Transaction({
         paymentId: uuidv4(),
-        merchantId: 'cloudbeds-hotel', // Personalizable
+        merchantId: 'cloudbeds-hotel',
         amount: parseFloat(resv.total || 0),
         currency: resv.currency_code || 'EUR',
         method: 'card',
         status: 'pending',
-        reservationId: reservationId,
-        guestName: `${resv.guest_firstname} ${resv.guest_lastname}`,
+        reservationId,
+        guestName: `${resv.guest_firstname || ''} ${resv.guest_lastname || ''}`.trim(),
         checkInDate: resv.start_date,
         checkOutDate: resv.end_date,
         roomType: resv.room_name,
@@ -38,24 +37,19 @@ const fetchAndStoreCloudbedsReservations = async (req, res) => {
       });
 
       await transaction.save();
-      createdTransactions.push(transaction);
+      created += 1;
       logger.info(`Created transaction for reservation ${reservationId}`);
     }
 
     return res.status(200).json({
       success: true,
       message: 'Cloudbeds reservations processed.',
-      created: createdTransactions.length
+      created
     });
   } catch (error) {
-    logger.error('Error in fetchAndStoreCloudbedsReservations:', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Error fetching reservations from Cloudbeds.'
-    });
+    logger.error('Error in fetchAndStoreCloudbedsReservations:', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Error fetching reservations from Cloudbeds.' });
   }
 };
 
-module.exports = {
-  fetchAndStoreCloudbedsReservations
-};
+module.exports = { fetchAndStoreCloudbedsReservations };
