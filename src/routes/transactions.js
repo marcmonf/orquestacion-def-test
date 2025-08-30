@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const apiKeyAuth = require('../middleware/auth');
+
 const {
   getAllTransactions,
   createTransaction,
@@ -13,12 +14,16 @@ const {
   getAverageMSC,
   getTransactionSummary
 } = require('../controllers/transactionController');
-const { cardPayment } = require('../controllers/cardPaymentController'); // 🆕
+
+const { cardPayment } = require('../controllers/cardPaymentController');
 const logger = require('../utils/logger');
+
+// Idempotencia opcional: si el archivo existe, se usa; si no, no rompe.
+let idempotency = (req, res, next) => next();
+try { idempotency = require('../middleware/idempotency'); } catch { /* opcional */ }
 
 // --- LISTADO Y CRUD ---
 
-// GET /transactions
 router.get('/', apiKeyAuth, async (req, res) => {
   try { await getAllTransactions(req, res); }
   catch (err) {
@@ -27,7 +32,6 @@ router.get('/', apiKeyAuth, async (req, res) => {
   }
 });
 
-// GET /transactions/:paymentId
 router.get('/:paymentId', apiKeyAuth, async (req, res) => {
   try { await getTransactionById(req, res); }
   catch (err) {
@@ -36,8 +40,7 @@ router.get('/:paymentId', apiKeyAuth, async (req, res) => {
   }
 });
 
-// POST /transactions
-router.post('/', apiKeyAuth, async (req, res) => {
+router.post('/', apiKeyAuth, idempotency, async (req, res) => {
   try { await createTransaction(req, res); }
   catch (err) {
     logger.error('Error en POST /transactions:', err);
@@ -45,12 +48,11 @@ router.post('/', apiKeyAuth, async (req, res) => {
   }
 });
 
-// 🆕 POST /transactions/card-payment  (recibe PAN, enriquece BIN, elige conector)
+// 🆕 (tu endpoint existente) POST /transactions/card-payment
 router.post('/card-payment', apiKeyAuth, async (req, res) => {
   await cardPayment(req, res);
 });
 
-// PUT /transactions/:paymentId
 router.put('/:paymentId', apiKeyAuth, async (req, res) => {
   try { await updateTransaction(req, res); }
   catch (err) {
@@ -59,7 +61,6 @@ router.put('/:paymentId', apiKeyAuth, async (req, res) => {
   }
 });
 
-// DELETE /transactions/:paymentId
 router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
   try { await deleteTransaction(req, res); }
   catch (err) {
@@ -68,7 +69,7 @@ router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
   }
 });
 
-// --- ANALÍTICAS ---
+// --- ANALÍTICAS (se mantienen tal cual) ---
 
 router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   try { await getTransactionVolume(req, res); }
