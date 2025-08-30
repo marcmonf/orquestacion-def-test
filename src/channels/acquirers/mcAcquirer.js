@@ -1,5 +1,6 @@
+// src/channels/acquirers/mcAcquirer.js
 module.exports = {
-  initiatePayment: async (transactionData) => {
+  async process(transactionData) {
     return {
       status: 'approved',
       processor: 'mock-acquirer',
@@ -7,5 +8,6 @@ module.exports = {
       authCode: 'AUTH123',
       timestamp: new Date().toISOString()
     };
-  }
+  },
+  async initiatePayment(transactionData) { return this.process(transactionData); }
 };
