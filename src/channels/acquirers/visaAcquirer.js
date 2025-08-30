@@ -1,5 +1,7 @@
+// src/channels/acquirers/visaAcquirer.js
 module.exports = {
-  initiatePayment: async (transactionData) => {
+  async process(transactionData) {
+    // MOCK para compatibilidad: idéntico a initiatePayment anterior
     return {
       status: 'approved',
       processor: 'mock-acquirer',
@@ -7,5 +9,7 @@ module.exports = {
       authCode: 'AUTH123',
       timestamp: new Date().toISOString()
     };
-  }
+  },
+  // compat: mantener initiatePayment
+  async initiatePayment(transactionData) { return this.process(transactionData); }
 };
