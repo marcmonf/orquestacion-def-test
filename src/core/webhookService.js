@@ -1,4 +1,6 @@
 // src/core/webhookService.js
+'use strict';
+
 const axios = require('axios');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
@@ -6,7 +8,7 @@ const auditLogger = require('../logs/auditLogger');
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'default_secret';
 
-// Allowlist opcional (compatibilidad: si no se define, no restringe)
+// Allowlist opcional (si no se define, no restringe: compat)
 const allowedHosts = (process.env.ALLOWED_WEBHOOK_HOSTS || '')
   .split(',')
   .map(v => v.trim().toLowerCase())
@@ -15,18 +17,21 @@ const allowedHosts = (process.env.ALLOWED_WEBHOOK_HOSTS || '')
 // Forzar HTTPS opcional (por defecto false → no rompe)
 const ENFORCE_HTTPS = String(process.env.ENFORCE_WEBHOOK_HTTPS || 'false').toLowerCase() === 'true';
 
-// Config de red segura (timeouts y sin redirecciones por defecto)
+// Red segura (timeouts y sin redirecciones por defecto)
 const TIMEOUT_MS = parseInt(process.env.WEBHOOK_TIMEOUT_MS || '5000', 10);
 const MAX_REDIRECTS = parseInt(process.env.WEBHOOK_MAX_REDIRECTS || '0', 10);
 
 // Firma HMAC del body JSON (mismo formato que antes)
 function generateSignature(payload, secret) {
-  return crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+  return crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('hex');
 }
 
 // Match de host: exacto o subdominios si la regla empieza con "."
 function isHostAllowed(urlStr) {
-  if (!allowedHosts.length) return true; // sin allowlist → compat
+  if (!allowedHosts.length) return true; // compat si no hay allowlist
   try {
     const u = new URL(urlStr);
     if (ENFORCE_HTTPS && u.protocol !== 'https:') return false;
@@ -35,14 +40,13 @@ function isHostAllowed(urlStr) {
     return allowedHosts.some(rule =>
       rule.startsWith('.') ? host.endsWith(rule) : host === rule
     );
-  } catch {
+  } catch (_e) {
     return false;
   }
 }
 
-exports.sendToMerchant = async function (callbackUrl, payload) {
+async function sendToMerchant(callbackUrl, payload) {
   try {
-    // Validaciones suaves y compatibles
     if (!callbackUrl || typeof callbackUrl !== 'string') {
       throw new Error('Invalid callbackUrl');
     }
@@ -51,22 +55,34 @@ exports.sendToMerchant = async function (callbackUrl, payload) {
     }
 
     const signature = generateSignature(payload, WEBHOOK_SECRET);
-    const ts = Date.now().toString(); // cabecera auxiliar; no rompe a quien no la use
 
     const response = await axios.post(callbackUrl, payload, {
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'Monetiser-Webhook/1.0',
-        'X-Signature': signature,
-        'X-Signature-Version': 'v1',
-        'X-Signature-Timestamp': ts
+        'X-Signature': signature
+        // Cabeceras extra (versión/timestamp) se pueden añadir más adelante si el merchant las soporta
       },
       timeout: TIMEOUT_MS,
-      maxRedirects: MAX_REDIRECTS,
-      // validateStatus por defecto: 200-299. Mantener comportamiento estándar.
+      maxRedirects: MAX_REDIRECTS
     });
 
-    logger.info('Webhook enviado al merchant', {
-      callbackUrl,
-      status: response.status
+    logger.info('Webhook enviado al merchant', { callbackUrl, status: response.status });
+    auditLogger.info({
+      action: 'WEBHOOK_SENT',
+      user: 'system',
+      details: { callbackUrl, status: response.status },
+      metadata: { timestamp: new Date().toISOString() }
     });
+  } catch (error) {
+    logger.error('Error al enviar webhook', { callbackUrl, error: error.message });
+    auditLogger.info({
+      action: 'WEBHOOK_SEND_FAILED',
+      user: 'system',
+      details: { callbackUrl, error: error.message },
+      metadata: { timestamp: new Date().toISOString() }
+    });
+  }
+}
+
+module.exports = { sendToMerchant };
