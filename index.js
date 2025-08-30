@@ -3,32 +3,53 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
-const mongoose = require('mongoose'); // ⬅️ añadido
+const mongoose = require('mongoose');
 
-// morgan opcional (no rompe si no está instalado)
 let morgan = null;
-try {
-  morgan = require('morgan');
-} catch (e) {
-  console.warn('⚠️ [WARN] morgan no está instalado. El logging HTTP queda desactivado.');
-}
+try { morgan = require('morgan'); }
+catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desactivado.'); }
 
 require('dotenv').config();
-
 const app = express();
 
-// ===== Middlewares globales =====
-app.use(cors());
+/* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
+function tryRequire(name) {
+  try { return require(name); } catch { return null; }
+}
+const mongoSanitize = tryRequire('express-mongo-sanitize');
+const xssClean      = tryRequire('xss-clean');
+const hpp           = tryRequire('hpp');
+let rateLimiterGlobal = null;
+try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch { /* opcional */ }
+
+/* ===== Middlewares globales ===== */
+// CORS restringible por ALLOWED_ORIGINS (coma-separado). Si vacío → permitir todo (compatibilidad).
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // curl / same-origin
+    if (!allowedOrigins.length || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'), false);
+  },
+  credentials: false
+}));
+
+// Helmet básico (CSP estricta se gestiona en la ruta del iframe para no romper nada aquí)
 app.use(helmet());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+if (mongoSanitize) app.use(mongoSanitize());
+if (xssClean)      app.use(xssClean());
+if (hpp)           app.use(hpp());
+if (rateLimiterGlobal) app.use(rateLimiterGlobal);
 if (morgan) app.use(morgan('dev'));
 
-// ===== Utilidad para envolver exportaciones no válidas en un router vacío =====
+/* ===== Utilidad ensureRouter para módulos que no exportan Router ===== */
 const ensureRouter = (moduleExport, moduleName) => {
   const express = require('express');
-
-  // Si es app o router de Express, tendrá .use y .handle
   const looksLikeExpress =
     moduleExport &&
     (typeof moduleExport === 'function' || typeof moduleExport === 'object') &&
@@ -37,7 +58,6 @@ const ensureRouter = (moduleExport, moduleName) => {
 
   if (looksLikeExpress) return moduleExport;
 
-  // Si exporta { router } (patrón común)
   if (
     moduleExport &&
     typeof moduleExport === 'object' &&
@@ -48,98 +68,74 @@ const ensureRouter = (moduleExport, moduleName) => {
     return moduleExport.router;
   }
 
-  console.warn(`⚠️ [WARN] El módulo "${moduleName}" no exporta un Router de Express válido. Se envuelve en uno vacío.`);
+  console.warn(`⚠️ [WARN] El módulo "${moduleName}" no exporta un Router válido. Se envuelve en uno vacío.`);
   const router = express.Router();
-  router.use((req, res) => {
-    res.status(500).json({ error: `Ruta "${moduleName}" mal exportada` });
-  });
+  router.use((req, res) => res.status(500).json({ error: `Ruta "${moduleName}" mal exportada` }));
   return router;
 };
 
-// ===== Ruta de healthcheck =====
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
+/* ===== Healthcheck ===== */
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-// ===== Rutas principales =====
-
-// Initialize con try/catch y log de exportación
+/* ===== Rutas principales (sin cambiar paths ni orden) ===== */
 let initializeRoutesExport;
 try {
   initializeRoutesExport = require('./src/routes/initializeRoutes');
-  console.log('🟢 [DEBUG] require("./src/routes/initializeRoutes") devolvió:', initializeRoutesExport);
+  console.log('🟢 [DEBUG] initializeRoutes export:', initializeRoutesExport);
 } catch (err) {
-  console.error('❌ [ERROR] No se pudo hacer require("./src/routes/initializeRoutes"):', err);
+  console.error('❌ [ERROR] require("./src/routes/initializeRoutes"):', err);
 }
-app.use(
-  '/initialize',
-  ensureRouter(initializeRoutesExport, 'initializeRoutes')
-);
+app.use('/initialize', ensureRouter(initializeRoutesExport, 'initializeRoutes'));
 
-// Iframe (sin parámetros → iframe.html dentro del router; con parámetros → flujo pago)
+// Iframe: mismo router para /iframe y /iframe-process
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
-app.use('/iframe-process', iframeRouter); // mismo router
+app.use('/iframe-process', iframeRouter);
 
-// Otros módulos que puedan estar fallando: envueltos con ensureRouter
-app.use(
-  '/apms',
-  ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler')
-);
+// APMs y Tokens (igual que tu versión)
+app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
+app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
 
-app.use(
-  '/tokens',
-  ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes')
-);
-
-// Aquí podrías añadir el resto de rutas siguiendo el mismo patrón:
+// Si habilitas transactions/analytics en el futuro, sigue tu patrón de ensureRouter.
 // app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
 // app.use('/analytics', ensureRouter(require('./src/routes/analytics'), 'analytics'));
 // app.use('/merchants', ensureRouter(require('./src/routes/merchantRoutes'), 'merchantRoutes'));
 // app.use('/recurrent-profiles', ensureRouter(require('./src/routes/recurrentprofiles'), 'recurrentprofiles'));
 // app.use('/pms', ensureRouter(require('./src/routes/pmsRoutes'), 'pmsRoutes'));
-// etc...
 
-// ===== Static files (por si tu iframe.html está en public/) =====
+/* ===== Static (iframe.html y errores) ===== */
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ===== Error handler global =====
-app.use((err, req, res, next) => {
+/* ===== Error handler global ===== */
+app.use((err, req, res, next) => { // eslint-disable-line
   console.error('❌ [ERROR]', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// ===== Conexión a MongoDB y arranque del servidor =====
+/* ===== Conexión a MongoDB + arranque ===== */
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
-  console.error('❌ [FATAL] MONGO_URI no está definido en las variables de entorno.');
+  console.error('❌ [FATAL] MONGO_URI no está definido.');
   process.exit(1);
 }
 
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 20000, // más margen en Render
+  serverSelectionTimeoutMS: 20000,
   socketTimeoutMS: 45000
 })
 .then(() => {
   console.log('✅ MongoDB conectado');
-  app.listen(PORT, () => {
-    console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
 })
 .catch(err => {
   console.error('❌ Error conectando a MongoDB:', err);
-  process.exit(1); // no arranca si no hay DB
+  process.exit(1);
 });
 
-// Cierre gracioso
 process.on('SIGINT', async () => {
-  try {
-    await mongoose.connection.close();
-  } finally {
-    process.exit(0);
-  }
+  try { await mongoose.connection.close(); } finally { process.exit(0); }
 });
