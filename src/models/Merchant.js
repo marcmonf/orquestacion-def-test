@@ -13,10 +13,15 @@ const merchantSchema = new mongoose.Schema({
   region:       String,
   location:     String,
 
-  // 🆕 Branding dinámico
-  logoUrl:      String,   // URL absoluta o path relativo a /public
-  brandColor:   String,   // Ej. "#2b6cb0"
-  accentColor:  String,   // Ej. "#e67e22"
+  // Branding dinámico
+  logoUrl:      String,
+  brandColor:   String,
+  accentColor:  String,
+
+  // 🔐 Secretos opcionales (para que el iframe pueda usarlos si están definidos)
+  signingSecret: String,
+  hmacSecret:    String,
+  secret:        String,
 
   createdAt:    { type: Date, default: Date.now }
 });
