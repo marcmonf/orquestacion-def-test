@@ -1,4 +1,5 @@
 // src/models/Transaction.js
+'use strict';
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
@@ -13,7 +14,7 @@ const transactionSchema = new mongoose.Schema({
   cardholderName: { type: String },
   expiryMonth:    { type: String },
   expiryYear:     { type: String },
-  bin:            { type: String, length: 8 }, // 🆕
+  bin:            { type: String, length: 8 },
 
   /* BIN enrichment */
   cardBrand:      { type: String },
@@ -24,11 +25,12 @@ const transactionSchema = new mongoose.Schema({
   bankPhone:      { type: String },
   countryCurrency:{ type: String },
 
-  // Otros existentes…
+  // Otros
   authCode:       String,
   processor:      String,
   fallbackUsed:   { type: Boolean, default: false },
   returnUrl:      String,
+  callbackUrl:    String,   // ← añadido para webhooks
 
   // Tracking iFrame
   iframeServedAt:   Date,
