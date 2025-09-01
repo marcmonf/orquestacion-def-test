@@ -1,0 +1,82 @@
+openapi: 3.1.0
+info:
+  title: Monetiser Orchestrator API
+  version: 0.1.0
+servers:
+  - url: https://api.monetiser.example
+paths:
+  /initialize:
+    post:
+      summary: Inicializa un pago y devuelve paymentId, signature y iframeUrl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId, amount, currency, returnUrl]
+              properties:
+                merchantId: { type: string }
+                amount: { type: number }
+                currency: { type: string }
+                returnUrl: { type: string, format: uri }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paymentId: { type: string }
+                  signature: { type: string }
+                  iframeUrl: { type: string, format: uri }
+                  exp: { type: integer, description: "epoch ms" }
+  /iframe:
+    get:
+      summary: Carga HPP/iFrame seguro
+      parameters:
+        - in: query
+          name: merchantId
+          schema: { type: string }
+          required: true
+        - in: query
+          name: paymentId
+          schema: { type: string }
+          required: true
+        - in: query
+          name: amount
+          schema: { type: number }
+          required: true
+        - in: query
+          name: currency
+          schema: { type: string }
+          required: true
+        - in: query
+          name: nonce
+          schema: { type: string }
+          required: true
+        - in: query
+          name: exp
+          schema: { type: integer }
+          required: true
+        - in: query
+          name: signature
+          schema: { type: string }
+          required: true
+      responses:
+        '200': { description: HTML iFrame }
+        '403': { description: Firma inválida o expirada }
+        '410': { description: Payment en estado no permitido }
+  /webhooks/inbound:
+    post:
+      summary: Recepción de webhooks externos firmados
+      responses:
+        '204': { description: Aceptado }
+  /callbacks/outbound:
+    post:
+      summary: Callback estandarizado al merchant
+      responses:
+        '202': { description: Encolado }
+components:
+  securitySchemes: {}
