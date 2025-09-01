@@ -2,17 +2,20 @@
   "info": {
     "name": "Monetiser Base",
     "_postman_id": "a1111111-b222-4333-8444-555555555555",
-    "description": "Initialize + iFrame + Orchestration + Rules UI",
+    "description": "Initialize + iFrame + Orchestration + Rules + Idempotency + Webhooks",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "Initialize",
+      "name": "Initialize (Idempotent)",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "demo-key-123" }
+        ],
         "url": { "raw": "{{host}}/initialize", "host": ["{{host}}"], "path": ["initialize"] },
-        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://miweb.com/callback\"\n}" }
+        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://webhook.site/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX\"\n}" }
       }
     },
     {
