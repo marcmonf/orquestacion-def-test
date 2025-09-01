@@ -1,0 +1,73 @@
+{
+  "$id": "https://monetiser.dev/schemas/rules-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Monetiser Routing Rules v1",
+  "type": "object",
+  "required": ["merchantId", "version", "rules"],
+  "properties": {
+    "merchantId": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "defaultConnector": { "type": "string" },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "priority", "when", "action"],
+        "properties": {
+          "id": { "type": "string" },
+          "priority": { "type": "integer", "minimum": 0 },
+          "when": {
+            "type": "object",
+            "properties": {
+              "bin": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "issuerCountry": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "scheme": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "cardType": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "currency": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "region": { "type": "object", "properties": { "in": { "type": "array", "items": { "type": "string" } } } },
+              "amount": { "type": "object", "properties": { "gte": { "type": "number" }, "lt": { "type": "number" } } },
+              "latencyMs": { "type": "object", "properties": { "lte": { "type": "number" } } },
+              "costBps": { "type": "object", "properties": { "lte": { "type": "number" } } },
+              "fraudScore": { "type": "object", "properties": { "lt": { "type": "number" } } }
+            },
+            "additionalProperties": false
+          },
+          "action": {
+            "type": "object",
+            "required": ["route"],
+            "properties": {
+              "route": { "type": "string" },
+              "preAuthFraudEngine": { "type": "string" },
+              "threeDS": {
+                "type": "object",
+                "properties": {
+                  "policy": { "type": "string", "enum": ["always", "adaptive", "never"] },
+                  "exemptions": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "properties": {
+        "order": { "type": "array", "items": { "type": "string" } },
+        "on": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "retries": {
+      "type": "object",
+      "properties": {
+        "soft_decline": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "network_error": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "jitterMs": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "explain": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}
