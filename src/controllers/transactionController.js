@@ -58,6 +58,7 @@ const getAllTransactions = async (req, res) => {
    POST /transactions
 --------------------------------------------------------------------------- */
 const createTransaction = async (req, res) => {
+  // Validación
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
     const messageKey = error.details[0].message;
@@ -77,7 +78,7 @@ const createTransaction = async (req, res) => {
   try {
     const generatedPaymentId = uuidv4();
 
-    /* -------------------- Recurrencia CIT/MIT -------------------- */
+    // Recurrencia CIT/MIT
     let recurrenceId = value.recurrenceId || null;
     let token        = value.token        || null;
 
@@ -120,20 +121,20 @@ const createTransaction = async (req, res) => {
       }
     }
 
-    /* -------------------- Sanitizar input -------------------- */
+    // Sanitizar input
     const sanitizedValue = { ...value };
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
     if (value.returnUrl)   sanitizedValue.returnUrl = value.returnUrl;
     if (value.callbackUrl) sanitizedValue.callbackUrl = value.callbackUrl;
 
-    /* -------------------- BIN enrichment -------------------- */
+    // BIN enrichment
     let cardInfo = null;
     if (value.method === 'card' && value.cardNumber) {
       cardInfo = await parseBin(value.cardNumber);
     }
 
-    /* -------------------- Orquestación -------------------- */
+    // Orquestación
     const selectedConnector = await selectConnector({ ...value, cardInfo });
 
     logger.info(`🧠 Orchestrator selected connector: ${selectedConnector}`);
@@ -149,7 +150,7 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    /* -------------------- Ejecución -------------------- */
+    // Ejecución
     let response;
     let qrCodeImage = null;
 
@@ -185,7 +186,7 @@ const createTransaction = async (req, res) => {
       }
     }
 
-    /* -------------------- Persistencia -------------------- */
+    // Persistencia
     sanitizedValue.status        = response.status;
     sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
@@ -222,7 +223,7 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    // Responder al merchant
+    // Respuesta al merchant
     res.status(response.status === 'approved' ? 201 : 402).json({
       success:       response.status === 'approved',
       message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
@@ -232,7 +233,7 @@ const createTransaction = async (req, res) => {
       qrCodeImage
     });
 
-    // Webhook asíncrono (no bloquea)
+    // Webhook asíncrono firmado
     try {
       const callbackUrl = newTransaction.callbackUrl;
       if (callbackUrl && process.env.WEBHOOK_SECRET) {
