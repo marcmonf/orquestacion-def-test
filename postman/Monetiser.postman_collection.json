@@ -2,7 +2,7 @@
   "info": {
     "name": "Monetiser Base",
     "_postman_id": "a1111111-b222-4333-8444-555555555555",
-    "description": "Initialize + iFrame + Orchestration",
+    "description": "Initialize + iFrame + Orchestration + Rules UI",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -10,78 +10,67 @@
       "name": "Initialize",
       "request": {
         "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "url": {
-          "raw": "{{host}}/initialize",
-          "host": [
-            "{{host}}"
-          ],
-          "path": [
-            "initialize"
-          ]
-        },
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://miweb.com/callback\"\n}"
-        }
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{host}}/initialize", "host": ["{{host}}"], "path": ["initialize"] },
+        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://miweb.com/callback\"\n}" }
       }
     },
     {
       "name": "Orchestration Decide",
       "request": {
         "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "url": {
-          "raw": "{{host}}/orchestration/decide",
-          "host": [
-            "{{host}}"
-          ],
-          "path": [
-            "orchestration",
-            "decide"
-          ]
-        },
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"cardNumber\": \"4111111111111111\"\n}"
-        }
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{host}}/orchestration/decide", "host": ["{{host}}"], "path": ["orchestration","decide"] },
+        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"cardNumber\": \"4111111111111111\"\n}" }
       }
     },
     {
-      "name": "iFrame (GET)",
+      "name": "Rules Get",
       "request": {
         "method": "GET",
-        "url": {
-          "raw": "{{host}}/iframe?merchantId={{merchantId}}&paymentId={{paymentId}}&amount=25&currency=EUR&nonce={{nonce}}&exp={{exp}}&signature={{signature}}",
-          "host": [
-            "{{host}}"
-          ],
-          "path": [
-            "iframe"
-          ],
-          "query": [
-            { "key": "merchantId", "value": "{{merchantId}}" },
-            { "key": "paymentId", "value": "{{paymentId}}" },
-            { "key": "amount", "value": "25" },
-            { "key": "currency", "value": "EUR" },
-            { "key": "nonce", "value": "{{nonce}}" },
-            { "key": "exp", "value": "{{exp}}" },
-            { "key": "signature", "value": "{{signature}}" }
-          ]
-        }
+        "header": [{ "key": "X-Admin-Token", "value": "{{adminToken}}" }],
+        "url": { "raw": "{{host}}/rules/{{merchantId}}", "host": ["{{host}}"], "path": ["rules","{{merchantId}}"] }
+      }
+    },
+    {
+      "name": "Rules Validate",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }],
+        "url": { "raw": "{{host}}/rules/validate", "host": ["{{host}}"], "path": ["rules","validate"] },
+        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"version\": \"v1\",\n  \"defaultConnector\": \"dummyCard\",\n  \"rules\": []\n}" }
+      }
+    },
+    {
+      "name": "Rules Upsert",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }, { "key": "X-Admin-Actor", "value": "admin@example.com" }],
+        "url": { "raw": "{{host}}/rules/{{merchantId}}", "host": ["{{host}}"], "path": ["rules","{{merchantId}}"] },
+        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"version\": \"v1\",\n  \"defaultConnector\": \"dummyCard\",\n  \"rules\": [\n    {\"id\":\"eur-small\",\"priority\":10,\"when\":{\"currency\":{\"in\":[\"EUR\"]},\"amount\":{\"lt\":50}},\"action\":{\"route\":\"dummyCard\"}}\n  ]\n}" }
+      }
+    },
+    {
+      "name": "Rules Try",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }],
+        "url": { "raw": "{{host}}/rules/try", "host": ["{{host}}"], "path": ["rules","try"] },
+        "body": { "mode": "raw", "raw": "{\n  \"policy\": {\"merchantId\":\"demo-merchant\",\"version\":\"v1\",\"defaultConnector\":\"dummyCard\",\"rules\":[{\"id\":\"low-lat\",\"priority\":30,\"when\":{\"latencyMs\":{\"lt\":150}},\"action\":{\"route\":\"dummyCard\"}}]},\n  \"sample\": {\"amount\":25,\"currency\":\"EUR\"}\n}" }
+      }
+    },
+    {
+      "name": "Rules Audit",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "X-Admin-Token", "value": "{{adminToken}}" }],
+        "url": { "raw": "{{host}}/rules/{{merchantId}}/audit?limit=20&offset=0", "host": ["{{host}}"], "path": ["rules","{{merchantId}}","audit"], "query":[{"key":"limit","value":"20"},{"key":"offset","value":"0"}] }
       }
     }
   ],
   "variable": [
     { "key": "host", "value": "https://orquestacion-def-test.onrender.com" },
     { "key": "merchantId", "value": "demo-merchant" },
-    { "key": "paymentId", "value": "" },
-    { "key": "nonce", "value": "" },
-    { "key": "exp", "value": "" },
-    { "key": "signature", "value": "" }
+    { "key": "adminToken", "value": "" }
   ]
 }
