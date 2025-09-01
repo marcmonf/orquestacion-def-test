@@ -1,22 +1,26 @@
 'use strict';
 const Joi = require('joi');
 
-/* Esquema de política de reglas v1 */
-const amountCond = Joi.object({
+/* Esquema de política de reglas v1 (extendido) */
+const numCmp = Joi.object({
   lt: Joi.number().positive().optional(),
-  gt: Joi.number().positive().optional()
+  gt: Joi.number().positive().optional(),
+  lte: Joi.number().positive().optional(),
+  gte: Joi.number().positive().optional()
 }).min(1);
 
 const listStr = Joi.array().items(Joi.string().min(1)).min(1);
 
 const whenSchema = Joi.object({
   currency: Joi.object({ in: listStr }).optional(),
-  amount: amountCond.optional(),
+  amount: numCmp.optional(),
   bin: Joi.object({ inPrefixes: listStr }).optional(),
   issuerCountry: Joi.object({ in: listStr }).optional(),
   scheme: Joi.object({ in: listStr }).optional(),
   cardType: Joi.object({ in: listStr }).optional(),
-  region: Joi.object({ in: listStr }).optional()
+  latencyMs: numCmp.optional(),
+  costBps: numCmp.optional(),
+  saturationPct: numCmp.optional()
 }).min(1);
 
 const ruleSchema = Joi.object({
@@ -43,7 +47,6 @@ const policySchema = Joi.object({
     jitterMs: Joi.array().items(Joi.number().integer().min(0)).default([200,500])
   }).default(),
   explain: Joi.boolean().default(true)
-})
-.required();
+}).required();
 
 module.exports = { policySchema };
