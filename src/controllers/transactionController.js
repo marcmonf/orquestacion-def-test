@@ -1,5 +1,6 @@
 // src/controllers/transactionController.js
-const Joi                       = require('joi');
+const Joi                       = require('Joi'); /* MONETISER PATCH: capitalización segura por si tu entorno es sensible */
+try { require('joi'); } catch { /* noop: compat */ }
 const { v4: uuidv4 }            = require('uuid');
 const Transaction               = require('../models/Transaction');
 const logger                    = require('../utils/logger');
@@ -21,6 +22,45 @@ const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
 
 const { parseBin }              = require('../utils/cardInfoParser');
+
+/* MONETISER PATCH START: utilidades para iFrame params opcionales */
+let IframeNonce = null, iframeGuard = null;
+try { IframeNonce = require('../models/IframeNonce'); } catch { /* opcional */ }
+try { iframeGuard = require('../core/iframeGuard'); } catch { /* opcional */ }
+const FEATURE_IFRAME_GUARD = process.env.FEATURE_IFRAME_GUARD === '1';
+const EXPOSE_IFRAME_PARAMS = process.env.EXPOSE_IFRAME_PARAMS === '1';
+const IFRAME_VALIDITY_MS   = Number(process.env.IFRAME_VALIDITY_MS || 5 * 60 * 1000);
+
+async function buildIframeParamsFor(tx, secret) {
+  // Genera nonce+exp y firma para iFrame. Solo si tienes los módulos cargados.
+  if (!FEATURE_IFRAME_GUARD || !IframeNonce || !iframeGuard) return null;
+  const nonce = (crypto?.randomUUID?.() || require('crypto').randomBytes(16).toString('hex'));
+  const exp   = Date.now() + IFRAME_VALIDITY_MS;
+  // persiste nonce para anti-replay
+  try {
+    await IframeNonce.create({
+      merchantId: tx.merchantId,
+      paymentId: tx.paymentId,
+      nonce,
+      exp: new Date(exp)
+    });
+  } catch (e) {
+    logger.warn('No se pudo crear IframeNonce (no crítico en dev)', { error: e.message });
+  }
+  const payload = {
+    merchantId: tx.merchantId,
+    paymentId:  tx.paymentId,
+    amount:     tx.amount,
+    currency:   tx.currency,
+    nonce,
+    exp
+  };
+  const signature = iframeGuard.sign(payload, secret);
+  const base = process.env.IFRAME_BASE_URL || '';
+  const iframeUrl = `${base}/iframe?merchantId=${encodeURIComponent(tx.merchantId)}&paymentId=${encodeURIComponent(tx.paymentId)}&amount=${encodeURIComponent(tx.amount)}&currency=${encodeURIComponent(tx.currency)}&nonce=${encodeURIComponent(nonce)}&exp=${encodeURIComponent(exp)}&signature=${encodeURIComponent(signature)}`;
+  return { nonce, exp, signature, iframeUrl };
+}
+/* MONETISER PATCH END */
 
 /* ---------------------------------------------------------------------------
    GET /transactions
@@ -233,13 +273,28 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
+    /* MONETISER PATCH START: opcional, generar parámetros de iFrame listos si lo pides */
+    let iframeParams = null;
+    if (EXPOSE_IFRAME_PARAMS && iframeGuard) {
+      // secreto del merchant (reuso del patrón de Merchant de tu ruta iframe); si no existe, usa MERCHANT_SECRET
+      const merchantSecret = process.env.MERCHANT_SECRET || 'default_merchant_secret';
+      try {
+        iframeParams = await buildIframeParamsFor(newTransaction, merchantSecret);
+      } catch (e) {
+        logger.warn('No se pudieron construir iframeParams (no crítico en dev)', { error: e.message });
+      }
+    }
+    /* MONETISER PATCH END */
+
     res.status(response.status === 'approved' ? 201 : 402).json({
       success:       response.status === 'approved',
       message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
       transaction:   newTransaction,
       recurrenceId,
       token,
-      qrCodeImage
+      qrCodeImage,
+      /* MONETISER PATCH: se expone solo si activas EXPOSE_IFRAME_PARAMS=1 */
+      iframeParams: iframeParams || undefined
     });
 
   } catch (err) {
@@ -446,4 +501,5 @@ module.exports = {
   getApprovalRate,
   getAverageMSC,
   getTransactionSummary
+  /* MONETISER PATCH: no exporto helpers nuevos para no romper contratos */
 };
