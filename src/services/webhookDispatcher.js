@@ -1,96 +1,102 @@
 'use strict';
-const WebhookLog = require('../models/WebhookLog');
-const { buildSignatureHeader } = require('../utils/crypto');
-const logger = require('../utils/logger');
-
 /**
- * Dispatcher simple, sin colas externas. Reintentos con backoff exponencial.
- * No bloquea la respuesta al merchant.
+ * Encola el webhook y lo procesa en background sin bloquear la respuesta HTTP.
+ * Config:
+ *  - WEBHOOK_SECRET: firma HMAC "t=<ts>, v1=<hex>"
+ *  - WEBHOOK_MAX_RETRIES=6
+ *  - WEBHOOK_BACKOFF_BASE_MS=1000
+ *  - WEBHOOK_TIMEOUT_MS=3000 (por intento)
  */
+const https = require('https');
+const crypto = require('crypto');
+const URL = require('url').URL;
+const WebhookLog = require('../models/WebhookLog');
 
-const DEFAULT_MAX = parseInt(process.env.WEBHOOK_MAX_RETRIES || '6', 10);
-const DEFAULT_BASE = parseInt(process.env.WEBHOOK_BACKOFF_BASE_MS || '1000', 10);
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || null;
+const MAX_RETRIES = Number(process.env.WEBHOOK_MAX_RETRIES || 6);
+const BASE_MS     = Number(process.env.WEBHOOK_BACKOFF_BASE_MS || 1000);
+const TIMEOUT_MS  = Number(process.env.WEBHOOK_TIMEOUT_MS || 3000);
+const SECRET      = process.env.WEBHOOK_SECRET || null;
 
-function _headers(extra = {}) {
-  return Object.assign({ 'Content-Type': 'application/json' }, extra);
+function sign(body) {
+  if (!SECRET) return null;
+  const ts = Math.floor(Date.now() / 1000);
+  const mac = crypto.createHmac('sha256', SECRET)
+    .update(`${ts}.${JSON.stringify(body)}`, 'utf8')
+    .digest('hex');
+  return `t=${ts}, v1=${mac}`;
 }
 
-async function _scheduleNext(doc) {
-  const delay = Math.pow(2, doc.attempt) * (doc.backoffBaseMs || DEFAULT_BASE);
-  const next = new Date(Date.now() + delay);
-  await WebhookLog.updateOne({ _id: doc._id }, { $set: { nextAttemptAt: next } });
-  setTimeout(() => _attemptSendById(String(doc._id)).catch(()=>{}), delay);
-}
-
-async function _attemptSendById(id) {
-  const doc = await WebhookLog.findById(id);
-  if (!doc || doc.deliveredAt) return;
-
-  const secret = WEBHOOK_SECRET;
-  if (!secret) {
-    await WebhookLog.updateOne({ _id: id }, { $set: { lastError: 'no_secret_configured' } });
-    return;
-  }
-
-  const { header } = buildSignatureHeader(secret, doc.payload);
-  const headers = _headers({ 'Monetiser-Signature': header });
-
-  let ok = false;
-  let status = 0;
-  let errMsg = null;
-
-  try {
-    const res = await fetch(doc.url, {
-      method: doc.method || 'POST',
-      headers,
-      body: JSON.stringify(doc.payload)
+function httpPostJson(targetUrl, body, signature) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(targetUrl);
+    const payload = Buffer.from(JSON.stringify(body), 'utf8');
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + (u.search || ''),
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(payload.length),
+        ...(signature ? { 'Monetiser-Signature': signature } : {})
+      },
+      timeout: TIMEOUT_MS
+    };
+    const req = https.request(opts, (res) => {
+      // consumir cuerpo y resolver rápido
+      res.on('data', () => {});
+      res.on('end', () => resolve({ status: res.statusCode }));
     });
-    status = res.status;
-    ok = res.ok;
-  } catch (e) {
-    errMsg = e.message || 'fetch_error';
-  }
-
-  if (ok) {
-    await WebhookLog.updateOne(
-      { _id: id },
-      { $set: { lastStatus: status, deliveredAt: new Date(), lastError: null, headers } }
-    );
-    logger.info('Webhook delivered', { id, url: doc.url, status });
-    return;
-  }
-
-  const attempt = (doc.attempt || 0) + 1;
-  await WebhookLog.updateOne(
-    { _id: id },
-    { $set: { attempt, lastStatus: status || null, lastError: errMsg || `status_${status}` } }
-  );
-
-  if (attempt >= (doc.maxRetries || DEFAULT_MAX)) {
-    logger.warn('Webhook failed permanently', { id, url: doc.url, lastStatus: status, lastError: errMsg });
-    return;
-  }
-
-  await _scheduleNext({ ...doc.toObject(), attempt });
-}
-
-async function enqueue({ paymentId, merchantId, url, payload, maxRetries, backoffBaseMs }) {
-  if (!url || !payload) return null;
-  const doc = await WebhookLog.create({
-    paymentId, merchantId, url, payload,
-    attempt: 0,
-    maxRetries: maxRetries || DEFAULT_MAX,
-    backoffBaseMs: backoffBaseMs || DEFAULT_BASE
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
   });
-  // Disparo inicial inmediato sin bloquear
-  setImmediate(() => _attemptSendById(String(doc._id)).catch(()=>{}));
-  return doc._id;
 }
 
-async function dispatchNow(params) {
-  // Alias de enqueue para compatibilidad
-  return enqueue(params);
+async function processOne(doc) {
+  let attempt = doc.attempt || 0;
+  while (attempt <= MAX_RETRIES && !doc.deliveredAt) {
+    try {
+      const signature = sign(doc.payload);
+      const { status } = await httpPostJson(doc.url, doc.payload, signature);
+      doc.lastStatus = status;
+      doc.attempt = attempt;
+      if (status >= 200 && status < 300) {
+        doc.deliveredAt = new Date();
+        await WebhookLog.updateOne({ _id: doc._id }, {
+          $set: { deliveredAt: doc.deliveredAt, lastStatus: status, updatedAt: new Date() , attempt }
+        });
+        return;
+      }
+      // error no-2xx → backoff
+      doc.lastError = `http_${status}`;
+    } catch (e) {
+      doc.lastError = e.message || 'error';
+    }
+    attempt += 1;
+    await WebhookLog.updateOne({ _id: doc._id }, {
+      $set: { lastError: doc.lastError, lastStatus: doc.lastStatus || null, attempt, updatedAt: new Date() }
+    });
+    const wait = BASE_MS * Math.pow(2, attempt - 1);
+    await new Promise(r => setTimeout(r, wait));
+  }
 }
 
-module.exports = { enqueue, dispatchNow };
+async function enqueue({ paymentId, merchantId, url, payload }) {
+  try {
+    const doc = await WebhookLog.create({ paymentId, merchantId, url, payload, attempt: 0 });
+    // procesar en background, no bloquear la request
+    setImmediate(async () => {
+      try {
+        if (!SECRET) {
+          await WebhookLog.updateOne({ _id: doc._id }, { $set: { lastError: 'no_secret_config', updatedAt: new Date() } });
+          return;
+        }
+        await processOne(doc.toObject());
+      } catch { /* swallow */ }
+    });
+  } catch { /* swallow */ }
+}
+
+module.exports = { enqueue };
