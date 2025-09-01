@@ -8,6 +8,32 @@ const router   = express.Router();
 const Transaction = require('../models/Transaction');
 const Merchant    = require('../models/Merchant');
 
+/* MONETISER PATCH START: guard de firma HMAC con exp+nonce (opcional por flag) */
+let iframeGuard = null;
+try { iframeGuard = require('../core/iframeGuard'); } catch { /* opcional */ }
+const FEATURE_IFRAME_GUARD = process.env.FEATURE_IFRAME_GUARD === '1';
+
+function mapGuardErrorToHttp(code) {
+  // Mapea errores del guard a códigos HTTP y plantillas de error
+  switch (code) {
+    case 'invalid_params':
+    case 'invalid_exp':
+    case 'bad_signature':
+      return 403;
+    case 'not_before':
+    case 'expired':
+    case 'nonce_expired':
+      return 410; // expirada
+    case 'nonce_not_found':
+    case 'nonce_already_used':
+    case 'race_condition':
+      return 409; // conflicto / reuso
+    default:
+      return 403;
+  }
+}
+/* MONETISER PATCH END */
+
 // CSP solo para esta ruta: permitir Google Pay scripts, frames y conexiones.
 const CSP_HEADER =
   "default-src 'self'; " +
@@ -38,6 +64,7 @@ router.get('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   const { paymentId, signature, exp } = req.query || {};
 
+  // Carga base (sin params) para pruebas locales
   if(!paymentId && !signature && !exp){
     const abs = path.join(__dirname,'../../public/iframe.html');
     const base = readHtml(abs);
@@ -46,23 +73,73 @@ router.get('/', async (req,res)=>{
   }
 
   if(!paymentId || !signature || !exp) return brandedError(res,400);
+
+  // Exp simple para compatibilidad (legacy). El guard hace su propia validación cuando está activo.
   const expMs = Date.parse(String(exp));
-  if(Number.isNaN(expMs) || Date.now()>expMs) return brandedError(res,410);
+  if(Number.isNaN(expMs)) return brandedError(res,400);
 
   try{
     const tx = await Transaction.findOne({paymentId}).lean(false);
     if(!tx) return brandedError(res,404);
 
-    const payload={paymentId:tx.paymentId,merchantId:tx.merchantId,amount:tx.amount,currency:tx.currency,method:tx.method,iat:tx.createdAt?.toISOString?.()||new Date().toISOString(),exp};
-    const merchant = await Merchant.findOne({merchantId:tx.merchantId},{signingSecret:1,hmacSecret:1,secret:1,logoUrl:1,brandColor:1,accentColor:1,_id:0}).lean();
+    // Recupera secreto del merchant (compatibilidad con tus campos)
+    const merchant = await Merchant.findOne(
+      {merchantId:tx.merchantId},
+      {signingSecret:1,hmacSecret:1,secret:1,logoUrl:1,brandColor:1,accentColor:1,_id:0}
+    ).lean();
 
     const secret=merchant?.signingSecret||merchant?.hmacSecret||merchant?.secret||process.env.MERCHANT_SECRET||'default_merchant_secret';
-    const expected=generateSignature(payload,secret);
-    if(!safeCompare(expected,signature)) return brandedError(res,403);
+
+    /* MONETISER PATCH START: verificación robusta con exp+nonce opcional */
+    if (FEATURE_IFRAME_GUARD && iframeGuard) {
+      const { nonce } = req.query || {};
+      // Usa amount/currency persistidos para evitar manipulación en query
+      const guardArgs = {
+        merchantId: tx.merchantId,
+        paymentId: tx.paymentId,
+        amount: tx.amount,
+        currency: tx.currency,
+        nonce,
+        exp,
+        signature,
+        secret
+      };
+      const verdict = await iframeGuard.verifyAndConsume(guardArgs);
+      if (!verdict.ok) {
+        const code = mapGuardErrorToHttp(verdict.code);
+        return brandedError(res, code);
+      }
+    } else {
+      // Camino legacy: verifica firma basada en JSON.stringify(payload)
+      if (Date.now()>expMs) return brandedError(res,410);
+      const payload={
+        paymentId:tx.paymentId,
+        merchantId:tx.merchantId,
+        amount:tx.amount,
+        currency:tx.currency,
+        method:tx.method,
+        iat:tx.createdAt?.toISOString?.()||new Date().toISOString(),
+        exp
+      };
+      const expected=generateSignature(payload,secret);
+      if(!safeCompare(expected,signature)) return brandedError(res,403);
+    }
+    /* MONETISER PATCH END */
+
+    // Bloqueo si ya se sirvió o estado no permitido
     if(tx.iframeServedAt || tx.status!=='initialized') return brandedError(res,409);
 
-    tx.iframeServedAt=new Date(); await tx.save();
+    // Marca trazabilidad iFrame
+    tx.iframeServedAt = new Date();
+    /* MONETISER PATCH START: trazas mínimas del cliente que carga el iframe */
+    try {
+      tx.iframeClientIp  = (req.headers['x-forwarded-for']||'').split(',')[0] || req.socket?.remoteAddress || null;
+      tx.iframeUserAgent = req.headers['user-agent'] || null;
+    } catch { /* noop */ }
+    /* MONETISER PATCH END */
+    await tx.save();
 
+    // Branding dinámico por merchant
     const branding=merchant?{logoUrl:merchant.logoUrl,brandColor:merchant.brandColor,accentColor:merchant.accentColor}:{};
     const basePath=path.join(__dirname,'../../public/iframe.html');
     const baseHtml=readHtml(basePath);
