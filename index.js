@@ -22,6 +22,12 @@ const hpp           = tryRequire('hpp');
 let rateLimiterGlobal = null;
 try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch { /* opcional */ }
 
+/* MONETISER PATCH START: CSP estricta opcional, sin romper nada por defecto */
+let cspStrict = null;
+try { cspStrict = require('./src/middleware/cspStrict'); } catch { /* opcional */ }
+const FEATURE_CSP_STRICT = process.env.FEATURE_CSP_STRICT === '1';
+/* MONETISER PATCH END */
+
 /* ===== Middlewares globales ===== */
 // CORS restringible por ALLOWED_ORIGINS (coma-separado). Si vacío → permitir todo (compatibilidad).
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
@@ -38,6 +44,12 @@ app.use(cors({
 
 // Helmet básico (CSP estricta se gestiona en la ruta del iframe para no romper nada aquí)
 app.use(helmet());
+
+/* MONETISER PATCH START: activa CSP estricta global solo si tú lo pides por flag */
+if (FEATURE_CSP_STRICT && cspStrict) {
+  app.use(cspStrict());
+}
+/* MONETISER PATCH END */
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
