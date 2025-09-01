@@ -60,7 +60,7 @@ function brandedError(res,code){
 // GET /iframe
 router.get('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
-  const { paymentId, signature, exp } = req.query || {};
+  const { paymentId, signature, exp, nonce } = req.query || {};
 
   // Carga base (sin params) para pruebas locales
   if(!paymentId && !signature && !exp){
@@ -88,15 +88,17 @@ router.get('/', async (req,res)=>{
 
     const secret=merchant?.signingSecret||merchant?.hmacSecret||merchant?.secret||process.env.MERCHANT_SECRET||'default_merchant_secret';
 
-    if (FEATURE_IFRAME_GUARD && iframeGuard) {
-      const { nonce } = req.query || {};
+    /* MONETISER PATCH: usar guard SOLO si hay nonce presente; si no, legado */
+    const useGuard = FEATURE_IFRAME_GUARD && iframeGuard && typeof nonce === 'string' && nonce.length > 0;
+
+    if (useGuard) {
       const verdict = await iframeGuard.verifyAndConsume({
         merchantId: tx.merchantId,
         paymentId: tx.paymentId,
         amount: tx.amount,
         currency: tx.currency,
         nonce,
-        exp: expStr,           // el guard ya acepta epoch ms
+        exp: expStr,     // el guard acepta epoch o ISO
         signature,
         secret
       });
@@ -105,6 +107,7 @@ router.get('/', async (req,res)=>{
         return brandedError(res, code);
       }
     } else {
+      // Camino LEGADO: firma basada en JSON.stringify(payload)
       if (Date.now()>expMs) return brandedError(res,410);
       const payload={
         paymentId:tx.paymentId,
