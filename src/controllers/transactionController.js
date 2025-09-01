@@ -1,6 +1,6 @@
+'use strict';
 // src/controllers/transactionController.js
-const Joi                       = require('Joi'); /* MONETISER PATCH: capitalización segura por si tu entorno es sensible */
-try { require('joi'); } catch { /* noop: compat */ }
+const Joi                       = require('joi');
 const { v4: uuidv4 }            = require('uuid');
 const Transaction               = require('../models/Transaction');
 const logger                    = require('../utils/logger');
@@ -10,7 +10,7 @@ const { createTokenForCard }    = require('../services/tokenService');
 const RecurrentProfile          = require('../models/RecurrentProfile');
 
 const { selectConnector }       = require('../orchestrator/orchestrationEngine');
-const { executeCardPayment }    = require('../orchestrator/fallbackEngine'); // ← NUEVO
+const { executeCardPayment }    = require('../orchestrator/fallbackEngine');
 
 const mbwayConnector            = require('../channels/apms/hub/connectors/mbwayConnector');
 const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
@@ -22,45 +22,7 @@ const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
 
 const { parseBin }              = require('../utils/cardInfoParser');
-
-/* MONETISER PATCH START: utilidades para iFrame params opcionales */
-let IframeNonce = null, iframeGuard = null;
-try { IframeNonce = require('../models/IframeNonce'); } catch { /* opcional */ }
-try { iframeGuard = require('../core/iframeGuard'); } catch { /* opcional */ }
-const FEATURE_IFRAME_GUARD = process.env.FEATURE_IFRAME_GUARD === '1';
-const EXPOSE_IFRAME_PARAMS = process.env.EXPOSE_IFRAME_PARAMS === '1';
-const IFRAME_VALIDITY_MS   = Number(process.env.IFRAME_VALIDITY_MS || 5 * 60 * 1000);
-
-async function buildIframeParamsFor(tx, secret) {
-  // Genera nonce+exp y firma para iFrame. Solo si tienes los módulos cargados.
-  if (!FEATURE_IFRAME_GUARD || !IframeNonce || !iframeGuard) return null;
-  const nonce = (crypto?.randomUUID?.() || require('crypto').randomBytes(16).toString('hex'));
-  const exp   = Date.now() + IFRAME_VALIDITY_MS;
-  // persiste nonce para anti-replay
-  try {
-    await IframeNonce.create({
-      merchantId: tx.merchantId,
-      paymentId: tx.paymentId,
-      nonce,
-      exp: new Date(exp)
-    });
-  } catch (e) {
-    logger.warn('No se pudo crear IframeNonce (no crítico en dev)', { error: e.message });
-  }
-  const payload = {
-    merchantId: tx.merchantId,
-    paymentId:  tx.paymentId,
-    amount:     tx.amount,
-    currency:   tx.currency,
-    nonce,
-    exp
-  };
-  const signature = iframeGuard.sign(payload, secret);
-  const base = process.env.IFRAME_BASE_URL || '';
-  const iframeUrl = `${base}/iframe?merchantId=${encodeURIComponent(tx.merchantId)}&paymentId=${encodeURIComponent(tx.paymentId)}&amount=${encodeURIComponent(tx.amount)}&currency=${encodeURIComponent(tx.currency)}&nonce=${encodeURIComponent(nonce)}&exp=${encodeURIComponent(exp)}&signature=${encodeURIComponent(signature)}`;
-  return { nonce, exp, signature, iframeUrl };
-}
-/* MONETISER PATCH END */
+const webhookDispatcher         = require('../services/webhookDispatcher');
 
 /* ---------------------------------------------------------------------------
    GET /transactions
@@ -88,10 +50,7 @@ const getAllTransactions = async (req, res) => {
     res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
   } catch (error) {
     logger.error('Error al obtener transacciones', { error: error.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.fetch.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.fetch.error') });
   }
 };
 
@@ -99,7 +58,6 @@ const getAllTransactions = async (req, res) => {
    POST /transactions
 --------------------------------------------------------------------------- */
 const createTransaction = async (req, res) => {
-  /* -------------------- Validación -------------------- */
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
     const messageKey = error.details[0].message;
@@ -109,7 +67,7 @@ const createTransaction = async (req, res) => {
     auditLogger.info({
       action: 'TRANSACTION_VALIDATION_FAILED',
       user: req.merchantId || 'unknown',
-      details: { error: messageKey, input: req.body },
+      details: { error: messageKey },
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
@@ -158,10 +116,7 @@ const createTransaction = async (req, res) => {
           details: { recurrenceId: value.recurrenceId, token: value.token },
           metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
         });
-        return res.status(400).json({
-          success: false,
-          message: res.getMessage('transaction.invalid.mit.noMatch')
-        });
+        return res.status(400).json({ success: false, message: res.getMessage('transaction.invalid.mit.noMatch') });
       }
     }
 
@@ -169,7 +124,8 @@ const createTransaction = async (req, res) => {
     const sanitizedValue = { ...value };
     delete sanitizedValue.cvv;
     delete sanitizedValue.cardNumber;
-    if (value.returnUrl) sanitizedValue.returnUrl = value.returnUrl;
+    if (value.returnUrl)   sanitizedValue.returnUrl = value.returnUrl;
+    if (value.callbackUrl) sanitizedValue.callbackUrl = value.callbackUrl;
 
     /* -------------------- BIN enrichment -------------------- */
     let cardInfo = null;
@@ -198,7 +154,6 @@ const createTransaction = async (req, res) => {
     let qrCodeImage = null;
 
     if (value.method === 'card') {
-      /* ------------- NUEVO: smart-retries + fail-over ------------- */
       response = await executeCardPayment({
         paymentRequest:   value,
         paymentId:        generatedPaymentId,
@@ -208,11 +163,9 @@ const createTransaction = async (req, res) => {
     } else {
       switch (selectedConnector) {
         case 'mbwayConnector':
-          response = await mbwayConnector.process(value);
-          break;
+          response = await mbwayConnector.process(value); break;
         case 'bizumConnector':
-          response = await initiateBizumPayment(value);
-          break;
+          response = await initiateBizumPayment(value); break;
         case 'pixConnector':
           response = await initiatePixPayment(value);
           sanitizedValue.qrCodePayload = response.qrCodePayload;
@@ -220,17 +173,13 @@ const createTransaction = async (req, res) => {
           qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
           break;
         case 'visaAcquirer':
-          response = await visaAcquirer.initiatePayment(value);
-          break;
+          response = await visaAcquirer.initiatePayment(value); break;
         case 'mcAcquirer':
-          response = await mcAcquirer.initiatePayment(value);
-          break;
+          response = await mcAcquirer.initiatePayment(value); break;
         case 'amexAcquirer':
-          response = await amexAcquirer.initiatePayment(value);
-          break;
+          response = await amexAcquirer.initiatePayment(value); break;
         case 'defaultCardAcquirer':
-          response = await defaultCardAcquirer.initiatePayment(value);
-          break;
+          response = await defaultCardAcquirer.initiatePayment(value); break;
         default:
           throw new Error(`Unsupported connector: ${selectedConnector}`);
       }
@@ -273,29 +222,50 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    /* MONETISER PATCH START: opcional, generar parámetros de iFrame listos si lo pides */
-    let iframeParams = null;
-    if (EXPOSE_IFRAME_PARAMS && iframeGuard) {
-      // secreto del merchant (reuso del patrón de Merchant de tu ruta iframe); si no existe, usa MERCHANT_SECRET
-      const merchantSecret = process.env.MERCHANT_SECRET || 'default_merchant_secret';
-      try {
-        iframeParams = await buildIframeParamsFor(newTransaction, merchantSecret);
-      } catch (e) {
-        logger.warn('No se pudieron construir iframeParams (no crítico en dev)', { error: e.message });
-      }
-    }
-    /* MONETISER PATCH END */
-
+    // Responder al merchant
     res.status(response.status === 'approved' ? 201 : 402).json({
       success:       response.status === 'approved',
       message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
       transaction:   newTransaction,
       recurrenceId,
       token,
-      qrCodeImage,
-      /* MONETISER PATCH: se expone solo si activas EXPOSE_IFRAME_PARAMS=1 */
-      iframeParams: iframeParams || undefined
+      qrCodeImage
     });
+
+    // Webhook asíncrono (no bloquea)
+    try {
+      const callbackUrl = newTransaction.callbackUrl;
+      if (callbackUrl && process.env.WEBHOOK_SECRET) {
+        const payload = {
+          event: 'payment.updated',
+          version: 'v1',
+          data: {
+            paymentId: newTransaction.paymentId,
+            merchantId: newTransaction.merchantId,
+            status: newTransaction.status,
+            amount: newTransaction.amount,
+            currency: newTransaction.currency,
+            connectorUsed: selectedConnector,
+            reasonCode: response.reasonCode || null,
+            timestamp: new Date().toISOString(),
+            cardInfo: cardInfo ? {
+              bin: cardInfo.bin || null,
+              cardBrand: cardInfo.cardBrand || null,
+              cardType: cardInfo.cardType || null,
+              issuerCountry: cardInfo.issuerCountry || null
+            } : null
+          }
+        };
+        await webhookDispatcher.enqueue({
+          paymentId: newTransaction.paymentId,
+          merchantId: newTransaction.merchantId,
+          url: callbackUrl,
+          payload
+        });
+      }
+    } catch (e) {
+      logger.warn('Webhook enqueue error', { error: e.message });
+    }
 
   } catch (err) {
     logger.error('Error al crear transacción', { error: err.message });
@@ -306,10 +276,7 @@ const createTransaction = async (req, res) => {
       metadata:{ ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.create.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.create.error') });
   }
 };
 
@@ -322,20 +289,14 @@ const getTransactionById = async (req, res) => {
     const transaction = await Transaction.findOne({ paymentId });
     if (!transaction) {
       logger.warn('Transacción no encontrada', { paymentId });
-      return res.status(404).json({
-        success: false,
-        message: res.getMessage('transaction.not.found')
-      });
+      return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
     }
 
     logger.info('Transacción obtenida por ID', { paymentId });
     res.status(200).json({ success: true, transaction });
   } catch (err) {
     logger.error('Error al obtener transacción', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.fetch.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.fetch.error') });
   }
 };
 
@@ -354,24 +315,14 @@ const updateTransaction = async (req, res) => {
 
     if (!transaction) {
       logger.warn('Transacción no encontrada para actualizar', { paymentId });
-      return res.status(404).json({
-        success: false,
-        message: res.getMessage('transaction.not.found')
-      });
+      return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
     }
 
     logger.info('Transacción actualizada', { paymentId, updates });
-    res.status(200).json({
-      success: true,
-      message: res.getMessage('transaction.updated'),
-      transaction
-    });
+    res.status(200).json({ success: true, message: res.getMessage('transaction.updated'), transaction });
   } catch (err) {
     logger.error('Error al actualizar transacción', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.update.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.update.error') });
   }
 };
 
@@ -385,23 +336,14 @@ const deleteTransaction = async (req, res) => {
 
     if (!deleted) {
       logger.warn('Transacción no encontrada para eliminar', { paymentId });
-      return res.status(404).json({
-        success: false,
-        message: res.getMessage('transaction.not.found')
-      });
+      return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
     }
 
     logger.info('Transacción eliminada', { paymentId });
-    res.status(200).json({
-      success: true,
-      message: res.getMessage('transaction.deleted')
-    });
+    res.status(200).json({ success: true, message: res.getMessage('transaction.deleted') });
   } catch (err) {
     logger.error('Error al eliminar transacción', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.delete.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.delete.error') });
   }
 };
 
@@ -419,10 +361,7 @@ const getTransactionVolume = async (req, res) => {
     res.status(200).json({ totalVolume });
   } catch (err) {
     logger.error('Error al obtener volumen', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.analytics.volume.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.analytics.volume.error') });
   }
 };
 
@@ -435,10 +374,7 @@ const getApprovalRate = async (req, res) => {
     res.status(200).json({ approvalRate: `${rate}%` });
   } catch (err) {
     logger.error('Error al obtener tasa aprobación', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.analytics.approvalRate.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.analytics.approvalRate.error') });
   }
 };
 
@@ -453,10 +389,7 @@ const getAverageMSC = async (req, res) => {
     res.status(200).json({ averageMSC });
   } catch (err) {
     logger.error('Error al obtener MSC promedio', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.analytics.averageMsc.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.analytics.averageMsc.error') });
   }
 };
 
@@ -481,10 +414,7 @@ const getTransactionSummary = async (req, res) => {
     });
   } catch (err) {
     logger.error('Error al obtener resumen de métricas', { error: err.message });
-    res.status(500).json({
-      success: false,
-      message: res.getMessage('transaction.analytics.summary.error')
-    });
+    res.status(500).json({ success: false, message: res.getMessage('transaction.analytics.summary.error') });
   }
 };
 
@@ -501,5 +431,4 @@ module.exports = {
   getApprovalRate,
   getAverageMSC,
   getTransactionSummary
-  /* MONETISER PATCH: no exporto helpers nuevos para no romper contratos */
 };
