@@ -1,5 +1,5 @@
 // src/controllers/initializationController.js
-// MONETISER PATCH: convivir con iFrame HMAC+exp+nonce sin romper legado.
+// Convivencia con iFrame HMAC+exp+nonce sin romper legado.
 const Joi = require('joi');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
@@ -122,12 +122,14 @@ const initializeTransaction = async (req, res) => {
       metadata: { createdAt: timestamp.toISOString() }
     });
 
-    // URL base del iframe (mantengo compatibilidad). En tu index.js /iframe y /iframe-process apuntan al mismo router.
-    const baseUrl = process.env.IFRAME_BASE_URL || '/iframe-process';
+    // URL LEGACY del iframe:
+    // - Si IFRAME_BASE_URL se define como dominio, añadimos '/iframe-process'.
+    // - Si no se define, usamos la ruta local '/iframe-process'.
+    const baseHost = process.env.IFRAME_BASE_URL || '';
+    const baseUrl = baseHost
+      ? `${baseHost.replace(/\/$/, '')}/iframe-process`
+      : '/iframe-process';
 
-    // MONETISER PATCH:
-    //  - Devolvemos también merchantId/amount/currency para facilitar a herramientas y a tu middleware de initializeRoutes.
-    //  - Si activas los flags, el middleware attachIframeParamsIfEnabled añadirá { iframeParams } con nonce/exp/firmado nuevo.
     return res.status(200).json({
       success: true,
       paymentId,
