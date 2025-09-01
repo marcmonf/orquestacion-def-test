@@ -1,26 +1,24 @@
 'use strict';
 const mongoose = require('mongoose');
 
-const WebhookLogSchema = new mongoose.Schema({
-  paymentId: { type: String, index: true },
-  merchantId: { type: String, index: true },
-  url: { type: String, required: true },
-  method: { type: String, default: 'POST' },
-  headers: { type: Object, default: {} },
-  payload: { type: Object, required: true },
+const schema = new mongoose.Schema({
+  paymentId:   { type: String, required: true },
+  merchantId:  { type: String, required: true },
+  url:         { type: String,  required: true },
+  payload:     { type: Object,  required: true },
 
-  attempt: { type: Number, default: 0 },
-  maxRetries: { type: Number, default: 6 },
-  backoffBaseMs: { type: Number, default: 1000 },
+  attempt:     { type: Number, default: 0 },
+  lastStatus:  { type: Number, default: null },
+  lastError:   { type: String, default: null },
+  deliveredAt: { type: Date,   default: null },
 
-  lastStatus: { type: Number },
-  lastError: { type: String },
+  createdAt:   { type: Date, default: Date.now },
+  updatedAt:   { type: Date, default: Date.now }
+});
 
-  nextAttemptAt: { type: Date },
-  deliveredAt: { type: Date },
-
-  createdAt: { type: Date, default: Date.now }
-}, { collection: 'WebhookLog' });
+schema.index({ merchantId: 1, createdAt: -1 });
+schema.index({ paymentId: 1 });
+schema.index({ deliveredAt: 1 });
 
 module.exports = mongoose.models.WebhookLog ||
-  mongoose.model('WebhookLog', WebhookLogSchema);
+  mongoose.model('WebhookLog', schema);
