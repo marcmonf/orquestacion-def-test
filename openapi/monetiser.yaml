@@ -1,13 +1,20 @@
 openapi: 3.1.0
 info:
   title: Monetiser Orchestrator API
-  version: 0.3.0
+  version: 0.4.1
 servers:
-  - url: https://api.monetiser.example
+  - url: https://orquestacion-def-test.onrender.com
+
 paths:
   /initialize:
     post:
       summary: Inicializa un pago y devuelve paymentId y enlaces del iFrame
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          description: Clave idempotente para obtener la misma respuesta ante repeticiones
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -36,44 +43,37 @@ paths:
                   amount: { type: number }
                   currency: { type: string }
                   signature: { type: string }
-                  timestamp: { type: string }
-                  expiresAt: { type: string }
+                  timestamp: { type: string, format: date-time }
+                  expiresAt: { type: string, format: date-time }
                   iframeUrl: { type: string, format: uri }
-                  iframeParams:
-                    type: object
-                    properties:
-                      nonce: { type: string }
-                      exp: { oneOf: [{ type: integer }, { type: string }] }
-                      signature: { type: string }
-                      iframeUrl: { type: string, format: uri }
+        '409':
+          description: Conflicto de Idempotency-Key
 
   /iframe:
     get:
-      summary: Carga HPP/iFrame seguro
+      summary: Carga HPP/iFrame seguro firmado desde backend
       parameters:
-        - in: query
-          name: merchantId
-          schema: { type: string }
         - in: query
           name: paymentId
           required: true
           schema: { type: string }
         - in: query
-          name: nonce
-          schema: { type: string }
-        - in: query
           name: exp
           required: true
-          schema: { oneOf: [{ type: integer }, { type: string }] }
+          schema: { type: string, format: date-time }
         - in: query
           name: signature
           required: true
           schema: { type: string }
+        - in: query
+          name: merchantId
+          required: false
+          schema: { type: string }
       responses:
         '200': { description: HTML iFrame }
         '403': { description: Firma inválida }
-        '409': { description: Reuso/nonce inválido }
-        '410': { description: Expirada }
+        '409': { description: Reuso o estado no inicializado }
+        '410': { description: Enlace expirado }
 
   /orchestration/decide:
     post:
@@ -115,7 +115,7 @@ paths:
                   cardInfo:
                     type: object
                     nullable: true
-                  timestamp: { type: string }
+                  timestamp: { type: string, format: date-time }
 
   /rules/{merchantId}:
     get:
@@ -126,8 +126,7 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200':
-          description: Política actual
+        '200': { description: Política actual }
     put:
       summary: Crea/actualiza la política del merchant
       parameters:
@@ -154,11 +153,31 @@ paths:
             schema:
               $ref: '#/components/schemas/Policy'
       responses:
-        '200': { description: Válida }
+        '200':
+          description: Válida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  normalized:
+                    $ref: '#/components/schemas/Policy'
 
   /rules/try:
     post:
-      summary: Prueba una política con un input de muestra y devuelve explicación legible
+      summary: Prueba una política con un input y devuelve explicación legible
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                policy: { $ref: '#/components/schemas/Policy' }
+                sample:
+                  type: object
+                  additionalProperties: true
       responses:
         '200':
           description: Resultado de prueba
@@ -174,6 +193,7 @@ paths:
                       connector: { type: string }
                       matchedRuleId: { type: string, nullable: true }
                       reasons: { type: array, items: { type: string } }
+                      explain: { type: array, items: { type: object } }
                   explainHuman: { type: array, items: { type: string } }
 
   /rules/{merchantId}/audit:
@@ -217,3 +237,43 @@ components:
                 type: object
                 properties:
                   route: { type: string }
+
+x-webhooks:
+  payment.updated:
+    post:
+      summary: Webhook de actualización de pago
+      headers:
+        Monetiser-Signature:
+          required: true
+          description: Firma HMAC "t=<ts>, v1=<hexdigest>" con cuerpo JSON
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, version, data]
+              properties:
+                event: { type: string, enum: ["payment.updated"] }
+                version: { type: string, enum: ["v1"] }
+                data:
+                  type: object
+                  required: [paymentId, merchantId, status, amount, currency, timestamp]
+                  properties:
+                    paymentId: { type: string }
+                    merchantId: { type: string }
+                    status: { type: string }
+                    amount: { type: number }
+                    currency: { type: string }
+                    connectorUsed: { type: string, nullable: true }
+                    reasonCode: { type: string, nullable: true }
+                    timestamp: { type: string, format: date-time }
+                    cardInfo:
+                      type: object
+                      nullable: true
+                      properties:
+                        bin: { type: string, nullable: true }
+                        cardBrand: { type: string, nullable: true }
+                        cardType: { type: string, nullable: true }
+                        issuerCountry: { type: string, nullable: true }
