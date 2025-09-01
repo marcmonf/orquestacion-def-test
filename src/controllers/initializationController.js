@@ -1,4 +1,5 @@
 // src/controllers/initializationController.js
+// MONETISER PATCH: convivir con iFrame HMAC+exp+nonce sin romper legado.
 const Joi = require('joi');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
@@ -7,7 +8,7 @@ const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Validación del cuerpo del request
+// Validación del cuerpo del request (sin cambios de contrato)
 const initializationSchema = Joi.object({
   merchantId: Joi.string().required(),
   amount: Joi.number().positive().required(),
@@ -17,7 +18,7 @@ const initializationSchema = Joi.object({
   callbackUrl: Joi.string().uri().required()
 });
 
-// Generador de firma HMAC (idéntico a iframe.js)
+// Generador de firma HMAC LEGACY (JSON.stringify), usado por iframeUrl legado
 function generateSignature(payload, secret) {
   return crypto
     .createHmac('sha256', secret)
@@ -25,20 +26,18 @@ function generateSignature(payload, secret) {
     .digest('hex');
 }
 
-// Allowlist opcional para returnUrl/callbackUrl (no rompe si no está configurado)
+// Allowlist opcional para returnUrl/callbackUrl (compatibilidad)
 const allowedHosts = (process.env.ALLOWED_REDIRECT_HOSTS || '')
   .split(',')
   .map(v => v.trim().toLowerCase())
   .filter(Boolean);
 
 function isUrlAllowed(u) {
-  // Si no hay allowlist → permitir todo (compatibilidad)
-  if (!allowedHosts.length) return true;
+  if (!allowedHosts.length) return true; // sin reglas -> permitir
   try {
     const parsed = new URL(u);
     if (!['https:', 'http:'].includes(parsed.protocol)) return false;
     const host = parsed.hostname.toLowerCase();
-    // Coincidencia exacta o sufijo si la regla empieza por "."
     return allowedHosts.some(rule =>
       rule.startsWith('.') ? host.endsWith(rule) : host === rule
     );
@@ -48,12 +47,13 @@ function isUrlAllowed(u) {
 }
 
 const initializeTransaction = async (req, res) => {
+  // Validación de entrada
   const { error } = initializationSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.details[0].message });
 
   const { merchantId, amount, currency, method, returnUrl, callbackUrl } = req.body;
 
-  // Check de allowlist (solo si hay reglas definidas)
+  // Allowlist (solo si hay reglas)
   if (allowedHosts.length) {
     if (!isUrlAllowed(returnUrl) || !isUrlAllowed(callbackUrl)) {
       return res.status(400).json({ error: 'Redirect URL not allowed' });
@@ -68,7 +68,7 @@ const initializeTransaction = async (req, res) => {
     const ttlMinutes = parseInt(process.env.SIGNATURE_TTL_MINUTES || '5', 10);
     const requestedExp = new Date(timestamp.getTime() + ttlMinutes * 60000);
 
-    // Coherencia con iframe.js: limitar expiración si se define IFRAME_MAX_TTL_MS
+    // Límite máximo (coherente con iFrame si se define)
     const MAX_TTL_MS = process.env.IFRAME_MAX_TTL_MS
       ? parseInt(process.env.IFRAME_MAX_TTL_MS, 10)
       : null;
@@ -76,7 +76,7 @@ const initializeTransaction = async (req, res) => {
       ? new Date(Math.min(requestedExp.getTime(), timestamp.getTime() + MAX_TTL_MS))
       : requestedExp;
 
-    // Secreto por merchant si existe, con fallback a MERCHANT_SECRET
+    // Secreto por merchant con fallback
     const merchant = await Merchant.findOne(
       { merchantId },
       { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
@@ -88,7 +88,7 @@ const initializeTransaction = async (req, res) => {
       merchant?.secret ||
       (process.env.MERCHANT_SECRET || 'default_merchant_secret');
 
-    // Payload a firmar (mismo orden/estructura que en iframe.js)
+    // Payload LEGACY a firmar (igual que en tu iframe.js legado)
     const payloadToSign = {
       paymentId,
       merchantId,
@@ -101,7 +101,7 @@ const initializeTransaction = async (req, res) => {
 
     const signature = generateSignature(payloadToSign, merchantSecret);
 
-    // Guardar transacción inicializada
+    // Persistir transacción inicializada
     const transaction = new Transaction({
       paymentId,
       merchantId,
@@ -122,13 +122,19 @@ const initializeTransaction = async (req, res) => {
       metadata: { createdAt: timestamp.toISOString() }
     });
 
-    // Base URL del iframe (por defecto a la ruta real montada en index.js)
+    // URL base del iframe (mantengo compatibilidad). En tu index.js /iframe y /iframe-process apuntan al mismo router.
     const baseUrl = process.env.IFRAME_BASE_URL || '/iframe-process';
 
+    // MONETISER PATCH:
+    //  - Devolvemos también merchantId/amount/currency para facilitar a herramientas y a tu middleware de initializeRoutes.
+    //  - Si activas los flags, el middleware attachIframeParamsIfEnabled añadirá { iframeParams } con nonce/exp/firmado nuevo.
     return res.status(200).json({
       success: true,
       paymentId,
-      signature,
+      merchantId,
+      amount,
+      currency,
+      signature, // LEGACY
       timestamp: timestamp.toISOString(),
       expiresAt: expiresAt.toISOString(),
       iframeUrl: `${baseUrl}?paymentId=${encodeURIComponent(paymentId)}&signature=${encodeURIComponent(signature)}&exp=${encodeURIComponent(expiresAt.toISOString())}`
