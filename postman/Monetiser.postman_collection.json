@@ -10,8 +10,18 @@
       "name": "Initialize",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": { "raw": "{{host}}/initialize", "host": ["{{host}}"], "path": ["initialize"] },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{host}}/initialize",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "initialize"
+          ]
+        },
         "body": {
           "mode": "raw",
           "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://miweb.com/callback\"\n}"
@@ -22,8 +32,19 @@
       "name": "Orchestration Decide",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": { "raw": \"{{host}}/orchestration/decide\", "host": ["{{host}}"], "path": ["orchestration","decide"] },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{host}}/orchestration/decide",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "orchestration",
+            "decide"
+          ]
+        },
         "body": {
           "mode": "raw",
           "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"cardNumber\": \"4111111111111111\"\n}"
@@ -36,8 +57,12 @@
         "method": "GET",
         "url": {
           "raw": "{{host}}/iframe?merchantId={{merchantId}}&paymentId={{paymentId}}&amount=25&currency=EUR&nonce={{nonce}}&exp={{exp}}&signature={{signature}}",
-          "host": ["{{host}}"],
-          "path": ["iframe"],
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "iframe"
+          ],
           "query": [
             { "key": "merchantId", "value": "{{merchantId}}" },
             { "key": "paymentId", "value": "{{paymentId}}" },
@@ -52,7 +77,7 @@
     }
   ],
   "variable": [
-    { "key": "host", "value": "http://localhost:3000" },
+    { "key": "host", "value": "https://orquestacion-def-test.onrender.com" },
     { "key": "merchantId", "value": "demo-merchant" },
     { "key": "paymentId", "value": "" },
     { "key": "nonce", "value": "" },
