@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
   title: Monetiser Orchestrator API
-  version: 0.2.0
+  version: 0.3.0
 servers:
   - url: https://api.monetiser.example
 paths:
   /initialize:
     post:
-      summary: Inicializa un pago y devuelve paymentId, signature y iframeUrl
+      summary: Inicializa un pago y devuelve paymentId y enlaces del iFrame
       requestBody:
         required: true
         content:
@@ -43,9 +43,10 @@ paths:
                     type: object
                     properties:
                       nonce: { type: string }
-                      exp: { type: integer, description: "epoch ms" }
+                      exp: { oneOf: [{ type: integer }, { type: string }] }
                       signature: { type: string }
                       iframeUrl: { type: string, format: uri }
+
   /iframe:
     get:
       summary: Carga HPP/iFrame seguro
@@ -53,39 +54,30 @@ paths:
         - in: query
           name: merchantId
           schema: { type: string }
-          required: false
         - in: query
           name: paymentId
-          schema: { type: string }
           required: true
-        - in: query
-          name: amount
-          schema: { type: number }
-          required: false
-        - in: query
-          name: currency
           schema: { type: string }
-          required: false
         - in: query
           name: nonce
           schema: { type: string }
-          required: false
         - in: query
           name: exp
-          schema: { oneOf: [{ type: integer }, { type: string }] }
           required: true
+          schema: { oneOf: [{ type: integer }, { type: string }] }
         - in: query
           name: signature
-          schema: { type: string }
           required: true
+          schema: { type: string }
       responses:
         '200': { description: HTML iFrame }
         '403': { description: Firma inválida }
         '409': { description: Reuso/nonce inválido }
         '410': { description: Expirada }
+
   /orchestration/decide:
     post:
-      summary: Evalúa reglas del merchant y sugiere conector
+      summary: Evalúa reglas y sugiere conector
       requestBody:
         required: true
         content:
@@ -124,5 +116,104 @@ paths:
                     type: object
                     nullable: true
                   timestamp: { type: string }
+
+  /rules/{merchantId}:
+    get:
+      summary: Obtiene la política actual del merchant
+      parameters:
+        - in: path
+          name: merchantId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Política actual
+    put:
+      summary: Crea/actualiza la política del merchant
+      parameters:
+        - in: path
+          name: merchantId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Policy'
+      responses:
+        '200': { description: OK }
+
+  /rules/validate:
+    post:
+      summary: Valida una política sin guardarla
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Policy'
+      responses:
+        '200': { description: Válida }
+
+  /rules/try:
+    post:
+      summary: Prueba una política con un input de muestra y devuelve explicación legible
+      responses:
+        '200':
+          description: Resultado de prueba
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  decision:
+                    type: object
+                    properties:
+                      connector: { type: string }
+                      matchedRuleId: { type: string, nullable: true }
+                      reasons: { type: array, items: { type: string } }
+                  explainHuman: { type: array, items: { type: string } }
+
+  /rules/{merchantId}/audit:
+    get:
+      summary: Devuelve el histórico de cambios
+      parameters:
+        - in: path
+          name: merchantId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200': { description: OK }
+
 components:
-  securitySchemes: {}
+  schemas:
+    Policy:
+      type: object
+      required: [merchantId, version, defaultConnector, rules]
+      properties:
+        merchantId: { type: string }
+        version: { type: string, enum: ["v1"] }
+        defaultConnector: { type: string }
+        rules:
+          type: array
+          items:
+            type: object
+            required: [id, when, action]
+            properties:
+              id: { type: string }
+              priority: { type: integer }
+              when:
+                type: object
+                additionalProperties: true
+              action:
+                type: object
+                properties:
+                  route: { type: string }
