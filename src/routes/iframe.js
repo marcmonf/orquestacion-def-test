@@ -8,13 +8,12 @@ const router   = express.Router();
 const Transaction = require('../models/Transaction');
 const Merchant    = require('../models/Merchant');
 
-/* MONETISER PATCH START: guard de firma HMAC con exp+nonce (opcional por flag) */
+/* Guard HMAC con exp+nonce (opcional por flag) */
 let iframeGuard = null;
-try { iframeGuard = require('../core/iframeGuard'); } catch { /* opcional */ }
+try { iframeGuard = require('../core/iframeGuard'); } catch {}
 const FEATURE_IFRAME_GUARD = process.env.FEATURE_IFRAME_GUARD === '1';
 
 function mapGuardErrorToHttp(code) {
-  // Mapea errores del guard a códigos HTTP y plantillas de error
   switch (code) {
     case 'invalid_params':
     case 'invalid_exp':
@@ -23,18 +22,17 @@ function mapGuardErrorToHttp(code) {
     case 'not_before':
     case 'expired':
     case 'nonce_expired':
-      return 410; // expirada
+      return 410;
     case 'nonce_not_found':
     case 'nonce_already_used':
     case 'race_condition':
-      return 409; // conflicto / reuso
+      return 409;
     default:
       return 403;
   }
 }
-/* MONETISER PATCH END */
 
-// CSP solo para esta ruta: permitir Google Pay scripts, frames y conexiones.
+// CSP solo para esta ruta
 const CSP_HEADER =
   "default-src 'self'; " +
   "img-src 'self' data:; " +
@@ -59,7 +57,7 @@ function brandedError(res,code){
   return res.status(code).send(html||String(code));
 }
 
-// GET /iframe  (router montado en /iframe y /iframe-process)
+// GET /iframe
 router.get('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   const { paymentId, signature, exp } = req.query || {};
@@ -74,15 +72,15 @@ router.get('/', async (req,res)=>{
 
   if(!paymentId || !signature || !exp) return brandedError(res,400);
 
-  // Exp simple para compatibilidad (legacy). El guard hace su propia validación cuando está activo.
-  const expMs = Date.parse(String(exp));
+  // Aceptar exp como ISO o como epoch-ms
+  const expStr = String(exp);
+  const expMs = /^\d+$/.test(expStr) ? Number(expStr) : Date.parse(expStr);
   if(Number.isNaN(expMs)) return brandedError(res,400);
 
   try{
     const tx = await Transaction.findOne({paymentId}).lean(false);
     if(!tx) return brandedError(res,404);
 
-    // Recupera secreto del merchant (compatibilidad con tus campos)
     const merchant = await Merchant.findOne(
       {merchantId:tx.merchantId},
       {signingSecret:1,hmacSecret:1,secret:1,logoUrl:1,brandColor:1,accentColor:1,_id:0}
@@ -90,27 +88,23 @@ router.get('/', async (req,res)=>{
 
     const secret=merchant?.signingSecret||merchant?.hmacSecret||merchant?.secret||process.env.MERCHANT_SECRET||'default_merchant_secret';
 
-    /* MONETISER PATCH START: verificación robusta con exp+nonce opcional */
     if (FEATURE_IFRAME_GUARD && iframeGuard) {
       const { nonce } = req.query || {};
-      // Usa amount/currency persistidos para evitar manipulación en query
-      const guardArgs = {
+      const verdict = await iframeGuard.verifyAndConsume({
         merchantId: tx.merchantId,
         paymentId: tx.paymentId,
         amount: tx.amount,
         currency: tx.currency,
         nonce,
-        exp,
+        exp: expStr,           // el guard ya acepta epoch ms
         signature,
         secret
-      };
-      const verdict = await iframeGuard.verifyAndConsume(guardArgs);
+      });
       if (!verdict.ok) {
         const code = mapGuardErrorToHttp(verdict.code);
         return brandedError(res, code);
       }
     } else {
-      // Camino legacy: verifica firma basada en JSON.stringify(payload)
       if (Date.now()>expMs) return brandedError(res,410);
       const payload={
         paymentId:tx.paymentId,
@@ -119,27 +113,24 @@ router.get('/', async (req,res)=>{
         currency:tx.currency,
         method:tx.method,
         iat:tx.createdAt?.toISOString?.()||new Date().toISOString(),
-        exp
+        exp: expStr
       };
       const expected=generateSignature(payload,secret);
       if(!safeCompare(expected,signature)) return brandedError(res,403);
     }
-    /* MONETISER PATCH END */
 
     // Bloqueo si ya se sirvió o estado no permitido
     if(tx.iframeServedAt || tx.status!=='initialized') return brandedError(res,409);
 
     // Marca trazabilidad iFrame
     tx.iframeServedAt = new Date();
-    /* MONETISER PATCH START: trazas mínimas del cliente que carga el iframe */
     try {
       tx.iframeClientIp  = (req.headers['x-forwarded-for']||'').split(',')[0] || req.socket?.remoteAddress || null;
       tx.iframeUserAgent = req.headers['user-agent'] || null;
-    } catch { /* noop */ }
-    /* MONETISER PATCH END */
+    } catch {}
     await tx.save();
 
-    // Branding dinámico por merchant
+    // Branding dinámico
     const branding=merchant?{logoUrl:merchant.logoUrl,brandColor:merchant.brandColor,accentColor:merchant.accentColor}:{};
     const basePath=path.join(__dirname,'../../public/iframe.html');
     const baseHtml=readHtml(basePath);
@@ -151,8 +142,7 @@ router.get('/', async (req,res)=>{
   }
 });
 
-// POST /iframe-process (mismo router montado en /iframe-process)
-// Mock seguro: valida campos mínimos y devuelve JSON. No toca flujos de HMAC.
+// POST /iframe-process (mock)
 router.post('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   try{
