@@ -12,19 +12,13 @@ catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desa
 require('dotenv').config();
 const app = express();
 
-/* ===== Helpers para dependencias opcionales ===== */
+/* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
 function tryRequire(name) { try { return require(name); } catch { return null; } }
 const mongoSanitize = tryRequire('express-mongo-sanitize');
 const xssClean      = tryRequire('xss-clean');
 const hpp           = tryRequire('hpp');
 let rateLimiterGlobal = null;
 try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch {}
-
-/* MONETISER PATCH START: CSP estricta opcional */
-let cspStrict = null;
-try { cspStrict = require('./src/middleware/cspStrict'); } catch {}
-const FEATURE_CSP_STRICT = process.env.FEATURE_CSP_STRICT === '1';
-/* MONETISER PATCH END */
 
 /* ===== Middlewares globales ===== */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
@@ -40,7 +34,6 @@ app.use(cors({
 }));
 
 app.use(helmet());
-if (FEATURE_CSP_STRICT && cspStrict) app.use(cspStrict());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -73,7 +66,11 @@ const ensureRouter = (moduleExport, moduleName) => {
 /* ===== Healthcheck ===== */
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-/* ===== Rutas principales ===== */
+/* ===== Idempotencia en /initialize (opt-in por header) ===== */
+const idempotency = require('./src/middleware/idempotency');
+app.use('/initialize', idempotency());
+
+/* ===== Rutas principales (sin cambiar paths ni orden) ===== */
 let initializeRoutesExport;
 try {
   initializeRoutesExport = require('./src/routes/initializeRoutes');
@@ -83,7 +80,7 @@ try {
 }
 app.use('/initialize', ensureRouter(initializeRoutesExport, 'initializeRoutes'));
 
-// Iframe
+// Iframe: mismo router para /iframe y /iframe-process
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
@@ -92,24 +89,24 @@ app.use('/iframe-process', iframeRouter);
 app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
 app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
 
-/* MONETISER PATCH START: orquestación + reglas (nuevo) */
+// Orquestración + reglas
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
-/* MONETISER PATCH END */
 
 /* ===== Static ===== */
-app.use('/admin', express.static(path.join(__dirname, 'public/admin'))); // panel reglas
+app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* ===== Error handler ===== */
+/* ===== Error handler global ===== */
 app.use((err, req, res, next) => { // eslint-disable-line
   console.error('❌ [ERROR]', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-/* ===== Mongo + arranque ===== */
+/* ===== Conexión a MongoDB + arranque ===== */
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
+
 if (!MONGO_URI) {
   console.error('❌ [FATAL] MONGO_URI no está definido.');
   process.exit(1);
