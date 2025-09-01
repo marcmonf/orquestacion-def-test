@@ -93,6 +93,9 @@ app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoute
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
 
+// >>> Transacciones
+app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
+
 /* ===== Static ===== */
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.use(express.static(path.join(__dirname, 'public')));
