@@ -12,15 +12,13 @@ catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desa
 require('dotenv').config();
 const app = express();
 
-/* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
-function tryRequire(name) {
-  try { return require(name); } catch { return null; }
-}
+/* ===== Helpers para dependencias opcionales ===== */
+function tryRequire(name) { try { return require(name); } catch { return null; } }
 const mongoSanitize = tryRequire('express-mongo-sanitize');
 const xssClean      = tryRequire('xss-clean');
 const hpp           = tryRequire('hpp');
 let rateLimiterGlobal = null;
-try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch { /* opcional */ }
+try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch {}
 
 /* MONETISER PATCH START: CSP estricta opcional */
 let cspStrict = null;
@@ -94,11 +92,13 @@ app.use('/iframe-process', iframeRouter);
 app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
 app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
 
-/* MONETISER PATCH START: nueva ruta de orquestación (no rompe nada existente) */
+/* MONETISER PATCH START: orquestación + reglas (nuevo) */
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
+app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
 /* MONETISER PATCH END */
 
-// Static
+/* ===== Static ===== */
+app.use('/admin', express.static(path.join(__dirname, 'public/admin'))); // panel reglas
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ===== Error handler ===== */
@@ -110,7 +110,6 @@ app.use((err, req, res, next) => { // eslint-disable-line
 /* ===== Mongo + arranque ===== */
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
-
 if (!MONGO_URI) {
   console.error('❌ [FATAL] MONGO_URI no está definido.');
   process.exit(1);
