@@ -2,7 +2,7 @@
   "info": {
     "name": "Monetiser Base",
     "_postman_id": "a1111111-b222-4333-8444-555555555555",
-    "description": "Initialize + iFrame + webhooks",
+    "description": "Initialize + iFrame + Orchestration",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -14,7 +14,19 @@
         "url": { "raw": "{{host}}/initialize", "host": ["{{host}}"], "path": ["initialize"] },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"returnUrl\": \"https://miweb.com/return\"\n}"
+          "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://miweb.com/callback\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Orchestration Decide",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": \"{{host}}/orchestration/decide\", "host": ["{{host}}"], "path": ["orchestration","decide"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"cardNumber\": \"4111111111111111\"\n}"
         }
       }
     },
