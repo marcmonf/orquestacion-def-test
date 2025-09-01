@@ -22,34 +22,27 @@ const hpp           = tryRequire('hpp');
 let rateLimiterGlobal = null;
 try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch { /* opcional */ }
 
-/* MONETISER PATCH START: CSP estricta opcional, sin romper nada por defecto */
+/* MONETISER PATCH START: CSP estricta opcional */
 let cspStrict = null;
-try { cspStrict = require('./src/middleware/cspStrict'); } catch { /* opcional */ }
+try { cspStrict = require('./src/middleware/cspStrict'); } catch {}
 const FEATURE_CSP_STRICT = process.env.FEATURE_CSP_STRICT === '1';
 /* MONETISER PATCH END */
 
 /* ===== Middlewares globales ===== */
-// CORS restringible por ALLOWED_ORIGINS (coma-separado). Si vacío → permitir todo (compatibilidad).
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl / same-origin
+    if (!origin) return cb(null, true);
     if (!allowedOrigins.length || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error('Not allowed by CORS'), false);
   },
   credentials: false
 }));
 
-// Helmet básico (CSP estricta se gestiona en la ruta del iframe para no romper nada aquí)
 app.use(helmet());
-
-/* MONETISER PATCH START: activa CSP estricta global solo si tú lo pides por flag */
-if (FEATURE_CSP_STRICT && cspStrict) {
-  app.use(cspStrict());
-}
-/* MONETISER PATCH END */
+if (FEATURE_CSP_STRICT && cspStrict) app.use(cspStrict());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -59,7 +52,7 @@ if (hpp)           app.use(hpp());
 if (rateLimiterGlobal) app.use(rateLimiterGlobal);
 if (morgan) app.use(morgan('dev'));
 
-/* ===== Utilidad ensureRouter para módulos que no exportan Router ===== */
+/* ===== Utilidad ensureRouter ===== */
 const ensureRouter = (moduleExport, moduleName) => {
   const express = require('express');
   const looksLikeExpress =
@@ -67,19 +60,12 @@ const ensureRouter = (moduleExport, moduleName) => {
     (typeof moduleExport === 'function' || typeof moduleExport === 'object') &&
     typeof moduleExport.use === 'function' &&
     typeof moduleExport.handle === 'function';
-
   if (looksLikeExpress) return moduleExport;
 
-  if (
-    moduleExport &&
-    typeof moduleExport === 'object' &&
-    moduleExport.router &&
-    typeof moduleExport.router.use === 'function' &&
-    typeof moduleExport.router.handle === 'function'
-  ) {
+  if (moduleExport && typeof moduleExport === 'object' && moduleExport.router &&
+      typeof moduleExport.router.use === 'function' && typeof moduleExport.router.handle === 'function') {
     return moduleExport.router;
   }
-
   console.warn(`⚠️ [WARN] El módulo "${moduleName}" no exporta un Router válido. Se envuelve en uno vacío.`);
   const router = express.Router();
   router.use((req, res) => res.status(500).json({ error: `Ruta "${moduleName}" mal exportada` }));
@@ -89,7 +75,7 @@ const ensureRouter = (moduleExport, moduleName) => {
 /* ===== Healthcheck ===== */
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-/* ===== Rutas principales (sin cambiar paths ni orden) ===== */
+/* ===== Rutas principales ===== */
 let initializeRoutesExport;
 try {
   initializeRoutesExport = require('./src/routes/initializeRoutes');
@@ -99,32 +85,29 @@ try {
 }
 app.use('/initialize', ensureRouter(initializeRoutesExport, 'initializeRoutes'));
 
-// Iframe: mismo router para /iframe y /iframe-process
+// Iframe
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
 
-// APMs y Tokens (igual que tu versión)
+// APMs y Tokens
 app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
 app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
 
-// Si habilitas transactions/analytics en el futuro, sigue tu patrón de ensureRouter.
-// app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
-// app.use('/analytics', ensureRouter(require('./src/routes/analytics'), 'analytics'));
-// app.use('/merchants', ensureRouter(require('./src/routes/merchantRoutes'), 'merchantRoutes'));
-// app.use('/recurrent-profiles', ensureRouter(require('./src/routes/recurrentprofiles'), 'recurrentprofiles'));
-// app.use('/pms', ensureRouter(require('./src/routes/pmsRoutes'), 'pmsRoutes'));
+/* MONETISER PATCH START: nueva ruta de orquestación (no rompe nada existente) */
+app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
+/* MONETISER PATCH END */
 
-/* ===== Static (iframe.html y errores) ===== */
+// Static
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* ===== Error handler global ===== */
+/* ===== Error handler ===== */
 app.use((err, req, res, next) => { // eslint-disable-line
   console.error('❌ [ERROR]', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-/* ===== Conexión a MongoDB + arranque ===== */
+/* ===== Mongo + arranque ===== */
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
 
