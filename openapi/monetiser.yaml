@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Monetiser Orchestrator API
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: https://api.monetiser.example
 paths:
@@ -14,12 +14,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [merchantId, amount, currency, returnUrl]
+              required: [merchantId, amount, currency, returnUrl, callbackUrl, method]
               properties:
                 merchantId: { type: string }
                 amount: { type: number }
                 currency: { type: string }
+                method: { type: string }
                 returnUrl: { type: string, format: uri }
+                callbackUrl: { type: string, format: uri }
       responses:
         '200':
           description: OK
@@ -28,10 +30,22 @@ paths:
               schema:
                 type: object
                 properties:
+                  success: { type: boolean }
                   paymentId: { type: string }
+                  merchantId: { type: string }
+                  amount: { type: number }
+                  currency: { type: string }
                   signature: { type: string }
+                  timestamp: { type: string }
+                  expiresAt: { type: string }
                   iframeUrl: { type: string, format: uri }
-                  exp: { type: integer, description: "epoch ms" }
+                  iframeParams:
+                    type: object
+                    properties:
+                      nonce: { type: string }
+                      exp: { type: integer, description: "epoch ms" }
+                      signature: { type: string }
+                      iframeUrl: { type: string, format: uri }
   /iframe:
     get:
       summary: Carga HPP/iFrame seguro
@@ -39,7 +53,7 @@ paths:
         - in: query
           name: merchantId
           schema: { type: string }
-          required: true
+          required: false
         - in: query
           name: paymentId
           schema: { type: string }
@@ -47,18 +61,18 @@ paths:
         - in: query
           name: amount
           schema: { type: number }
-          required: true
+          required: false
         - in: query
           name: currency
           schema: { type: string }
-          required: true
+          required: false
         - in: query
           name: nonce
           schema: { type: string }
-          required: true
+          required: false
         - in: query
           name: exp
-          schema: { type: integer }
+          schema: { oneOf: [{ type: integer }, { type: string }] }
           required: true
         - in: query
           name: signature
@@ -66,17 +80,49 @@ paths:
           required: true
       responses:
         '200': { description: HTML iFrame }
-        '403': { description: Firma inválida o expirada }
-        '410': { description: Payment en estado no permitido }
-  /webhooks/inbound:
+        '403': { description: Firma inválida }
+        '409': { description: Reuso/nonce inválido }
+        '410': { description: Expirada }
+  /orchestration/decide:
     post:
-      summary: Recepción de webhooks externos firmados
+      summary: Evalúa reglas del merchant y sugiere conector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId, amount, currency, method]
+              properties:
+                paymentId: { type: string }
+                merchantId: { type: string }
+                amount: { type: number }
+                currency: { type: string }
+                method: { type: string, enum: ["card","apm"] }
+                cardNumber: { type: string }
+                cardInfo:
+                  type: object
+                  additionalProperties: true
       responses:
-        '204': { description: Aceptado }
-  /callbacks/outbound:
-    post:
-      summary: Callback estandarizado al merchant
-      responses:
-        '202': { description: Encolado }
+        '200':
+          description: Decisión calculada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  paymentId: { type: string, nullable: true }
+                  decision:
+                    type: object
+                    properties:
+                      connector: { type: string }
+                      matchedRuleId: { type: string, nullable: true }
+                      reasons: { type: array, items: { type: string } }
+                      explain: { type: array, items: { type: object } }
+                  cardInfo:
+                    type: object
+                    nullable: true
+                  timestamp: { type: string }
 components:
   securitySchemes: {}
