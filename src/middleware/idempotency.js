@@ -1,58 +1,71 @@
-// src/middleware/idempotency.js
+'use strict';
 const crypto = require('crypto');
-const IdempotencyKey = require('../models/IdempotencyKey');
+const Idem = require('../models/IdempotencyKey');
 
-function normalizeBody(body) {
-  // Ordenar claves para hash estable
-  return JSON.stringify(body, Object.keys(body).sort());
+/**
+ * Idempotencia por header "Idempotency-Key".
+ * Alcance: método + path + merchantId + hash(body).
+ * - Si existe misma clave y mismo hash → devuelve la respuesta cacheada.
+ * - Si existe misma clave pero hash distinto → 409 Conflict.
+ * - TTL controlado por env IDEMPOTENCY_TTL_SECONDS (defecto 86400).
+ */
+function hashBody(body) {
+  const json = JSON.stringify(body || {});
+  return crypto.createHash('sha256').update(json).digest('hex');
 }
 
-function hashRequest(path, body) {
-  const h = crypto.createHash('sha256');
-  h.update(path + '|' + normalizeBody(body || {}));
-  return h.digest('hex');
-}
+module.exports = function idempotencyMiddleware() {
+  return async function handler(req, res, next) {
+    // Solo aplica a POST/PUT/PATCH y si viene header
+    if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return next();
+    const key = req.header('Idempotency-Key');
+    if (!key) return next();
 
-module.exports = async function idempotency(req, res, next) {
-  // Solo en POST que crean recursos (p.ej. /transactions)
-  const key = req.get('Idempotency-Key');
-  if (!key) return next();
-
-  const bodyHash = hashRequest(req.path, req.body);
-  const existing = await IdempotencyKey.findOne({ key });
-
-  // Reintento idéntico
-  if (existing && existing.bodyHash === bodyHash && existing.response) {
-    return res.status(existing.response.statusCode || 200).json(existing.response.body);
-  }
-
-  // Conflicto si la clave existe pero el body cambió
-  if (existing && existing.bodyHash !== bodyHash) {
-    return res.status(409).json({
-      success: false,
-      message: 'Idempotency key conflict: different payload for same key.'
-    });
-  }
-
-  // Marcar inicio
-  await IdempotencyKey.create({
-    key,
-    bodyHash,
-    response: null,
-  });
-
-  // Al responder, guardamos
-  const originalJson = res.json.bind(res);
-  res.json = async (payload) => {
     try {
-      const statusCode = res.statusCode || 200;
-      await IdempotencyKey.updateOne(
-        { key },
-        { $set: { response: { statusCode, body: payload } } }
-      );
-    } catch (_) { /* no-op */ }
-    return originalJson(payload);
-  };
+      const merchantId = req.header('x-merchant-id') || req.body?.merchantId || 'unknown';
+      const scope = `${req.method}:${req.baseUrl || ''}${req.path}:${merchantId}`;
+      const reqHash = hashBody(req.body);
 
-  next();
+      const existing = await Idem.findOne({ key }).lean();
+      if (existing) {
+        // Clave usada con otro payload → conflicto
+        if (existing.scope !== scope || existing.requestHash !== reqHash) {
+          return res.status(409).json({
+            success: false,
+            error: 'idempotency_conflict',
+            message: 'Same Idempotency-Key used with different request'
+          });
+        }
+        // Devolver respuesta cacheada
+        res.status(existing.statusCode);
+        // La respuesta cacheada es JSON seguro
+        return res.json(existing.responseBody);
+      }
+
+      // Interceptar salida para cachear
+      const ttlSec = parseInt(process.env.IDEMPOTENCY_TTL_SECONDS || '86400', 10);
+      const expiresAt = new Date(Date.now() + ttlSec * 1000);
+
+      const originalJson = res.json.bind(res);
+      res.json = async (payload) => {
+        try {
+          await Idem.create({
+            key,
+            scope,
+            requestHash: reqHash,
+            statusCode: res.statusCode || 200,
+            responseBody: payload,
+            expiresAt
+          });
+        } catch (e) {
+          // No bloquear por fallo de cacheo
+        }
+        return originalJson(payload);
+      };
+
+      return next();
+    } catch (e) {
+      return next(); // fallback sin bloquear
+    }
+  };
 };
