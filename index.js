@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -11,10 +10,6 @@ catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desa
 
 require('dotenv').config();
 const app = express();
-
-/* ===== PROXY (Render) ===== */
-// Necesario para que express-rate-limit entienda X-Forwarded-For y no bloquee
-app.set('trust proxy', 1);
 
 /* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
 function tryRequire(name) { try { return require(name); } catch { return null; } }
@@ -44,12 +39,19 @@ app.use(express.urlencoded({ extended: true }));
 if (mongoSanitize) app.use(mongoSanitize());
 if (xssClean)      app.use(xssClean());
 if (hpp)           app.use(hpp());
-
-// Rate limit controlado por flag para evitar cuelgues en proxys
-const FEATURE_RATE_LIMIT = String(process.env.FEATURE_RATE_LIMIT || '1') !== '0';
-if (FEATURE_RATE_LIMIT && rateLimiterGlobal) app.use(rateLimiterGlobal);
-
+if (rateLimiterGlobal) app.use(rateLimiterGlobal);
 if (morgan) app.use(morgan('dev'));
+
+/* ✅ i18n correcto: usa TU middleware existente */
+try {
+  const i18nMiddleware = require('./src/i18n/i18nMiddleware');
+  app.use(i18nMiddleware);
+} catch (e) {
+  console.warn('⚠️ [WARN] i18nMiddleware no cargado:', e.message);
+}
+
+/* Render/Proxies: evita warnings de X-Forwarded-For si activas rate-limits */
+app.set('trust proxy', 1);
 
 /* ===== Utilidad ensureRouter ===== */
 const ensureRouter = (moduleExport, moduleName) => {
@@ -101,8 +103,12 @@ app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoute
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
 
-// Transactions (añadido)
-app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
+// Transactions
+try {
+  app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
+} catch {
+  console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
+}
 
 /* ===== Static ===== */
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
