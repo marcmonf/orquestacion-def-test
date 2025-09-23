@@ -26,7 +26,7 @@ const transactionSchema = Joi.object({
     .required()
     .messages({ 'any.only': 'transaction.invalid.method', 'any.required': 'transaction.invalid.method' }),
 
-  // ---- Tarjeta: SIEMPRE permitido y requerido cuando method=card ----
+  // ---- Tarjeta: permitido y requerido cuando method=card ----
   cardholderName: Joi.when('method', {
     is: 'card',
     then: Joi.string().min(2).max(64).required()
@@ -80,9 +80,11 @@ const transactionSchema = Joi.object({
     otherwise: Joi.forbidden()
   }),
 
-  // Recurrencia
-  transactionType: Joi.string().valid('CIT','MIT').default('CIT').required(),
+  // Recurrencia: por defecto CIT y NO requerido
+  transactionType: Joi.string().valid('CIT','MIT').default('CIT'),
+
   isRecurring: Joi.boolean().optional(),
+
   token: Joi.string().when('transactionType', {
     is: 'MIT', then: Joi.required().messages({ 'any.required': 'transaction.invalid.token.required' }),
     otherwise: Joi.optional()
