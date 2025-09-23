@@ -1,7 +1,9 @@
 // src/routes/transactions.js
+'use strict';
 const express = require('express');
 const router = express.Router();
 const apiKeyAuth = require('../middleware/auth');
+const hardTimeout = require('../middleware/hardTimeout');
 
 const {
   getAllTransactions,
@@ -18,12 +20,14 @@ const {
 const { cardPayment } = require('../controllers/cardPaymentController');
 const logger = require('../utils/logger');
 
-// Idempotencia opcional: si el archivo existe, se usa; si no, no rompe.
+/* Idempotencia con feature flag (por defecto desactivada en /transactions) */
+const USE_IDEMP = String(process.env.FEATURE_IDEMPOTENCY_TRANSACTIONS || '0') === '1';
 let idempotency = (req, res, next) => next();
-try { idempotency = require('../middleware/idempotency'); } catch { /* opcional */ }
+if (USE_IDEMP) {
+  try { idempotency = require('../middleware/idempotency'); } catch { /* opcional */ }
+}
 
-// --- LISTADO Y CRUD ---
-
+/* --- LISTADO Y CRUD --- */
 router.get('/', apiKeyAuth, async (req, res) => {
   try { await getAllTransactions(req, res); }
   catch (err) {
@@ -40,15 +44,17 @@ router.get('/:paymentId', apiKeyAuth, async (req, res) => {
   }
 });
 
-router.post('/', apiKeyAuth, idempotency, async (req, res) => {
-  try { await createTransaction(req, res); }
-  catch (err) {
+/* POST con timeout duro para evitar cuelgues */
+router.post('/', apiKeyAuth, hardTimeout, idempotency, async (req, res) => {
+  try {
+    await createTransaction(req, res);
+  } catch (err) {
     logger.error('Error en POST /transactions:', err);
-    res.status(500).json({ error: 'Error al crear transacción' });
+    if (!res.headersSent) res.status(500).json({ error: 'Error al crear transacción' });
   }
 });
 
-// 🆕 (tu endpoint existente) POST /transactions/card-payment
+/* (tu endpoint existente) */
 router.post('/card-payment', apiKeyAuth, async (req, res) => {
   await cardPayment(req, res);
 });
@@ -69,8 +75,7 @@ router.delete('/:paymentId', apiKeyAuth, async (req, res) => {
   }
 });
 
-// --- ANALÍTICAS (se mantienen tal cual) ---
-
+/* --- ANALÍTICAS --- */
 router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   try { await getTransactionVolume(req, res); }
   catch (err) {
