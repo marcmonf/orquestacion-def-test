@@ -4,20 +4,12 @@ const Joi = require('joi');
 
 const currentYear = new Date().getFullYear();
 
-// Parse robusto del flag: 1, true, yes, on → true
-function truthy(v) {
-  if (v === undefined || v === null) return false;
-  const s = String(v).trim().toLowerCase();
-  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-}
-
-// Permitir PAN/CVV si:
-// - FEATURE_ALLOW_RAW_PAN es truthy, o
-// - NODE_ENV !== 'production' (facilita pruebas en Render si no quieres tocar flags)
-const ALLOW_RAW_PAN = truthy(process.env.FEATURE_ALLOW_RAW_PAN) || (String(process.env.NODE_ENV || '').toLowerCase() !== 'production');
-
 const transactionSchema = Joi.object({
   paymentId: Joi.forbidden(),
+
+  merchantId: Joi.string().required().messages({
+    'any.required': 'transaction.invalid.merchantId'
+  }),
 
   amount: Joi.number().positive().required().messages({
     'number.base': 'transaction.invalid.amount',
@@ -25,160 +17,97 @@ const transactionSchema = Joi.object({
     'any.required': 'transaction.invalid.amount'
   }),
 
-  currency: Joi.string().length(3).uppercase().required().when('method', {
-    is: 'pix',
-    then: Joi.valid('BRL').required().messages({
-      'any.only': 'transaction.invalid.currency.pix.required',
-      'any.required': 'transaction.invalid.currency.pix.required'
-    })
-  }).messages({
-    'string.base': 'transaction.invalid.currency',
+  currency: Joi.string().length(3).uppercase().required().messages({
     'string.length': 'transaction.invalid.currency',
     'any.required': 'transaction.invalid.currency'
   }),
 
-  method: Joi.string().required().messages({
-    'string.base': 'transaction.invalid.method',
-    'any.required': 'transaction.invalid.method'
-  }),
+  method: Joi.string().valid('card','apm','applepay','googlepay','pix','mbway','bizum')
+    .required()
+    .messages({ 'any.only': 'transaction.invalid.method', 'any.required': 'transaction.invalid.method' }),
 
-  cardScheme: Joi.string()
-    .valid('visa','mastercard','amex','maestro','discover','diners','jcb')
-    .optional()
-    .messages({ 'any.only': 'transaction.invalid.cardScheme' }),
-
-  status: Joi.string().valid('approved', 'declined', 'pending').optional(),
-
-  merchantId: Joi.string().required().messages({
-    'string.base': 'transaction.invalid.merchantId',
-    'any.required': 'transaction.invalid.merchantId'
-  }),
-
-  userId: Joi.string().optional(),
-  reference: Joi.string().optional(),
-
-  // ---- Campos de tarjeta (si method=card) ----
+  // ---- Tarjeta: SIEMPRE permitido y requerido cuando method=card ----
   cardholderName: Joi.when('method', {
-    is: Joi.valid('card'),
-    then: Joi.string().min(2).max(64).required().messages({
-      'string.base': 'transaction.invalid.cardholderName',
-      'string.min': 'transaction.invalid.cardholderName',
-      'string.max': 'transaction.invalid.cardholderName',
-      'any.required': 'transaction.invalid.cardholderName'
-    }),
+    is: 'card',
+    then: Joi.string().min(2).max(64).required()
+      .messages({ 'any.required': 'transaction.invalid.cardholderName' }),
     otherwise: Joi.forbidden()
   }),
 
-  expiryMonth: Joi.when('method', {
-    is: Joi.valid('card'),
-    then: Joi.string().pattern(/^(0[1-9]|1[0-2])$/).required().messages({
-      'string.pattern.base': 'transaction.invalid.expiryMonth',
-      'any.required': 'transaction.invalid.expiryMonth'
-    }),
-    otherwise: Joi.forbidden()
-  }),
-
-  expiryYear: Joi.when('method', {
-    is: Joi.valid('card'),
-    then: Joi.string()
-      .pattern(/^\d{4}$/)
-      .required()
-      .custom((value, helpers) => {
-        if (parseInt(value, 10) < currentYear) {
-          return helpers.error('transaction.invalid.expiryYear.tooLow');
-        }
-        return value;
-      })
-      .messages({
-        'string.pattern.base': 'transaction.invalid.expiryYear',
-        'any.required': 'transaction.invalid.expiryYear',
-        'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
-      }),
-    otherwise: Joi.forbidden()
-  }),
-
-  // PAN/CVV condicionados
   cardNumber: Joi.when('method', {
     is: 'card',
-    then: ALLOW_RAW_PAN
-      ? Joi.string()
-          .pattern(/^\d{13,19}$/)
-          .when('transactionType', {
-            is: 'CIT',
-            then: Joi.required(),
-            otherwise: Joi.forbidden()
-          })
-          .messages({
-            'string.pattern.base': 'transaction.invalid.cardNumber',
-            'any.required': 'transaction.invalid.cardNumber.required'
-          })
-      : Joi.forbidden().messages({ 'any.unknown': 'cardNumber.not.allowed' }),
+    then: Joi.string().pattern(/^\d{13,19}$/).required()
+      .messages({
+        'string.pattern.base': 'transaction.invalid.cardNumber',
+        'any.required': 'transaction.invalid.cardNumber.required'
+      }),
     otherwise: Joi.forbidden()
   }),
 
   cvv: Joi.when('method', {
     is: 'card',
-    then: ALLOW_RAW_PAN
-      ? Joi.string()
-          .pattern(/^\d{3,4}$/)
-          .when('transactionType', {
-            is: 'CIT',
-            then: Joi.required(),
-            otherwise: Joi.forbidden()
-          })
-          .messages({
-            'string.pattern.base': 'transaction.invalid.cvv',
-            'any.required': 'transaction.invalid.cvv.required'
-          })
-      : Joi.forbidden().messages({ 'any.unknown': 'cvv.not.allowed' }),
+    then: Joi.string().pattern(/^\d{3,4}$/).required()
+      .messages({
+        'string.pattern.base': 'transaction.invalid.cvv',
+        'any.required': 'transaction.invalid.cvv.required'
+      }),
     otherwise: Joi.forbidden()
   }),
 
+  expiryMonth: Joi.when('method', {
+    is: 'card',
+    then: Joi.string().pattern(/^(0[1-9]|1[0-2])$/).required()
+      .messages({ 'string.pattern.base': 'transaction.invalid.expiryMonth' }),
+    otherwise: Joi.forbidden()
+  }),
+
+  expiryYear: Joi.when('method', {
+    is: 'card',
+    then: Joi.string().pattern(/^\d{4}$/).required().custom((value, helpers) => {
+      if (parseInt(value, 10) < currentYear) return helpers.error('transaction.invalid.expiryYear.tooLow');
+      return value;
+    }).messages({
+      'string.pattern.base': 'transaction.invalid.expiryYear',
+      'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
+    }),
+    otherwise: Joi.forbidden()
+  }),
+
+  // Apple/Google Pay
   paymentData: Joi.when('method', {
-    is: Joi.valid('applepay', 'googlepay'),
+    is: Joi.valid('applepay','googlepay'),
     then: Joi.required().messages({ 'any.required': 'transaction.invalid.paymentData.required' }),
     otherwise: Joi.forbidden()
   }),
 
+  // Recurrencia
+  transactionType: Joi.string().valid('CIT','MIT').default('CIT').required(),
   isRecurring: Joi.boolean().optional(),
-
-  recurrenceId: Joi.string().when('transactionType', {
-    is: 'MIT',
-    then: Joi.required().messages({ 'any.required': 'transaction.invalid.recurrenceId.required' }),
-    otherwise: Joi.optional()
-  }),
-
-  // Por defecto CIT si no lo envías
-  transactionType: Joi.string().valid('CIT', 'MIT').default('CIT').required().messages({
-    'any.only': 'transaction.invalid.transactionType',
-    'any.required': 'transaction.invalid.transactionType'
-  }),
-
   token: Joi.string().when('transactionType', {
-    is: 'MIT',
-    then: Joi.required().messages({ 'any.required': 'transaction.invalid.token.required' }),
+    is: 'MIT', then: Joi.required().messages({ 'any.required': 'transaction.invalid.token.required' }),
+    otherwise: Joi.optional()
+  }),
+  recurrenceId: Joi.string().when('transactionType', {
+    is: 'MIT', then: Joi.required().messages({ 'any.required': 'transaction.invalid.recurrenceId.required' }),
     otherwise: Joi.optional()
   }),
 
+  // APMs específicos
   phone: Joi.when('method', {
-    is: 'mbway',
-    then: Joi.string().pattern(/^\+?\d{8,15}$/).required().messages({
-      'string.pattern.base': 'transaction.invalid.phone',
-      'any.required': 'transaction.invalid.phone.mbway.required'
-    }),
-    otherwise: Joi.when('method', {
-      is: 'bizum',
-      then: Joi.string().pattern(/^\+?\d{8,15}$/).required().messages({
-        'string.pattern.base': 'transaction.invalid.phone',
-        'any.required': 'transaction.invalid.phone.bizum.required'
-      }),
-      otherwise: Joi.optional()
-    })
+    is: Joi.valid('mbway','bizum'),
+    then: Joi.string().pattern(/^\+?\d{8,15}$/).required()
+      .messages({ 'string.pattern.base': 'transaction.invalid.phone' }),
+    otherwise: Joi.optional()
   }),
 
+  // Opcionales
+  cardScheme: Joi.string().valid('visa','mastercard','amex','maestro','discover','diners','jcb').optional(),
+  status: Joi.string().valid('approved','declined','pending').optional(),
+  userId: Joi.string().optional(),
+  reference: Joi.string().optional(),
   returnUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.returnUrl' }),
 
-  // Hospitality (opcionales)
+  // Hospitality opcional
   reservationId: Joi.string().optional(),
   guestName: Joi.string().optional(),
   checkInDate: Joi.date().optional(),
