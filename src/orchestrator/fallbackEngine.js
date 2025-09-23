@@ -1,94 +1,113 @@
+'use strict';
+
 /**
- * src/orchestrator/fallbackEngine.js
- * Motor de smart-retries + fail-over para pagos con tarjeta.
- * Interfaz unificada: cada conector expone async process(tx).
+ * Fallback/smart-retries SIMULADO para entorno de desarrollo.
+ *
+ * Objetivo: RESPONDER RÁPIDO SIEMPRE.
+ * - Sin llamadas externas.
+ * - Sin esperas largas.
+ * - Determinismo por amount para forzar approved/declined si quieres probar.
+ *
+ * Config (ENV):
+ *  - FAST_MODE=1              → fuerza tiempos ultra cortos (default: 1)
+ *  - MAX_RETRIES=0..2         → nº de reintentos simulados (default: 0 en fast)
+ *  - JITTER_MS="50,120"       → esperas entre intentos en ms (default: 50,120)
+ *
+ * Contrato de salida (se mantiene):
+ *  {
+ *    status: 'approved' | 'declined',
+ *    processor: <string>,
+ *    transactionId: <string>,
+ *    authCode?: <string>,
+ *    timestamp: <ISO string>,
+ *    reasonCode?: <string>
+ *  }
  */
-const PaymentAttempt = require('../models/PaymentAttempt');
 
-const visaAcquirer        = require('../channels/acquirers/visaAcquirer');
-const mcAcquirer          = require('../channels/acquirers/mcAcquirer');
-const amexAcquirer        = require('../channels/acquirers/amexAcquirer');
-const defaultCardAcquirer = require('../channels/acquirers/defaultCardAcquirer');
+const crypto = require('crypto');
 
-const connectorModules = {
-  visaAcquirer,
-  mcAcquirer,
-  amexAcquirer,
-  defaultCardAcquirer
-};
+const FAST_MODE   = String(process.env.FAST_MODE || '1') === '1';
+const MAX_RETRIES = Number(process.env.MAX_RETRIES || (FAST_MODE ? 0 : 1));
+const JITTER_ARR  = String(process.env.JITTER_MS || '50,120')
+  .split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n >= 0);
 
-function getProcessor(mod) {
-  // Compatibilidad: algunos exportaban initiatePayment
-  return mod.process || mod.initiatePayment;
+/** espera no bloqueante */
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function randId(prefix) {
+  const rand = crypto.randomBytes(6).toString('hex');
+  return `${prefix}_${Date.now()}_${rand}`;
 }
 
-const FALLBACK_MAP = {
-  visaAcquirer:        ['mcAcquirer', 'defaultCardAcquirer'],
-  mcAcquirer:          ['visaAcquirer', 'defaultCardAcquirer'],
-  amexAcquirer:        ['defaultCardAcquirer'],
-  defaultCardAcquirer: []
-};
+/**
+ * Simula una autorización de tarjeta para un "conector".
+ * Nunca llama a redes. Tiempo total típico <100ms en FAST_MODE.
+ */
+async function execOnce({ connector, amount }) {
+  // Regla simple para forzar outcomes en test:
+  // - amount == 11 → approved
+  // - amount == 12 → declined (soft_decline)
+  // - amount == 13 → network_error (para probar fallback)
+  let outcome = 'approved';
+  let reason  = null;
 
-const MAX_RETRIES_PER_CONNECTOR = parseInt(process.env.MAX_RETRIES_PER_CONNECTOR || '2', 10);
+  if (amount === 12) { outcome = 'declined'; reason = 'soft_decline'; }
+  else if (amount === 13) { outcome = 'network_error'; reason = 'timeout'; }
 
-const SOFT_DECLINE_CODES = new Set([
-  'issuer_unavailable',
-  'processing_error',
-  'network_error',
-  'timeout',
-  'insufficient_funds',
-  'refused',
-  'not_enough_balance'
-]);
+  // mini jitter para no 0ms
+  if (!FAST_MODE) await sleep(30);
 
-function isSoftDecline(result = {}) {
-  if (result.declineType === 'soft') return true;
-  if (result.reasonCode && SOFT_DECLINE_CODES.has(String(result.reasonCode).toLowerCase())) return true;
-  return false;
+  const base = {
+    processor: connector || 'dummyCard',
+    transactionId: randId('tx'),
+    timestamp: new Date().toISOString()
+  };
+
+  if (outcome === 'approved') {
+    return { ...base, status: 'approved', authCode: String(Math.floor(100000 + Math.random() * 899999)) };
+  }
+  if (outcome === 'declined') {
+    return { ...base, status: 'declined', reasonCode: reason || 'declined' };
+  }
+  // network_error simulado → lanzar para activar retry
+  const err = new Error('network_error');
+  err.code = 'network_error';
+  throw err;
 }
 
+/**
+ * API utilizada por transactionController
+ */
 async function executeCardPayment({ paymentRequest, paymentId, primaryConnector }) {
-  const connectors = [primaryConnector, ...(FALLBACK_MAP[primaryConnector] || [])];
-  let attemptNumber = 0;
-  let fallbackUsed = false;
+  const connector = primaryConnector || 'dummyCard';
+  const amount = Number(paymentRequest?.amount || 0);
 
-  for (const name of connectors) {
-    const mod = connectorModules[name];
-    const processor = mod && getProcessor(mod);
-    if (!processor) continue;
+  // intento 0
+  try {
+    return await execOnce({ connector, amount });
+  } catch (e) {
+    // solo si simulamos network_error
+  }
 
-    for (let retry = 0; retry < MAX_RETRIES_PER_CONNECTOR; retry++) {
-      attemptNumber += 1;
-      let result;
-      try {
-        result = await processor(paymentRequest);
-      } catch (err) {
-        result = { status: 'error', reasonCode: err.message, processor: name };
-      }
-
-      await PaymentAttempt.create({
-        paymentId,
-        connector: name,
-        attemptNumber,
-        status: result.status,
-        reasonCode: result.reasonCode || null
-      });
-
-      if (result.status === 'approved') {
-        if (name !== primaryConnector) fallbackUsed = true;
-        return { ...result, fallbackUsed };
-      }
-      if (!isSoftDecline(result)) break;
+  // reintentos rápidos controlados
+  const retries = Math.max(0, Math.min(MAX_RETRIES, 2));
+  for (let i = 0; i < retries; i++) {
+    const wait = JITTER_ARR[i] ?? 80;
+    await sleep(wait); // ms
+    try {
+      return await execOnce({ connector, amount });
+    } catch (e) {
+      // continuar
     }
   }
 
+  // Si tras reintentos sigue mal, devolver declined controlado
   return {
     status: 'declined',
-    processor: primaryConnector,
-    reasonCode: 'all_connectors_failed',
-    transactionId: null,
+    processor: connector,
+    transactionId: randId('tx'),
     timestamp: new Date().toISOString(),
-    fallbackUsed
+    reasonCode: 'network_error_final'
   };
 }
 
