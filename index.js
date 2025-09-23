@@ -12,6 +12,10 @@ catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desa
 require('dotenv').config();
 const app = express();
 
+/* ===== PROXY (Render) ===== */
+// Necesario para que express-rate-limit entienda X-Forwarded-For y no bloquee
+app.set('trust proxy', 1);
+
 /* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
 function tryRequire(name) { try { return require(name); } catch { return null; } }
 const mongoSanitize = tryRequire('express-mongo-sanitize');
@@ -40,7 +44,11 @@ app.use(express.urlencoded({ extended: true }));
 if (mongoSanitize) app.use(mongoSanitize());
 if (xssClean)      app.use(xssClean());
 if (hpp)           app.use(hpp());
-if (rateLimiterGlobal) app.use(rateLimiterGlobal);
+
+// Rate limit controlado por flag para evitar cuelgues en proxys
+const FEATURE_RATE_LIMIT = String(process.env.FEATURE_RATE_LIMIT || '1') !== '0';
+if (FEATURE_RATE_LIMIT && rateLimiterGlobal) app.use(rateLimiterGlobal);
+
 if (morgan) app.use(morgan('dev'));
 
 /* ===== Utilidad ensureRouter ===== */
@@ -93,7 +101,7 @@ app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoute
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
 
-// >>> Transacciones
+// Transactions (añadido)
 app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
 
 /* ===== Static ===== */
