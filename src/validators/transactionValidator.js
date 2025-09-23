@@ -4,8 +4,17 @@ const Joi = require('joi');
 
 const currentYear = new Date().getFullYear();
 
-// Habilita PAN/CVV solo en desarrollo de pruebas (evita ampliar alcance PCI en prod)
-const ALLOW_RAW_PAN = String(process.env.FEATURE_ALLOW_RAW_PAN || '0') === '1';
+// Parse robusto del flag: 1, true, yes, on → true
+function truthy(v) {
+  if (v === undefined || v === null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+// Permitir PAN/CVV si:
+// - FEATURE_ALLOW_RAW_PAN es truthy, o
+// - NODE_ENV !== 'production' (facilita pruebas en Render si no quieres tocar flags)
+const ALLOW_RAW_PAN = truthy(process.env.FEATURE_ALLOW_RAW_PAN) || (String(process.env.NODE_ENV || '').toLowerCase() !== 'production');
 
 const transactionSchema = Joi.object({
   paymentId: Joi.forbidden(),
@@ -48,7 +57,7 @@ const transactionSchema = Joi.object({
   userId: Joi.string().optional(),
   reference: Joi.string().optional(),
 
-  // ---- Campos de tarjeta (visibles si method=card) ----
+  // ---- Campos de tarjeta (si method=card) ----
   cardholderName: Joi.when('method', {
     is: Joi.valid('card'),
     then: Joi.string().min(2).max(64).required().messages({
@@ -88,7 +97,7 @@ const transactionSchema = Joi.object({
     otherwise: Joi.forbidden()
   }),
 
-  // PAN/CVV condicionados por flag para no ampliar alcance PCI en prod
+  // PAN/CVV condicionados
   cardNumber: Joi.when('method', {
     is: 'card',
     then: ALLOW_RAW_PAN
@@ -125,7 +134,6 @@ const transactionSchema = Joi.object({
     otherwise: Joi.forbidden()
   }),
 
-  // Apple/Google Pay requieren paymentData cuando method es applepay/googlepay
   paymentData: Joi.when('method', {
     is: Joi.valid('applepay', 'googlepay'),
     then: Joi.required().messages({ 'any.required': 'transaction.invalid.paymentData.required' }),
@@ -140,7 +148,7 @@ const transactionSchema = Joi.object({
     otherwise: Joi.optional()
   }),
 
-  // Por defecto CIT si no lo envías, para que cardNumber/cvv no queden “prohibidos”
+  // Por defecto CIT si no lo envías
   transactionType: Joi.string().valid('CIT', 'MIT').default('CIT').required().messages({
     'any.only': 'transaction.invalid.transactionType',
     'any.required': 'transaction.invalid.transactionType'
@@ -170,7 +178,7 @@ const transactionSchema = Joi.object({
 
   returnUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.returnUrl' }),
 
-  // Hospitality-specific (opcionales)
+  // Hospitality (opcionales)
   reservationId: Joi.string().optional(),
   guestName: Joi.string().optional(),
   checkInDate: Joi.date().optional(),
