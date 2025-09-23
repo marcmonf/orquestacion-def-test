@@ -22,11 +22,12 @@ const transactionSchema = Joi.object({
     'any.required': 'transaction.invalid.currency'
   }),
 
-  method: Joi.string().valid('card','apm','applepay','googlepay','pix','mbway','bizum')
+  method: Joi.string()
+    .valid('card','apm','applepay','googlepay','pix','mbway','bizum')
     .required()
     .messages({ 'any.only': 'transaction.invalid.method', 'any.required': 'transaction.invalid.method' }),
 
-  // ---- Tarjeta: permitido y requerido cuando method=card ----
+  // ---- Tarjeta: requerido cuando method=card ----
   cardholderName: Joi.when('method', {
     is: 'card',
     then: Joi.string().min(2).max(64).required()
@@ -80,11 +81,9 @@ const transactionSchema = Joi.object({
     otherwise: Joi.forbidden()
   }),
 
-  // Recurrencia: por defecto CIT y NO requerido
+  // Recurrencia: por defecto CIT, NO requerido
   transactionType: Joi.string().valid('CIT','MIT').default('CIT'),
-
   isRecurring: Joi.boolean().optional(),
-
   token: Joi.string().when('transactionType', {
     is: 'MIT', then: Joi.required().messages({ 'any.required': 'transaction.invalid.token.required' }),
     otherwise: Joi.optional()
@@ -102,12 +101,15 @@ const transactionSchema = Joi.object({
     otherwise: Joi.optional()
   }),
 
+  // URLs opcionales
+  returnUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.returnUrl' }),
+  callbackUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.callbackUrl' }),
+
   // Opcionales
   cardScheme: Joi.string().valid('visa','mastercard','amex','maestro','discover','diners','jcb').optional(),
   status: Joi.string().valid('approved','declined','pending').optional(),
   userId: Joi.string().optional(),
   reference: Joi.string().optional(),
-  returnUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.returnUrl' }),
 
   // Hospitality opcional
   reservationId: Joi.string().optional(),
