@@ -26,11 +26,12 @@ const { parseBin }              = require('../utils/cardInfoParser');
 const webhookDispatcher         = require('../services/webhookDispatcher');
 
 /* ------------ FLAGS / TIMEOUTS ------------- */
-const TX_TIMEOUT_MS = Math.max(1000, parseInt(process.env.TX_TIMEOUT_MS || '8000', 10));
+const TX_TIMEOUT_MS         = Math.max(1000, parseInt(process.env.TX_TIMEOUT_MS || '8000', 10));
 const FEATURE_ASYNC_PERSIST = process.env.FEATURE_ASYNC_PERSIST === '1';
-const PERSIST_TIMEOUT_MS = Math.max(500, Math.min(5000, parseInt(process.env.PERSIST_TIMEOUT_MS || '3000', 10)));
-const BIN_OFFLINE = process.env.BIN_OFFLINE === '1';
-const FAST_TX = process.env.FAST_TX === '1'; // fast-path opcional
+const PERSIST_TIMEOUT_MS    = Math.max(500, Math.min(5000, parseInt(process.env.PERSIST_TIMEOUT_MS || '3000', 10)));
+const DB_QUERY_TIMEOUT_MS   = Math.max(300, Math.min(5000, parseInt(process.env.DB_QUERY_TIMEOUT_MS || '1200', 10)));
+const BIN_OFFLINE           = process.env.BIN_OFFLINE === '1';
+const FAST_TX               = process.env.FAST_TX === '1'; // fast-path opcional
 
 /* utils */
 function withTimeout(promise, ms, label) {
@@ -57,8 +58,12 @@ const getAllTransactions = async (req, res) => {
     }
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const [total, transactions] = await Promise.all([
-      Transaction.countDocuments(query),
-      Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit))
+      withTimeout(Transaction.countDocuments(query), DB_QUERY_TIMEOUT_MS, 'mongo-count'),
+      withTimeout(
+        Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
+        DB_QUERY_TIMEOUT_MS,
+        'mongo-find'
+      )
     ]);
     logger.info('Transacciones obtenidas', { total, query });
     res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
@@ -76,11 +81,16 @@ const createTransaction = async (req, res) => {
     const messageKey = error.details[0].message;
     const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
     logger.warn('Validación fallida en creación', { details: messageKey });
-    auditLogger.info({ action: 'TRANSACTION_VALIDATION_FAILED', user: req.merchantId || 'unknown',
-      details: { error: messageKey }, metadata: { ip: req.ip, method: req.method, url: req.originalUrl }});
+    auditLogger.info({
+      action: 'TRANSACTION_VALIDATION_FAILED',
+      user: req.merchantId || 'unknown',
+      details: { error: messageKey },
+      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+    });
     return res.status(400).json({ success: false, message: translated });
   }
 
+  // Límite duro de la request
   const hardAbortTimer = setTimeout(() => {
     logger.error('TX hard timeout alcanzado', { merchantId: value.merchantId, amount: value.amount });
     try { res.status(504).json({ success: false, error: 'timeout', message: `No respuesta en ${TX_TIMEOUT_MS}ms` }); } catch {}
@@ -89,7 +99,7 @@ const createTransaction = async (req, res) => {
   try {
     const generatedPaymentId = uuidv4();
 
-    // Fast-path total (opcional) → responde en <50ms sin esperar a nada
+    // Fast-path total (opcional)
     if (FAST_TX) {
       const sanitized = { ...value };
       delete sanitized.cvv; delete sanitized.cardNumber;
@@ -100,15 +110,13 @@ const createTransaction = async (req, res) => {
         authCode: 'FASTOK',
         timestamp: nowIso()
       };
-      const doc = new Transaction({
-        ...sanitized, ...response,
-        paymentId: generatedPaymentId
-      });
+      const doc = new Transaction({ ...sanitized, ...response, paymentId: generatedPaymentId });
+      // Persistencia protegida
+      const saveP = doc.save();
       if (FEATURE_ASYNC_PERSIST) {
-        setImmediate(async () => { try { await doc.save(); } catch (e) { logger.error('Persistencia async FAST_TX', { e: e.message }); } });
+        setImmediate(async () => { try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast async', { e: e.message }); } });
       } else {
-        // proteger por si acaso
-        try { await withTimeout(doc.save(), PERSIST_TIMEOUT_MS, 'mongo-save'); } catch (e) { logger.warn('save fast-tx timeout', { e: e.message }); }
+        try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast sync', { e: e.message }); }
       }
       clearTimeout(hardAbortTimer);
       res.status(201).json({
@@ -141,7 +149,7 @@ const createTransaction = async (req, res) => {
           });
         }
       } catch {}
-      return; // fin fast-path
+      return;
     }
 
     // Recurrencia CIT/MIT mínima
@@ -157,19 +165,29 @@ const createTransaction = async (req, res) => {
         expiryYear:      value.expiryYear,
         cvv:             value.cvv
       });
-      await new RecurrentProfile({
+
+      const rp = new RecurrentProfile({
         recurrenceId, token, merchantId: value.merchantId,
         cardholderName: value.cardholderName, expiryMonth: value.expiryMonth, expiryYear: value.expiryYear
-      }).save();
+      });
+      await withTimeout(rp.save(), DB_QUERY_TIMEOUT_MS, 'mongo-save-recurrent');
     }
 
     if (value.transactionType === 'MIT') {
-      const previous = await Transaction.findOne({ recurrenceId: value.recurrenceId, token: value.token, transactionType: 'CIT' });
+      const findPrevP = Transaction.findOne({
+        recurrenceId:  value.recurrenceId,
+        token:         value.token,
+        transactionType: 'CIT'
+      });
+      const previous = await withTimeout(findPrevP, DB_QUERY_TIMEOUT_MS, 'mongo-find-previous');
       if (!previous) {
         logger.warn('MIT sin CIT previa vinculada', { recurrenceId: value.recurrenceId, token: value.token });
-        auditLogger.info({ action: 'MIT_WITHOUT_CIT', user: req.merchantId || 'unknown',
+        auditLogger.info({
+          action: 'MIT_WITHOUT_CIT',
+          user: req.merchantId || 'unknown',
           details: { recurrenceId: value.recurrenceId, token: value.token },
-          metadata: { ip: req.ip, method: req.method, url: req.originalUrl }});
+          metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
+        });
         clearTimeout(hardAbortTimer);
         return res.status(400).json({ success: false, message: res.getMessage('transaction.invalid.mit.noMatch') });
       }
@@ -178,7 +196,7 @@ const createTransaction = async (req, res) => {
     // Sanitizar
     const sanitizedValue = { ...value };
     delete sanitizedValue.cvv; delete sanitizedValue.cardNumber;
-    if (value.returnUrl)   sanitizedValue.returnUrl = value.returnUrl;
+    if (value.returnUrl)   sanitizedValue.returnUrl   = value.returnUrl;
     if (value.callbackUrl) sanitizedValue.callbackUrl = value.callbackUrl;
 
     // BIN enrichment
@@ -190,12 +208,12 @@ const createTransaction = async (req, res) => {
       } catch { cardInfo = null; }
     }
 
-    // Orquestación → proteger por si el fetch de política en Mongo se atasca
+    // Orquestación (protegida)
     let selectedConnector = 'defaultCardAcquirer';
     try {
       selectedConnector = await withTimeout(
         Promise.resolve(selectConnector({ ...value, cardInfo })),
-        800, // límite agresivo para no rozar el 504
+        800,
         'select-connector'
       );
     } catch (e) {
@@ -203,7 +221,7 @@ const createTransaction = async (req, res) => {
       selectedConnector = 'defaultCardAcquirer';
     }
 
-    // Ejecución (card / apms)
+    // Ejecución (card / apms) protegida
     let response;
     let qrCodeImage = null;
 
@@ -212,18 +230,20 @@ const createTransaction = async (req, res) => {
       response = await withTimeout(execP, Math.max(800, TX_TIMEOUT_MS - 2000), 'execute-card');
     } else {
       switch (selectedConnector) {
-        case 'mbwayConnector':  response = await mbwayConnector.process(value); break;
-        case 'bizumConnector':  response = await initiateBizumPayment(value);  break;
-        case 'pixConnector':
-          response = await initiatePixPayment(value);
+        case 'mbwayConnector':  response = await withTimeout(mbwayConnector.process(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mbway'); break;
+        case 'bizumConnector':  response = await withTimeout(initiateBizumPayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-bizum'); break;
+        case 'pixConnector': {
+          const pixP = initiatePixPayment(value);
+          response = await withTimeout(pixP, Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-pix');
           sanitizedValue.qrCodePayload = response.qrCodePayload;
           sanitizedValue.paymentUrl    = response.paymentUrl;
           qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
           break;
-        case 'visaAcquirer':    response = await visaAcquirer.initiatePayment(value);   break;
-        case 'mcAcquirer':      response = await mcAcquirer.initiatePayment(value);     break;
-        case 'amexAcquirer':    response = await amexAcquirer.initiatePayment(value);   break;
-        case 'defaultCardAcquirer': response = await defaultCardAcquirer.initiatePayment(value); break;
+        }
+        case 'visaAcquirer':    response = await withTimeout(visaAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa'); break;
+        case 'mcAcquirer':      response = await withTimeout(mcAcquirer.initiatePayment(value),     Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');   break;
+        case 'amexAcquirer':    response = await withTimeout(amexAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex'); break;
+        case 'defaultCardAcquirer': response = await withTimeout(defaultCardAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-default'); break;
         default: throw new Error(`Unsupported connector: ${selectedConnector}`);
       }
     }
@@ -243,11 +263,12 @@ const createTransaction = async (req, res) => {
       token
     });
 
+    const saveP = docToSave.save();
     if (!FEATURE_ASYNC_PERSIST) {
-      await withTimeout(docToSave.save(), PERSIST_TIMEOUT_MS, 'mongo-save');
+      await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save');
     } else {
       setImmediate(async () => {
-        try { await docToSave.save(); logger.info('Persistencia async OK', { paymentId: generatedPaymentId }); }
+        try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-async'); logger.info('Persistencia async OK', { paymentId: generatedPaymentId }); }
         catch (e) { logger.error('Persistencia async FAILED', { paymentId: generatedPaymentId, error: e.message }); }
       });
     }
@@ -315,7 +336,8 @@ const createTransaction = async (req, res) => {
 const getTransactionById = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const transaction = await Transaction.findOne({ paymentId });
+    const findP = Transaction.findOne({ paymentId });
+    const transaction = await withTimeout(findP, DB_QUERY_TIMEOUT_MS, 'mongo-find-by-id');
     if (!transaction) {
       logger.warn('Transacción no encontrada', { paymentId });
       return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
@@ -333,11 +355,12 @@ const updateTransaction = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const updates = req.body;
-    const transaction = await Transaction.findOneAndUpdate(
+    const updP = Transaction.findOneAndUpdate(
       { paymentId },
       { $set: updates },
       { new: true }
     );
+    const transaction = await withTimeout(updP, DB_QUERY_TIMEOUT_MS, 'mongo-update');
     if (!transaction) {
       logger.warn('Transacción no encontrada para actualizar', { paymentId });
       return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
@@ -353,7 +376,8 @@ const updateTransaction = async (req, res) => {
 const deleteTransaction = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const deleted = await Transaction.findOneAndDelete({ paymentId });
+    const delP = Transaction.findOneAndDelete({ paymentId });
+    const deleted = await withTimeout(delP, DB_QUERY_TIMEOUT_MS, 'mongo-delete');
     if (!deleted) {
       logger.warn('Transacción no encontrada para eliminar', { paymentId });
       return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
@@ -368,10 +392,11 @@ const deleteTransaction = async (req, res) => {
 
 const getTransactionVolume = async (req, res) => {
   try {
-    const result = await Transaction.aggregate([
+    const aggP = Transaction.aggregate([
       { $match: { status: 'approved' } },
       { $group: { _id: null, totalVolume: { $sum: '$amount' } } }
     ]);
+    const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-volume');
     const totalVolume = result[0]?.totalVolume || 0;
     logger.info('Volumen total obtenido', { totalVolume });
     res.status(200).json({ totalVolume });
@@ -383,9 +408,13 @@ const getTransactionVolume = async (req, res) => {
 
 const getApprovalRate = async (req, res) => {
   try {
-    const total     = await Transaction.countDocuments();
-    const approved  = await Transaction.countDocuments({ status: 'approved' });
-    const rate      = total ? ((approved / total) * 100).toFixed(2) : '0';
+    const totalP    = Transaction.countDocuments();
+    const approvedP = Transaction.countDocuments({ status: 'approved' });
+    const [total, approved] = await Promise.all([
+      withTimeout(totalP, DB_QUERY_TIMEOUT_MS, 'mongo-count-all'),
+      withTimeout(approvedP, DB_QUERY_TIMEOUT_MS, 'mongo-count-approved')
+    ]);
+    const rate = total ? ((approved / total) * 100).toFixed(2) : '0';
     logger.info('Tasa de aprobación obtenida', { total, approved, rate });
     res.status(200).json({ approvalRate: `${rate}%` });
   } catch (err) {
@@ -396,10 +425,11 @@ const getApprovalRate = async (req, res) => {
 
 const getAverageMSC = async (req, res) => {
   try {
-    const result = await Transaction.aggregate([
+    const aggP = Transaction.aggregate([
       { $match: { status: 'approved' } },
       { $group: { _id: null, average: { $avg: '$amount' } } }
     ]);
+    const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-avg');
     const averageMSC = result[0]?.average || 0;
     logger.info('MSC promedio obtenido', { averageMSC });
     res.status(200).json({ averageMSC });
@@ -411,12 +441,18 @@ const getAverageMSC = async (req, res) => {
 
 const getTransactionSummary = async (req, res) => {
   try {
-    const total     = await Transaction.countDocuments();
-    const approved  = await Transaction.countDocuments({ status: 'approved' });
-    const declined  = await Transaction.countDocuments({ status: 'declined' });
-    const volumeRes = await Transaction.aggregate([
+    const totalP    = Transaction.countDocuments();
+    const approvedP = Transaction.countDocuments({ status: 'approved' });
+    const declinedP = Transaction.countDocuments({ status: 'declined' });
+    const volumeP   = Transaction.aggregate([
       { $match: { status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const [total, approved, declined, volumeRes] = await Promise.all([
+      withTimeout(totalP, DB_QUERY_TIMEOUT_MS, 'mongo-count-all2'),
+      withTimeout(approvedP, DB_QUERY_TIMEOUT_MS, 'mongo-count-appr2'),
+      withTimeout(declinedP, DB_QUERY_TIMEOUT_MS, 'mongo-count-decl2'),
+      withTimeout(volumeP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-vol2')
     ]);
     const volume = volumeRes[0]?.total || 0;
 
