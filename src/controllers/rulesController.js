@@ -10,6 +10,7 @@ const metrics = require('../orchestrator/metrics/metricsService');
 
 const FEATURE_RULE_TRY = process.env.FEATURE_RULE_TRY === '1';
 const FEATURE_RULE_AUDIT = process.env.FEATURE_RULE_AUDIT === '1';
+const FEATURE_RULE_EXPORT_UI = process.env.FEATURE_RULE_EXPORT_UI === '1';
 
 function defaultPolicy(merchantId) {
   return {
@@ -161,4 +162,80 @@ async function getAudit(req, res) {
   return res.status(200).json({ success: true, total, items });
 }
 
-module.exports = { getPolicy, validatePolicy, upsertPolicy, tryPolicy, getAudit };
+/* ------------------------- NUEVO: EXPORT / IMPORT ------------------------- */
+
+async function exportPolicy(req, res) {
+  if (!FEATURE_RULE_EXPORT_UI) return res.status(404).json({ success: false, error: 'disabled' });
+  const merchantId = String(req.query.merchantId || '').trim();
+  if (!merchantId) return res.status(400).json({ success: false, error: 'merchantId required' });
+
+  const doc = await MerchantRules.findOne({ merchantId }).lean();
+  const policy = doc?.policy || defaultPolicy(merchantId);
+  const payload = {
+    merchantId: policy.merchantId,
+    version: policy.version || 'v1',
+    defaultConnector: policy.defaultConnector,
+    rules: policy.rules || []
+  };
+  const hash = _hash(payload);
+  return res.status(200).json({ success: true, export: { ...payload, hash } });
+}
+
+async function importPolicy(req, res) {
+  if (!FEATURE_RULE_EXPORT_UI) return res.status(404).json({ success: false, error: 'disabled' });
+
+  const { error, value } = policySchema.validate(req.body || {}, { abortEarly: false });
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      errors: error.details.map(d => ({ path: d.path.join('.'), message: d.message }))
+    });
+  }
+
+  // Verificar hash si viene
+  const expected = _hash({
+    merchantId: value.merchantId,
+    version: value.version,
+    defaultConnector: value.defaultConnector,
+    rules: value.rules
+  });
+  if (req.body.hash && req.body.hash !== expected) {
+    return res.status(400).json({ success: false, error: 'hash mismatch' });
+  }
+
+  const now = new Date();
+  const existing = await MerchantRules.findOne({ merchantId: value.merchantId }).lean();
+  const updated = await MerchantRules.findOneAndUpdate(
+    { merchantId: value.merchantId },
+    { $set: { policy: value, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { new: true, upsert: true }
+  ).lean();
+
+  if (FEATURE_RULE_AUDIT) {
+    try {
+      const prev = existing?.policy || null;
+      const next = updated.policy;
+      await RuleAudit.create({
+        merchantId: value.merchantId,
+        actor: req.header('x-admin-actor') || 'unknown',
+        ip: (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || null,
+        prevHash: _hash(prev || {}),
+        nextHash: _hash(next || {}),
+        diffSize: Math.abs(JSON.stringify(next).length - JSON.stringify(prev || {}).length),
+        changedFields: _diffFields(prev || {}, next || {})
+      });
+    } catch (_) {}
+  }
+
+  return res.status(200).json({ success: true, policy: updated.policy });
+}
+
+module.exports = { 
+  getPolicy, 
+  validatePolicy, 
+  upsertPolicy, 
+  tryPolicy, 
+  getAudit,
+  exportPolicy,
+  importPolicy
+};
