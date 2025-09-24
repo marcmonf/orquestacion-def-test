@@ -25,7 +25,13 @@ const logger = require('../utils/logger');
 const USE_IDEMP = String(process.env.FEATURE_IDEMPOTENCY_TRANSACTIONS || '0') === '1';
 let idempotency = (req, res, next) => next();
 if (USE_IDEMP) {
-  try { idempotency = require('../middleware/idempotency'); } catch { /* opcional */ }
+  try {
+    // 🔧 CORRECCIÓN: este módulo exporta un factory → hay que INVOCARLO.
+    const idemFactory = require('../middleware/idempotency');
+    idempotency = (typeof idemFactory === 'function') ? idemFactory() : ((req, res, next) => next());
+  } catch {
+    idempotency = (req, res, next) => next(); // si falta, no bloquea
+  }
 }
 
 /* --- LISTADO Y CRUD --- */
@@ -37,7 +43,7 @@ router.get('/', apiKeyAuth, async (req, res) => {
   }
 });
 
-/* --- ANALÍTICAS (deben ir antes de /:paymentId para no colisionar) --- */
+/* --- ANALÍTICAS (antes de /:paymentId para no colisionar) --- */
 router.get('/analytics/volume', apiKeyAuth, async (req, res) => {
   try { await getTransactionVolume(req, res); }
   catch (err) {
@@ -71,7 +77,6 @@ router.get('/analytics/summary', apiKeyAuth, async (req, res) => {
 });
 
 /* --- ENDPOINTS ESPECÍFICOS --- */
-// (tu endpoint existente)
 router.post('/card-payment', apiKeyAuth, async (req, res) => {
   try { await cardPayment(req, res); }
   catch (err) {
