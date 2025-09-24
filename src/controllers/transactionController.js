@@ -1,4 +1,7 @@
 // src/controllers/transactionController.js
+// src/controllers/transactionController.js
+'use strict';
+
 const Joi                       = require('joi');
 const { v4: uuidv4 }            = require('uuid');
 const Transaction               = require('../models/Transaction');
@@ -21,7 +24,8 @@ const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
 
 const { parseBin }              = require('../utils/cardInfoParser');
-const webhookDispatcher         = require('../services/webhookDispatcher');
+// REEMPLAZA dispatcher previo por servicio con firma + reintentos
+const webhookService            = require('../core/webhookService');
 
 /* ---------------------------------------------------------------------------
    GET /transactions
@@ -207,32 +211,21 @@ const createTransaction = async (req, res) => {
     try {
       const callbackUrl = newTransaction.callbackUrl;
       if (callbackUrl && process.env.WEBHOOK_SECRET) {
-        const payload = {
-          event: 'payment.updated',
-          version: 'v1',
-          data: {
-            paymentId: newTransaction.paymentId,
-            merchantId: newTransaction.merchantId,
-            status: newTransaction.status,
-            amount: newTransaction.amount,
-            currency: newTransaction.currency,
-            connectorUsed: selectedConnector,
-            reasonCode: response.reasonCode || null,
-            timestamp: new Date().toISOString(),
-            cardInfo: cardInfo ? {
-              bin: cardInfo.bin || null,
-              cardBrand: cardInfo.cardBrand || null,
-              cardType: cardInfo.cardType || null,
-              issuerCountry: cardInfo.issuerCountry || null
-            } : null
-          }
-        };
-        // no await
-        webhookDispatcher.enqueue({
+        webhookService.notifyPaymentUpdated(callbackUrl, {
           paymentId: newTransaction.paymentId,
           merchantId: newTransaction.merchantId,
-          url: callbackUrl,
-          payload
+          status: newTransaction.status,
+          amount: newTransaction.amount,
+          currency: newTransaction.currency,
+          connectorUsed: selectedConnector,
+          reasonCode: response.reasonCode || null,
+          timestamp: new Date().toISOString(),
+          cardInfo: cardInfo ? {
+            bin: cardInfo.bin || null,
+            cardBrand: cardInfo.cardBrand || null,
+            cardType: cardInfo.cardType || null,
+            issuerCountry: cardInfo.issuerCountry || null
+          } : null
         });
       }
     } catch (e) {
