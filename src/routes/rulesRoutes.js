@@ -2,21 +2,41 @@
 const express = require('express');
 const router = express.Router();
 const adminAuth = require('../middleware/adminAuth');
-const { getPolicy, validatePolicy, upsertPolicy, tryPolicy, getAudit } = require('../controllers/rulesController');
 
-// GET /rules/:merchantId
-router.get('/:merchantId', adminAuth, getPolicy);
+const {
+  getPolicy,
+  validatePolicy,
+  upsertPolicy,
+  tryPolicy,
+  getAudit,
+  // NUEVO: export/import
+  exportPolicy,
+  importPolicy
+} = require('../controllers/rulesController');
 
-// POST /rules/validate
-router.post('/validate', adminAuth, validatePolicy);
+// *** RUTAS SIN PARÁMETROS (deben ir ANTES para evitar colisiones con :merchantId) ***
 
-// PUT /rules/:merchantId
-router.put('/:merchantId', adminAuth, upsertPolicy);
+// Exporta política: GET /rules/export?merchantId=demo-merchant
+router.get('/export', adminAuth, exportPolicy);
 
-// POST /rules/try
+// Importa política: POST /rules/import
+router.post('/import', adminAuth, importPolicy);
+
+// Probar política en caliente: POST /rules/try
 router.post('/try', adminAuth, tryPolicy);
 
-// GET /rules/:merchantId/audit
+// Validar estructura de política: POST /rules/validate
+router.post('/validate', adminAuth, validatePolicy);
+
+// *** RUTAS CON PARÁMETRO (después) ***
+
+// Obtener política del merchant: GET /rules/:merchantId
+router.get('/:merchantId', adminAuth, getPolicy);
+
+// Upsert política del merchant: PUT /rules/:merchantId
+router.put('/:merchantId', adminAuth, upsertPolicy);
+
+// Auditoría de cambios: GET /rules/:merchantId/audit
 router.get('/:merchantId/audit', adminAuth, getAudit);
 
 module.exports = router;
