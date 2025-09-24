@@ -1,212 +1,199 @@
-/* global localStorage, fetch, Blob, URL */
-(function(){
+/* public/admin/app.js */
+(() => {
   const $ = (id) => document.getElementById(id);
-  const merchantId = $('merchantId');
-  const adminToken = $('adminToken');
-  const defaultConnector = $('defaultConnector');
-  const policy = $('policy');
-  const status = $('status');
-  const tryOut = $('tryOut');
-  const auditOut = $('auditOut');
-  const auditTable = $('auditTable');
-  const sampleAmount = $('sampleAmount');
-  const sampleCurrency = $('sampleCurrency');
-  const sampleCard = $('sampleCard');
-  const FEATURE_RULE_EXPORT_UI = true; // UI siempre visible; backend valida/guarda
+  const txt = (el, v) => { el.textContent = v; };
+  const val = (el) => (el.value || '').trim();
 
-  // Persistencia local
-  merchantId.value = localStorage.getItem('monetiser.merchantId') || 'demo-merchant';
-  adminToken.value = localStorage.getItem('monetiser.adminToken') || '';
-  defaultConnector.value = localStorage.getItem('monetiser.defaultConnector') || 'dummyCard';
-  sampleAmount.value = localStorage.getItem('monetiser.sampleAmount') || '25';
-  sampleCurrency.value = localStorage.getItem('monetiser.sampleCurrency') || 'EUR';
-  sampleCard.value = localStorage.getItem('monetiser.sampleCard') || '';
+  const els = {
+    merchantId: $('merchantId'),
+    adminToken: $('adminToken'),
+    defaultConnector: $('defaultConnector'),
+    policy: $('policy'),
+    status: $('status'),
+    tryOut: $('tryOut'),
+    auditOut: $('auditOut'),
+    auditTable: $('auditTable'),
+    sampleAmount: $('sampleAmount'),
+    sampleCurrency: $('sampleCurrency'),
+    sampleCard: $('sampleCard'),
+    btnLoad: $('btnLoad'),
+    btnSave: $('btnSave'),
+    btnTry: $('btnTry'),
+    btnExport: $('btnExport'),
+    fileImport: $('fileImport'),
+    btnAudit: $('btnAudit'),
+  };
 
-  function setStatus(msg, ok=true) {
-    status.textContent = msg;
-    status.className = 'mt-3 text-sm ' + (ok ? 'text-emerald-400' : 'text-rose-400');
+  function headers(extra = {}) {
+    const h = { 'Content-Type': 'application/json' };
+    const token = val(els.adminToken);
+    if (token) h['X-Admin-Token'] = token;
+    return { ...h, ...extra };
   }
 
-  function headers() {
-    const h = { 'Content-Type':'application/json' };
-    if (adminToken.value) h['X-Admin-Token'] = adminToken.value;
-    return h;
-  }
-
-  async function api(path, method='GET', body) {
-    const res = await fetch(`/rules${path}`, {
-      method,
-      headers: headers(),
-      body: body ? JSON.stringify(body) : undefined
-    });
-    const data = await res.json().catch(()=> ({}));
-    if (!res.ok) throw Object.assign(new Error('http_error'), { data });
-    return data;
-  }
+  function pretty(obj) { return JSON.stringify(obj, null, 2); }
 
   async function loadPolicy() {
-    try {
-      localStorage.setItem('monetiser.merchantId', merchantId.value);
-      localStorage.setItem('monetiser.adminToken', adminToken.value);
-      const data = await api(`/${encodeURIComponent(merchantId.value)}`, 'GET');
-      if (!data.policy) throw new Error('sin policy');
-      defaultConnector.value = data.policy.defaultConnector || 'dummyCard';
-      localStorage.setItem('monetiser.defaultConnector', defaultConnector.value);
-      policy.value = JSON.stringify(data.policy, null, 2);
-      setStatus('Política cargada');
-    } catch (e) {
-      console.error(e);
-      setStatus('Error al cargar la política', false);
-    }
-  }
-
-  function preset(kind) {
-    let rule = null;
-    switch(kind){
-      case 'eurSmall':
-        rule = { id: 'eur-small', priority: 10, when: { currency: { in: ['EUR'] }, amount: { lt: 50 } }, action: { route: 'dummyCard' } };
-        break;
-      case 'binES':
-        rule = { id: 'bin-es', priority: 15, when: { bin: { inPrefixes: ['4571','4029'] } }, action: { route: 'dummyCard' } };
-        break;
-      case 'issuerBR':
-        rule = { id: 'issuer-br', priority: 20, when: { issuerCountry: { in: ['BR'] } }, action: { route: 'dummyCard' } };
-        break;
-      case 'schemeVisa':
-        rule = { id: 'scheme-visa', priority: 5, when: { scheme: { in: ['visa','VISA','Visa'] } }, action: { route: 'dummyCard' } };
-        break;
-      case 'lowLatency':
-        rule = { id: 'low-lat', priority: 30, when: { latencyMs: { lt: 150 } }, action: { route: 'dummyCard' } };
-        break;
-    }
-    try {
-      const obj = JSON.parse(policy.value || '{}');
-      obj.merchantId = merchantId.value;
-      obj.version = obj.version || 'v1';
-      obj.defaultConnector = defaultConnector.value || 'dummyCard';
-      obj.rules = Array.isArray(obj.rules) ? obj.rules : [];
-      obj.rules.push(rule);
-      policy.value = JSON.stringify(obj, null, 2);
-      setStatus('Regla añadida. No olvides Guardar.');
-    } catch {
-      setStatus('JSON inválido en el editor', false);
-    }
+    const mid = val(els.merchantId);
+    if (!mid) return setStatus('merchantId requerido');
+    setStatus('Cargando política…');
+    const r = await fetch(`/rules/${encodeURIComponent(mid)}`, { headers: headers() });
+    const j = await r.json();
+    if (!j?.success) return setStatus('No se pudo cargar la política');
+    els.policy.value = pretty(j.policy);
+    if (j.policy?.defaultConnector) els.defaultConnector.value = j.policy.defaultConnector;
+    setStatus('Política cargada');
   }
 
   async function savePolicy() {
-    try {
-      localStorage.setItem('monetiser.defaultConnector', defaultConnector.value);
-      const obj = JSON.parse(policy.value);
-      obj.merchantId = merchantId.value;
-      obj.defaultConnector = defaultConnector.value || obj.defaultConnector || 'dummyCard';
-      await api('/validate', 'POST', obj);
-      const saved = await api(`/${encodeURIComponent(merchantId.value)}`, 'PUT', obj);
-      policy.value = JSON.stringify(saved.policy, null, 2);
-      setStatus('Guardado correctamente');
-    } catch (e) {
-      console.error(e);
-      const errors = e?.data?.errors || [];
-      setStatus('Error al guardar: ' + (errors.map(x=>x.path+': '+x.message).join(' | ') || 'ver consola'), false);
-    }
+    const mid = val(els.merchantId);
+    if (!mid) return setStatus('merchantId requerido');
+
+    let payload;
+    try { payload = JSON.parse(els.policy.value || '{}'); }
+    catch { return setStatus('JSON inválido'); }
+
+    // Si el input "Default Connector" está relleno, sincronizarlo en el JSON
+    const dc = val(els.defaultConnector);
+    if (dc) payload.defaultConnector = dc;
+
+    setStatus('Guardando…');
+    const r = await fetch(`/rules/${encodeURIComponent(mid)}`, {
+      method: 'PUT',
+      headers: headers(),
+      body: JSON.stringify(payload)
+    });
+    const j = await r.json();
+    if (!j?.success) return setStatus('Error guardando política');
+    els.policy.value = pretty(j.policy);
+    setStatus('Guardado OK');
   }
 
   async function tryPolicy() {
-    try {
-      localStorage.setItem('monetiser.sampleAmount', sampleAmount.value);
-      localStorage.setItem('monetiser.sampleCurrency', sampleCurrency.value);
-      localStorage.setItem('monetiser.sampleCard', sampleCard.value);
+    let policy, amount, currency, cardNumber;
+    try { policy = JSON.parse(els.policy.value || '{}'); }
+    catch { return renderTry({ error: 'JSON inválido en política' }); }
 
-      const obj = JSON.parse(policy.value);
-      const sample = {
-        amount: Number(sampleAmount.value),
-        currency: sampleCurrency.value,
-        cardNumber: sampleCard.value || undefined
-      };
-      const res = await fetch('/rules/try', {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ policy: obj, sample })
-      });
-      const data = await res.json();
-      if (!res.ok) throw Object.assign(new Error('http_error'), { data });
+    amount = Number(val(els.sampleAmount)) || undefined;
+    currency = val(els.sampleCurrency) || undefined;
+    cardNumber = val(els.sampleCard) || undefined;
 
-      const lines = [
-        `Conector: ${data.decision.connector}`,
-        `Regla aplicada: ${data.decision.matchedRuleId || 'default'}`,
-        '',
-        ...(data.explainHuman || [])
-      ];
-      tryOut.innerText = lines.join('\n');
-      setStatus('Prueba ejecutada');
-    } catch (e) {
-      console.error(e);
-      tryOut.innerText = 'Error al probar la política.';
-      setStatus('Error en prueba', false);
-    }
+    const sample = { amount, currency, cardNumber };
+    const r = await fetch('/rules/try', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ policy, sample })
+    });
+    const j = await r.json();
+    renderTry(j);
   }
 
-  function exportPolicy() {
-    if (!FEATURE_RULE_EXPORT_UI) return;
-    try {
-      const blob = new Blob([policy.value || '{}'], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `policy_${merchantId.value}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setStatus('Exportado');
-    } catch {
-      setStatus('No se pudo exportar', false);
+  function renderTry(resp) {
+    if (!resp?.success) {
+      els.tryOut.innerHTML = `<div class="text-red-400">❌ ${resp?.error || 'Error en /rules/try'}</div>`;
+      return;
     }
+    const { decision, explainHuman } = resp;
+    const lines = [
+      `🔎 Conector: <b>${decision.connector}</b>`,
+      decision.matchedRuleId ? `Regla aplicada: <b>${decision.matchedRuleId}</b>` : 'Sin match → default',
+      '',
+      '<b>Explicación legible</b>',
+      ...(Array.isArray(explainHuman) ? explainHuman : [])
+    ];
+    els.tryOut.innerHTML = `<div class="space-y-1">${lines.map(l => `<div>${l}</div>`).join('')}</div>`;
   }
 
-  async function importPolicy(file) {
-    if (!FEATURE_RULE_EXPORT_UI || !file) return;
-    try {
-      const text = await file.text();
-      const obj = JSON.parse(text);
-      obj.merchantId = merchantId.value;
-      const v = await api('/validate', 'POST', obj);
-      policy.value = JSON.stringify(v.normalized || obj, null, 2);
-      setStatus('Importado. Revisa y pulsa Guardar.');
-    } catch (e) {
-      console.error(e);
-      setStatus('JSON inválido o error en validación', false);
-    }
+  async function exportPolicy() {
+    const mid = val(els.merchantId);
+    if (!mid) return setStatus('merchantId requerido');
+    const r = await fetch(`/rules/export?merchantId=${encodeURIComponent(mid)}`, { headers: headers() });
+    const j = await r.json();
+    if (!j?.success) return setStatus('Export falló');
+    els.policy.value = pretty(j.export);
+    setStatus('Export OK (copiado al editor)');
   }
 
-  async function loadAudit() {
-    try {
-      const res = await api(`/${encodeURIComponent(merchantId.value)}/audit?limit=20&offset=0`, 'GET');
-      auditOut.classList.remove('hidden');
-      auditTable.innerHTML = '';
-      (res.items || []).forEach(it => {
-        const div = document.createElement('div');
-        div.className = 'border border-slate-700 rounded p-2';
-        div.textContent = `${new Date(it.createdAt).toLocaleString()} · actor=${it.actor} · diff=${it.diffSize} · fields=[${(it.changedFields||[]).join(',')}] · prev=${it.prevHash?.slice(0,8)} → next=${it.nextHash?.slice(0,8)}`;
-        auditTable.appendChild(div);
-      });
-      setStatus('Histórico cargado');
-    } catch (e) {
-      console.error(e);
-      setStatus('Error al cargar histórico', false);
-    }
+  async function importPolicyFromFile(ev) {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch { return setStatus('Archivo JSON inválido'); }
+
+    const r = await fetch('/rules/import', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j?.success) return setStatus('Import falló');
+    els.policy.value = pretty(j.policy);
+    setStatus('Import OK');
   }
+
+  async function showAudit() {
+    const mid = val(els.merchantId);
+    if (!mid) return setStatus('merchantId requerido');
+
+    const r = await fetch(`/rules/${encodeURIComponent(mid)}/audit?limit=20`, { headers: headers() });
+    const j = await r.json();
+    if (!j?.success) {
+      els.auditOut.classList.add('hidden');
+      return setStatus('Audit deshabilitado o sin datos');
+    }
+
+    els.auditOut.classList.remove('hidden');
+    els.auditTable.innerHTML = (j.items || []).map(it => {
+      return `<div class="p-2 rounded bg-slate-800 border border-slate-700">
+        <div><b>${new Date(it.createdAt).toLocaleString()}</b> · actor: ${it.actor || 'unknown'}</div>
+        <div class="text-xs mt-1">changedFields: ${Array.isArray(it.changedFields) ? it.changedFields.join(', ') : '-'}</div>
+        <div class="text-xs mt-1">prevHash: ${it.prevHash?.slice(0,8)}… · nextHash: ${it.nextHash?.slice(0,8)}… · diffSize: ${it.diffSize}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function setStatus(message) {
+    txt(els.status, message);
+  }
+
+  // Presets de ejemplo (atajos)
+  document.querySelectorAll('[data-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      let pol;
+      try { pol = JSON.parse(els.policy.value || '{}'); } catch { pol = {}; }
+      if (!pol.version) pol.version = 'v1';
+      if (!pol.defaultConnector) pol.defaultConnector = val(els.defaultConnector) || 'dummyCard';
+      if (!Array.isArray(pol.rules)) pol.rules = [];
+
+      const preset = btn.getAttribute('data-preset');
+      const id = `preset-${preset}-${Date.now()}`;
+      const rule = { id, priority: pol.rules.length, when: {}, action: { route: 'dummyCard' } };
+
+      if (preset === 'eurSmall') {
+        rule.when.currency = { in: ['EUR'] };
+        rule.when.amount = { lt: 50 };
+      } else if (preset === 'binES') {
+        rule.when.bin = { inPrefixes: ['4571', '4029'] };
+      } else if (preset === 'issuerBR') {
+        rule.when.issuerCountry = { in: ['BR'] };
+      } else if (preset === 'schemeVisa') {
+        rule.when.scheme = { in: ['visa'] };
+      } else if (preset === 'lowLatency') {
+        // funciona con FEATURE_RULE_ENGINE_ADVANCED=1
+        rule.when.latencyMs = { lte: 150 };
+      }
+      pol.rules.push(rule);
+      els.policy.value = pretty(pol);
+      setStatus(`Regla añadida: ${id}`);
+    });
+  });
 
   // Eventos
-  document.getElementById('btnLoad').addEventListener('click', loadPolicy);
-  document.getElementById('btnSave').addEventListener('click', savePolicy);
-  document.getElementById('btnTry').addEventListener('click', tryPolicy);
-  document.getElementById('btnExport').addEventListener('click', exportPolicy);
-  document.getElementById('btnAudit').addEventListener('click', loadAudit);
-  document.querySelectorAll('[data-preset]').forEach(b => {
-    b.addEventListener('click', () => preset(b.getAttribute('data-preset')));
-  });
-  $('fileImport').addEventListener('change', (e)=> importPolicy(e.target.files?.[0]));
+  els.btnLoad.addEventListener('click', loadPolicy);
+  els.btnSave.addEventListener('click', savePolicy);
+  els.btnTry.addEventListener('click', tryPolicy);
+  els.btnExport.addEventListener('click', exportPolicy);
+  els.fileImport.addEventListener('change', importPolicyFromFile);
+  els.btnAudit.addEventListener('click', showAudit);
 
-  // Carga inicial
-  loadPolicy();
+  // Estado inicial
+  setStatus('Listo');
 })();
