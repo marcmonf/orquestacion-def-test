@@ -1,5 +1,4 @@
 // src/controllers/transactionController.js
-// src/controllers/transactionController.js
 'use strict';
 
 const Joi                       = require('joi');
@@ -24,8 +23,23 @@ const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
 const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
 
 const { parseBin }              = require('../utils/cardInfoParser');
-// REEMPLAZA dispatcher previo por servicio con firma + reintentos
-const webhookService            = require('../core/webhookService');
+const webhookDispatcher         = require('../services/webhookDispatcher');
+
+/* ------------ NUEVOS FLAGS / TIMEOUTS (sin romper por defecto) ------------- */
+const TX_TIMEOUT_MS = Math.max(1000, parseInt(process.env.TX_TIMEOUT_MS || '8000', 10));
+const FEATURE_ASYNC_PERSIST = process.env.FEATURE_ASYNC_PERSIST === '1'; // responde antes y persiste en background
+const PERSIST_TIMEOUT_MS = Math.max(500, Math.min(5000, parseInt(process.env.PERSIST_TIMEOUT_MS || '3000', 10))); // cap al guardado
+const BIN_OFFLINE = process.env.BIN_OFFLINE === '1';
+
+/* util pequeño para acotar promesas con timeout */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout:${label}`)), ms);
+    promise
+      .then((v) => { clearTimeout(t); resolve(v); })
+      .catch((e) => { clearTimeout(t); reject(e); });
+  });
+}
 
 /* ---------------------------------------------------------------------------
    GET /transactions
@@ -76,6 +90,12 @@ const createTransaction = async (req, res) => {
     return res.status(400).json({ success: false, message: translated });
   }
 
+  // Límite de seguridad de la petición completa (por si algo se atasca)
+  const hardAbortTimer = setTimeout(() => {
+    logger.error('TX hard timeout alcanzado', { merchantId: value.merchantId, amount: value.amount });
+    try { res.status(504).json({ success: false, error: 'timeout', message: `No respuesta en ${TX_TIMEOUT_MS}ms` }); } catch {}
+  }, TX_TIMEOUT_MS);
+
   try {
     const generatedPaymentId = uuidv4();
 
@@ -117,6 +137,7 @@ const createTransaction = async (req, res) => {
           details: { recurrenceId: value.recurrenceId, token: value.token },
           metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
         });
+        clearTimeout(hardAbortTimer);
         return res.status(400).json({ success: false, message: res.getMessage('transaction.invalid.mit.noMatch') });
       }
     }
@@ -128,10 +149,14 @@ const createTransaction = async (req, res) => {
     if (value.returnUrl)   sanitizedValue.returnUrl = value.returnUrl;
     if (value.callbackUrl) sanitizedValue.callbackUrl = value.callbackUrl;
 
-    // BIN enrichment con timeout/fallback
+    // BIN enrichment rápido / offline-friendly
     let cardInfo = null;
     if (value.method === 'card' && value.cardNumber) {
-      cardInfo = await parseBin(value.cardNumber);
+      try {
+        // Si BIN_OFFLINE=1 tu parser ya retorna rápido; si no, proteger con timeout corto
+        const parseP = parseBin(value.cardNumber);
+        cardInfo = BIN_OFFLINE ? await parseP : await withTimeout(parseP, 1200, 'bin-lookup');
+      } catch { cardInfo = null; }
     }
 
     // Orquestación
@@ -144,16 +169,17 @@ const createTransaction = async (req, res) => {
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
 
-    // Ejecución
+    // Ejecución (acotada por seguridad, aunque tus conectores ya son rápidos)
     let response;
     let qrCodeImage = null;
 
     if (value.method === 'card') {
-      response = await executeCardPayment({
+      const execP = executeCardPayment({
         paymentRequest:   value,
         paymentId:        generatedPaymentId,
         primaryConnector: selectedConnector
       });
+      response = await withTimeout(execP, Math.max(800, TX_TIMEOUT_MS - 2000), 'execute-card');
     } else {
       switch (selectedConnector) {
         case 'mbwayConnector':  response = await mbwayConnector.process(value); break;
@@ -172,7 +198,7 @@ const createTransaction = async (req, res) => {
       }
     }
 
-    // Persistencia
+    // Persistencia (dos modos: síncrono como siempre, o asíncrono si activas flag)
     sanitizedValue.status        = response.status;
     sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
@@ -180,28 +206,38 @@ const createTransaction = async (req, res) => {
     if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
     if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
 
-    const newTransaction = new Transaction({
+    const docToSave = new Transaction({
       ...sanitizedValue,
       paymentId:   generatedPaymentId,
       recurrenceId,
       token
     });
-    await newTransaction.save();
 
-    logger.info('Transacción creada', {
-      paymentId: newTransaction.paymentId,
-      method:    newTransaction.method,
-      token:     newTransaction.token,
-      transactionType: newTransaction.transactionType,
-      isRecurring:     newTransaction.isRecurring,
-      recurrenceId:    newTransaction.recurrenceId
-    });
+    if (!FEATURE_ASYNC_PERSIST) {
+      // Comportamiento original (síncrono), con protección de timeout para no llegar al 504 del proxy
+      await withTimeout(docToSave.save(), PERSIST_TIMEOUT_MS, 'mongo-save');
+    } else {
+      // Persistencia asíncrona: la respuesta se envía ya y se guarda en background
+      setImmediate(async () => {
+        try {
+          await docToSave.save();
+          logger.info('Persistencia async OK', { paymentId: generatedPaymentId });
+        } catch (e) {
+          logger.error('Persistencia async FAILED', { paymentId: generatedPaymentId, error: e.message });
+        }
+      });
+    }
 
-    // RESPUESTA INMEDIATA
+    // RESPUESTA INMEDIATA (idéntico contrato)
+    clearTimeout(hardAbortTimer);
     res.status(response.status === 'approved' ? 201 : 402).json({
       success:       response.status === 'approved',
       message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
-      transaction:   newTransaction,
+      transaction:   {
+        ...docToSave.toObject(),
+        // Si es async persist, avisamos sutilmente del modo (no cambia el contrato)
+        _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync'
+      },
       recurrenceId,
       token,
       qrCodeImage
@@ -209,23 +245,34 @@ const createTransaction = async (req, res) => {
 
     // Webhook en background (NO bloquea)
     try {
-      const callbackUrl = newTransaction.callbackUrl;
+      const callbackUrl = docToSave.callbackUrl;
       if (callbackUrl && process.env.WEBHOOK_SECRET) {
-        webhookService.notifyPaymentUpdated(callbackUrl, {
-          paymentId: newTransaction.paymentId,
-          merchantId: newTransaction.merchantId,
-          status: newTransaction.status,
-          amount: newTransaction.amount,
-          currency: newTransaction.currency,
-          connectorUsed: selectedConnector,
-          reasonCode: response.reasonCode || null,
-          timestamp: new Date().toISOString(),
-          cardInfo: cardInfo ? {
-            bin: cardInfo.bin || null,
-            cardBrand: cardInfo.cardBrand || null,
-            cardType: cardInfo.cardType || null,
-            issuerCountry: cardInfo.issuerCountry || null
-          } : null
+        const payload = {
+          event: 'payment.updated',
+          version: 'v1',
+          data: {
+            paymentId: docToSave.paymentId,
+            merchantId: docToSave.merchantId,
+            status: docToSave.status,
+            amount: docToSave.amount,
+            currency: docToSave.currency,
+            connectorUsed: selectedConnector,
+            reasonCode: response.reasonCode || null,
+            timestamp: new Date().toISOString(),
+            cardInfo: cardInfo ? {
+              bin: cardInfo.bin || null,
+              cardBrand: cardInfo.cardBrand || null,
+              cardType: cardInfo.cardType || null,
+              issuerCountry: cardInfo.issuerCountry || null
+            } : null
+          }
+        };
+        // no await
+        webhookDispatcher.enqueue({
+          paymentId: docToSave.paymentId,
+          merchantId: docToSave.merchantId,
+          url: callbackUrl,
+          payload
         });
       }
     } catch (e) {
@@ -233,6 +280,13 @@ const createTransaction = async (req, res) => {
     }
 
   } catch (err) {
+    clearTimeout(hardAbortTimer);
+    const isTimeout = String(err?.message || '').startsWith('timeout:');
+    if (isTimeout) {
+      logger.error('Timeout controlado en TX', { step: err.message });
+      return res.status(504).json({ success: false, error: 'timeout', message: `Paso lento: ${err.message}` });
+    }
+
     logger.error('Error al crear transacción', { error: err.message });
     auditLogger.info({
       action: 'TRANSACTION_CREATE_ERROR',
@@ -240,7 +294,7 @@ const createTransaction = async (req, res) => {
       details:{ error: err.message },
       metadata:{ ip: req.ip, method: req.method, url: req.originalUrl }
     });
-    res.status(500).json({ success: false, message: res.getMessage('transaction.create.error') });
+    return res.status(500).json({ success: false, message: res.getMessage('transaction.create.error') });
   }
 };
 
