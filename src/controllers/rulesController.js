@@ -45,7 +45,6 @@ async function validatePolicy(req, res) {
 function _hash(obj) {
   return crypto.createHash('sha256').update(JSON.stringify(obj)).digest('hex');
 }
-
 function _diffFields(prev, next) {
   const fields = new Set();
   const pk = Object.keys(prev || {});
@@ -59,7 +58,6 @@ function _diffFields(prev, next) {
 async function upsertPolicy(req, res) {
   const { merchantId } = req.params;
   const body = { ...req.body, merchantId };
-
   const { error, value } = policySchema.validate(body, { abortEarly: false });
   if (error) {
     return res.status(400).json({
@@ -67,7 +65,6 @@ async function upsertPolicy(req, res) {
       errors: error.details.map(d => ({ path: d.path.join('.'), message: d.message }))
     });
   }
-
   const now = new Date();
   const existing = await MerchantRules.findOne({ merchantId }).lean();
   const updated = await MerchantRules.findOneAndUpdate(
@@ -89,9 +86,8 @@ async function upsertPolicy(req, res) {
         diffSize: Math.abs(JSON.stringify(next).length - JSON.stringify(prev || {}).length),
         changedFields: _diffFields(prev || {}, next || {})
       });
-    } catch (e) { /* no bloquear guardado por auditoría */ }
+    } catch (_) {}
   }
-
   return res.status(200).json({ success: true, policy: updated.policy });
 }
 
@@ -99,8 +95,7 @@ async function tryPolicy(req, res) {
   if (!FEATURE_RULE_TRY) return res.status(404).json({ success: false, error: 'disabled' });
 
   const { policy, sample } = req.body || {};
-  // Validar política
-  const { error, value } = policySchema.validate(policy || {}, { abortEarly: false });
+  const { error } = policySchema.validate(policy || {}, { abortEarly: false });
   if (error) {
     return res.status(400).json({
       success: false,
@@ -108,13 +103,15 @@ async function tryPolicy(req, res) {
     });
   }
 
-  // Enriquecer muestra si viene PAN
+  // Enriquecer con BIN si viene PAN (salta si BIN_OFFLINE=1 y no hay red)
   let enriched = sample?.cardInfo || null;
   if (!enriched && sample?.cardNumber) {
     try { enriched = await parseBin(sample.cardNumber); } catch {}
   }
 
-  const roll = metrics.getRollingStats();
+  // Métricas: sample.metrics tiene prioridad; sino rolling stats
+  const roll = (typeof metrics.getRollingStats === 'function') ? (metrics.getRollingStats() || {}) : {};
+  const m = sample?.metrics || {};
   const ctx = {
     bin: enriched?.bin || (sample?.cardNumber ? String(sample.cardNumber).slice(0,6) : null),
     issuerCountry: enriched?.issuerCountry || null,
@@ -122,18 +119,21 @@ async function tryPolicy(req, res) {
     cardType: enriched?.cardType || null,
     currency: sample?.currency,
     amount: sample?.amount,
-    latencyMs: roll.p50Latency ?? undefined,
-    costBps: roll.avgCostBps ?? undefined,
-    saturationPct: roll.saturationPct ?? undefined
+    latencyP50: m.latencyP50 ?? roll.p50Latency,
+    latencyMs:  m.latencyMs  ?? roll.p50Latency,
+    successRate: m.successRate ?? roll.successRate,
+    saturationPct: m.saturationPct ?? roll.saturationPct,
+    costBps: m.costBps ?? roll.avgCostBps,
+    dayOfWeek: sample?.dayOfWeek,
+    hour: sample?.hour
   };
 
-  const decision = evaluate(value, ctx, { explain: true });
+  const decision = evaluate(policy, ctx, { explain: true });
   const nice = decision.explain.map(e => {
+    const ok = e.ok ? '✔' : '✖';
     if (e.type.endsWith('.in') || e.type === 'bin.inPrefixes') {
-      const ok = e.ok ? '✔' : '✖';
       return `${ok} ${e.type}: esperado ${JSON.stringify(e.expected)} · actual ${JSON.stringify(e.actual)}`;
     }
-    const ok = e.ok ? '✔' : '✖';
     return `${ok} ${e.type}: ${e.actual} vs ${e.expected}`;
   });
 
@@ -162,8 +162,7 @@ async function getAudit(req, res) {
   return res.status(200).json({ success: true, total, items });
 }
 
-/* ------------------------- NUEVO: EXPORT / IMPORT ------------------------- */
-
+/* ------------------------- EXPORT / IMPORT ------------------------- */
 async function exportPolicy(req, res) {
   if (!FEATURE_RULE_EXPORT_UI) return res.status(404).json({ success: false, error: 'disabled' });
   const merchantId = String(req.query.merchantId || '').trim();
@@ -192,7 +191,7 @@ async function importPolicy(req, res) {
     });
   }
 
-  // Verificar hash si viene
+  // Verificar hash si el cliente lo envía
   const expected = _hash({
     merchantId: value.merchantId,
     version: value.version,
@@ -230,12 +229,7 @@ async function importPolicy(req, res) {
   return res.status(200).json({ success: true, policy: updated.policy });
 }
 
-module.exports = { 
-  getPolicy, 
-  validatePolicy, 
-  upsertPolicy, 
-  tryPolicy, 
-  getAudit,
-  exportPolicy,
-  importPolicy
+module.exports = {
+  getPolicy, validatePolicy, upsertPolicy, tryPolicy, getAudit,
+  exportPolicy, importPolicy
 };
