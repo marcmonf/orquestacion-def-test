@@ -40,7 +40,7 @@ const whenSchema = Joi.object({
     ).length(2)
   }).unknown(false),
 
-  // Avanzados (permitidos siempre; el motor los ignora si el flag no está activo)
+  // Avanzados
   latencyP50: Joi.object({ lte: Joi.number().min(0) }).unknown(false),
   latencyMs:  Joi.object({ lte: Joi.number().min(0) }).unknown(false),
   successRate: Joi.object({ gte: Joi.number().min(0).max(1) }).unknown(false),
@@ -53,9 +53,7 @@ const ruleSchema = Joi.object({
   id: Joi.string().required(),
   priority: Joi.number().integer().min(0),
   when: whenSchema.required(),
-  action: Joi.object({
-    route: Joi.string().required()
-  }).required()
+  action: Joi.object({ route: Joi.string().required() }).required()
 }).unknown(false);
 
 const retriesSchema = Joi.object({
