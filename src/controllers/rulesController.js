@@ -58,6 +58,7 @@ function _diffFields(prev, next) {
 async function upsertPolicy(req, res) {
   const { merchantId } = req.params;
   const body = { ...req.body, merchantId };
+
   const { error, value } = policySchema.validate(body, { abortEarly: false });
   if (error) {
     return res.status(400).json({
@@ -65,6 +66,7 @@ async function upsertPolicy(req, res) {
       errors: error.details.map(d => ({ path: d.path.join('.'), message: d.message }))
     });
   }
+
   const now = new Date();
   const existing = await MerchantRules.findOne({ merchantId }).lean();
   const updated = await MerchantRules.findOneAndUpdate(
@@ -88,6 +90,7 @@ async function upsertPolicy(req, res) {
       });
     } catch (_) {}
   }
+
   return res.status(200).json({ success: true, policy: updated.policy });
 }
 
@@ -103,15 +106,16 @@ async function tryPolicy(req, res) {
     });
   }
 
-  // Enriquecer con BIN si viene PAN (salta si BIN_OFFLINE=1 y no hay red)
+  // Enriquecimiento BIN si hay PAN (respetando tus timeouts/flags)
   let enriched = sample?.cardInfo || null;
   if (!enriched && sample?.cardNumber) {
     try { enriched = await parseBin(sample.cardNumber); } catch {}
   }
 
-  // Métricas: sample.metrics tiene prioridad; sino rolling stats
+  // Métricas: sample.metrics > métricas rolling (si existen)
   const roll = (typeof metrics.getRollingStats === 'function') ? (metrics.getRollingStats() || {}) : {};
   const m = sample?.metrics || {};
+
   const ctx = {
     bin: enriched?.bin || (sample?.cardNumber ? String(sample.cardNumber).slice(0,6) : null),
     issuerCountry: enriched?.issuerCountry || null,
@@ -191,7 +195,7 @@ async function importPolicy(req, res) {
     });
   }
 
-  // Verificar hash si el cliente lo envía
+  // Validación de hash opcional (si el cliente lo envía)
   const expected = _hash({
     merchantId: value.merchantId,
     version: value.version,
