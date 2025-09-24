@@ -34,8 +34,8 @@ app.use(cors({
 
 app.use(helmet());
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 if (mongoSanitize) app.use(mongoSanitize());
 if (xssClean)      app.use(xssClean());
 if (hpp)           app.use(hpp());
@@ -129,11 +129,18 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
+/* endurecer mongoose para no bloquear */
+mongoose.set('bufferCommands', false);
+mongoose.set('strictQuery', true);
+
 mongoose.connect(MONGO_URI, {
+  // opciones defensivas
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 20000,
-  socketTimeoutMS: 45000
+  serverSelectionTimeoutMS: 7000,   // más agresivo: si no elige nodo rápido, aborta
+  socketTimeoutMS: 20000,           // sockets no eternos
+  maxPoolSize: 5,                   // pool pequeño en Render
+  retryWrites: true,
 })
 .then(() => {
   console.log('✅ MongoDB conectado');
