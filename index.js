@@ -110,8 +110,13 @@ try {
   console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
 }
 
-// Payment Request
-app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
+// Payment Request 
+try {
+  app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
+} catch {
+  console.warn('⚠️ [WARN] /payment-requests no montado (archivo faltante)');
+}
+
 
 
 /* ===== Static ===== */
