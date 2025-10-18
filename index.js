@@ -80,6 +80,10 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 const idempotency = require('./src/middleware/idempotency');
 app.use('/initialize', idempotency());
 
+/* ======================================================================== */
+/* ============================ BLOQUE DE RUTAS ============================ */
+/* ======================================================================== */
+
 /* ===== Rutas principales (sin cambiar paths ni orden) ===== */
 let initializeRoutesExport;
 try {
@@ -110,14 +114,23 @@ try {
   console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
 }
 
-// Payment Request 
+// Payment Request
 try {
   app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 } catch {
   console.warn('⚠️ [WARN] /payment-requests no montado (archivo faltante)');
 }
 
+// Payments (capture/refund/cancel)
+try {
+  app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
+} catch {
+  console.warn('⚠️ [WARN] /payments no montado (archivo faltante)');
+}
 
+/* ======================================================================== */
+/* ========================== FIN BLOQUE DE RUTAS ========================== */
+/* ======================================================================== */
 
 /* ===== Static ===== */
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
@@ -146,9 +159,9 @@ mongoose.connect(MONGO_URI, {
   // opciones defensivas
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 7000,   // más agresivo: si no elige nodo rápido, aborta
-  socketTimeoutMS: 20000,           // sockets no eternos
-  maxPoolSize: 5,                   // pool pequeño en Render
+  serverSelectionTimeoutMS: 7000,
+  socketTimeoutMS: 20000,
+  maxPoolSize: 5,
   retryWrites: true,
 })
 .then(() => {
