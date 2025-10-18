@@ -5,12 +5,13 @@ const paymentRequestSchema = require('../validators/paymentRequestValidator');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
+// Para reusar la lógica actual de creación de transacciones
+const txController = require('./transactionController');
+
 const createPaymentRequest = async (req, res) => {
-  // Validar la entrada
   const { error, value } = paymentRequestSchema.validate(req.body);
   if (error) {
-    const messageKey = error.details[0].message;
-    const translated = res.getMessage?.(messageKey) || messageKey || 'paymentRequest.validation';
+    const messageKey = error.details?.[0]?.message || 'paymentRequest.validation';
     logger.warn('Validación fallida en PaymentRequest', { details: messageKey });
     auditLogger.info({
       action: 'PAYMENT_REQUEST_VALIDATION_FAILED',
@@ -18,16 +19,17 @@ const createPaymentRequest = async (req, res) => {
       details: { error: messageKey },
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
-    return res.status(400).json({ success: false, message: translated });
+    return res.status(400).json({ success: false, message: messageKey });
   }
 
   try {
     const doc = new PaymentRequest(value);
     await doc.save();
-    logger.info('PaymentRequest creado', { merchantId: value.merchantId, id: doc._id });
-    res.status(201).json({
+
+    logger.info('PaymentRequest creado', { merchantId: value.merchantId, id: String(doc._id) });
+    return res.status(201).json({
       success: true,
-      message: res.getMessage('paymentRequest.created') || 'paymentRequest.created',
+      message: 'PaymentRequest created',
       paymentRequest: doc
     });
   } catch (err) {
@@ -38,8 +40,86 @@ const createPaymentRequest = async (req, res) => {
       details: { error: err.message },
       metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
     });
-    res.status(500).json({ success: false, message: res.getMessage('paymentRequest.create.error') || 'paymentRequest.create.error' });
+    return res.status(500).json({ success: false, message: 'paymentRequest.create.error' });
   }
 };
 
-module.exports = { createPaymentRequest };
+/**
+ * Ejecuta un PaymentRequest existente reusando el orquestador de /transactions.
+ * - Mapea los datos mínimos (amount/currency/merchant/return/callback).
+ * - Si no hay datos de tarjeta ni token, usa test card dummy (solo para entorno DEV).
+ * - No modifica el modelo Transaction (relación la devolvemos en la respuesta).
+ */
+const executePaymentRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pr = await PaymentRequest.findById(id);
+    if (!pr) {
+      return res.status(404).json({ success: false, message: 'PaymentRequest not found' });
+    }
+
+    // Map básico → body compatible con /transactions
+    const amount = pr?.order?.amountOfMoney?.amount;
+    const currency = pr?.order?.amountOfMoney?.currencyCode;
+    const merchantId = pr?.merchantId;
+
+    if (!amount || !currency || !merchantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields in PaymentRequest (amount/currency/merchantId)'
+      });
+    }
+
+    // Opcionales
+    const returnUrl = pr?.hostedCheckoutSpecificInput?.returnUrl;
+    const callbackUrl =
+      pr?.order?.feedbacks?.webhookUrl ||
+      (Array.isArray(pr?.order?.feedbacks?.webhooksUrls) && pr.order.feedbacks.webhooksUrls[0]) ||
+      undefined;
+
+    // Datos de tarjeta/recurring (DEV fallback si no hay nada)
+    const hasToken = !!pr?.cardPaymentMethodSpecificInput?.token;
+    const method = 'card';
+
+    // Fallback DEV seguro (NO producción): tarjeta test
+    const devTestCard = {
+      cardholderName: 'John Doe',
+      cardNumber: '4111111111111111',
+      cvv: '123',
+      expiryMonth: '12',
+      expiryYear: '2030'
+    };
+
+    // Construimos el body para la ruta /transactions
+    const txBody = {
+      merchantId,
+      amount,
+      currency,
+      method,
+      returnUrl,
+      callbackUrl
+    };
+
+    if (hasToken) {
+      // Si ya soportas tokens en /transactions, colócalo aquí (si no, se ignora sin romper)
+      txBody.token = pr.cardPaymentMethodSpecificInput.token;
+    } else {
+      Object.assign(txBody, devTestCard);
+    }
+
+    // Reusar el controlador existente de transacciones SIN romper tu API:
+    // Clon superficial del req con body mapeado y cabeceras originales (API key, etc.)
+    const proxyReq = {
+      ...req,
+      body: txBody
+    };
+
+    // Llamamos a createTransaction y devolvemos su respuesta tal cual
+    return txController.createTransaction(proxyReq, res);
+  } catch (err) {
+    logger.error('Error en executePaymentRequest', { error: err.message });
+    return res.status(500).json({ success: false, message: 'paymentRequest.execute.error' });
+  }
+};
+
+module.exports = { createPaymentRequest, executePaymentRequest };
