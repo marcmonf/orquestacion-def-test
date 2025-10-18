@@ -110,6 +110,10 @@ try {
   console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
 }
 
+// Payment Request
+app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
+
+
 /* ===== Static ===== */
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.use(express.static(path.join(__dirname, 'public')));
