@@ -5,8 +5,11 @@ const mongoose = require('mongoose');
 const operationSchema = new mongoose.Schema({
   paymentId: { type: String, required: true, index: true },
   type: { type: String, enum: ['capture', 'refund', 'cancel'], required: true },
-  amount: { type: Number },                  // capture/refund amount
-  currencyCode: { type: String },            // ISO 4217
+  idempotencyKey: { type: String, required: true }, // <— NUEVO: clave idempotente
+
+  // Datos de negocio
+  amount: { type: Number },
+  currencyCode: { type: String },
   isFinal: { type: Boolean },
   references: {
     merchantReference: { type: String },
@@ -17,11 +20,23 @@ const operationSchema = new mongoose.Schema({
     merchantReference: { type: String },
     operationGroupReference: { type: String }
   },
-  captureId: { type: String },               // opcional (si lo usas)
-  reason: { type: String },                  // refund reason
-  operatorId: { type: String },              // omnichannelRefundSpecificInput.operatorId
+  captureId: { type: String },
+  reason: { type: String },
+  operatorId: { type: String },
+
+  // Trazabilidad y re-entrega determinista
+  status: { type: String, enum: ['pending', 'succeeded', 'failed'], default: 'succeeded' },
+  responseStatusCode: { type: Number, default: 200 },
+  responseSnapshot: { type: mongoose.Schema.Types.Mixed }, // JSON devuelto al merchant
+
   createdAt: { type: Date, default: Date.now }
 });
+
+// Índice único robusto contra duplicación concurrente
+operationSchema.index(
+  { paymentId: 1, type: 1, idempotencyKey: 1 },
+  { unique: true, name: 'uniq_payment_type_idemKey' }
+);
 
 module.exports = mongoose.models.Operation ||
   mongoose.model('Operation', operationSchema);
