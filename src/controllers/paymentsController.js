@@ -1,5 +1,6 @@
 // src/controllers/paymentsController.js
 'use strict';
+const crypto = require('crypto');
 const Transaction = require('../models/Transaction');
 const Operation = require('../models/Operation');
 const logger = require('../utils/logger');
@@ -33,10 +34,26 @@ async function sendWebhookIfAny(transaction, event, extra = {}) {
       }
     };
 
+    const body = JSON.stringify(payload);
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const secret = process.env.WEBHOOK_SECRET || '';
+
+    // Firma HMAC-SHA256 sobre "<ts>.<body>"
+    let signatureHeader = {};
+    if (secret) {
+      const msg = `${ts}.${body}`;
+      const sig = crypto.createHmac('sha256', secret).update(msg, 'utf8').digest('hex');
+      signatureHeader = { 'x-monetiser-signature': `t=${ts},v1=${sig}` };
+    }
+
     await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: {
+        'content-type': 'application/json',
+        'x-monetiser-timestamp': ts,
+        ...signatureHeader
+      },
+      body
     });
   } catch (err) {
     logger.warn('Webhook emit failed', { error: err.message });
@@ -120,17 +137,17 @@ exports.capturePayment = async (req, res) => {
 
     if (await replayIfExists({ paymentId, type: 'capture', idempotencyKey }, res)) return;
 
-    // Autorizado por defecto = tx.amount (backward compatible)
+    // Autorizado por defecto = tx.amount (compatibilidad)
     const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
 
     // Totales actuales
     const { capturedAmount, refundedAmount } = await getTotals(paymentId);
     const remainingToCapture = Math.max(authorizedAmount - capturedAmount, 0);
 
-    // Monto solicitado (por defecto: capturar todo lo pendiente)
+    // Monto solicitado (por defecto: capturar lo pendiente)
     const amount = reqAmount ?? remainingToCapture;
 
-    // Validaciones de negocio
+    // Validaciones
     if (!amount || amount <= 0) {
       return res.status(409).json({ success: false, message: 'Invalid capture amount' });
     }
@@ -138,7 +155,6 @@ exports.capturePayment = async (req, res) => {
       return res.status(409).json({ success: false, message: 'Capture exceeds authorized amount' });
     }
     if (refundedAmount > 0) {
-      // Permitimos, pero dejamos constancia
       logger.warn('Capture after refund detected', { paymentId, refundedAmount });
     }
 
