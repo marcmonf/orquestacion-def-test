@@ -6,8 +6,6 @@ const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
 // === Helpers ===
-
-// En Node 18+ existe globalThis.fetch; si no, omitimos webhook
 async function sendWebhookIfAny(transaction, event, extra = {}) {
   try {
     const url = transaction?.callbackUrl;
@@ -111,7 +109,6 @@ async function persistAndRespond({
 }
 
 // === Controllers con reglas de negocio (sin tocar Transaction.js) ===
-
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -141,11 +138,10 @@ exports.capturePayment = async (req, res) => {
       return res.status(409).json({ success: false, message: 'Capture exceeds authorized amount' });
     }
     if (refundedAmount > 0) {
-      // En muchos PSP se permite refund tras capture; aquí solo avisamos (no bloqueamos)
+      // Permitimos, pero dejamos constancia
       logger.warn('Capture after refund detected', { paymentId, refundedAmount });
     }
 
-    // Actualizamos estado "lógico" en tx sin cambiar su schema (solo status)
     const postCaptured = capturedAmount + amount;
     tx.status = (postCaptured === authorizedAmount) ? 'captured' : 'partially_captured';
     tx.updatedAt = new Date();
@@ -222,7 +218,6 @@ exports.refundPayment = async (req, res) => {
       return res.status(409).json({ success: false, message: 'Refund exceeds captured amount' });
     }
 
-    // Estado lógico
     const postRefunded = refundedAmount + amount;
     const fullyRefunded = (postRefunded === capturedAmount) || (capturedAmount === 0 && amount === authorizedAmount);
     tx.status = fullyRefunded ? 'refunded' : 'partially_refunded';
@@ -284,7 +279,6 @@ exports.cancelPayment = async (req, res) => {
 
     if (await replayIfExists({ paymentId, type: 'cancel', idempotencyKey }, res)) return;
 
-    // Reglas: cancelar solo si NO hay capturas
     const { capturedAmount } = await getTotals(paymentId);
     if (capturedAmount > 0) {
       return res.status(409).json({ success: false, message: 'Cannot cancel: already captured' });
