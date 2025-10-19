@@ -3,11 +3,14 @@
 const express = require('express');
 const router = express.Router();
 const apiKeyAuth = require('../middleware/auth');
+const idempotency = require('../middleware/idempotency');
 const { capturePayment, refundPayment, cancelPayment } = require('../controllers/paymentsController');
 const logger = require('../utils/logger');
 
-// Todas requieren API key
-router.post('/:paymentId/capture', apiKeyAuth, async (req, res) => {
+// Todas requieren API key + Idempotency-Key (obligatoria aquí)
+const requireIdem = idempotency({ requireHeader: true });
+
+router.post('/:paymentId/capture', apiKeyAuth, requireIdem, async (req, res) => {
   try { await capturePayment(req, res); }
   catch (err) {
     logger.error('Error en POST /payments/:paymentId/capture', err);
@@ -15,7 +18,7 @@ router.post('/:paymentId/capture', apiKeyAuth, async (req, res) => {
   }
 });
 
-router.post('/:paymentId/refund', apiKeyAuth, async (req, res) => {
+router.post('/:paymentId/refund', apiKeyAuth, requireIdem, async (req, res) => {
   try { await refundPayment(req, res); }
   catch (err) {
     logger.error('Error en POST /payments/:paymentId/refund', err);
@@ -23,7 +26,7 @@ router.post('/:paymentId/refund', apiKeyAuth, async (req, res) => {
   }
 });
 
-router.post('/:paymentId/cancel', apiKeyAuth, async (req, res) => {
+router.post('/:paymentId/cancel', apiKeyAuth, requireIdem, async (req, res) => {
   try { await cancelPayment(req, res); }
   catch (err) {
     logger.error('Error en POST /payments/:paymentId/cancel', err);
