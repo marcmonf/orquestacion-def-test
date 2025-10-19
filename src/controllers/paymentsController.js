@@ -5,6 +5,8 @@ const Operation = require('../models/Operation');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
+// === Helpers ===
+
 // En Node 18+ existe globalThis.fetch; si no, omitimos webhook
 async function sendWebhookIfAny(transaction, event, extra = {}) {
   try {
@@ -52,27 +54,37 @@ async function ensureTx(paymentId, res) {
   return tx;
 }
 
-// Busca si existe la misma operación idempotente y, si existe, re-envía exactamente la misma respuesta.
+// Totales calculados desde operaciones ya persistidas (no tocamos Transaction schema)
+async function getTotals(paymentId) {
+  const ops = await Operation.find({ paymentId, status: 'succeeded' }).lean();
+  let captured = 0;
+  let refunded = 0;
+  for (const op of ops) {
+    if (op.type === 'capture') captured += op.amount || 0;
+    else if (op.type === 'refund') refunded += op.amount || 0;
+  }
+  return { capturedAmount: captured, refundedAmount: refunded };
+}
+
+// Rejuega respuesta si ya existe misma operación idempotente
 async function replayIfExists({ paymentId, type, idempotencyKey }, res) {
   const existed = await Operation.findOne({ paymentId, type, idempotencyKey }).lean();
   if (!existed) return false;
-
   const code = existed.responseStatusCode || 200;
   const body = existed.responseSnapshot || { success: true };
   res.status(code).json(body);
   return true;
 }
 
-// Guarda de forma atómica la operación con su snapshot. Si hay colisión (duplicado concurrente),
-// recupera la existente y la re-envía, garantizando exactamente-una-vez a nivel de interfaz.
+// Persistencia con snapshot y manejo de colisión única
 async function persistAndRespond({
   res,
   paymentId,
   type,
   idempotencyKey,
-  opPayload,     // campos de negocio a persistir (amount, currency, etc.)
-  responseCode,  // HTTP status code
-  responseBody   // JSON de salida a merchant
+  opPayload,
+  responseCode,
+  responseBody
 }) {
   try {
     const doc = new Operation({
@@ -85,10 +97,8 @@ async function persistAndRespond({
       responseSnapshot: responseBody
     });
     await doc.save();
-
     return res.status(responseCode).json(responseBody);
   } catch (err) {
-    // Si fue un duplicado concurrente, devolvemos la ya guardada
     if (err && err.code === 11000) {
       const existed = await Operation.findOne({ paymentId, type, idempotencyKey }).lean();
       const code = existed?.responseStatusCode || 200;
@@ -100,35 +110,67 @@ async function persistAndRespond({
   }
 }
 
+// === Controllers con reglas de negocio (sin tocar Transaction.js) ===
+
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const { amount, isFinal, references, operationReferences } = req.body || {};
+    const { amount: reqAmount, isFinal, references, operationReferences } = req.body || {};
     const idempotencyKey = req.idemKey;
 
     const tx = await ensureTx(paymentId, res);
     if (!tx) return;
 
-    // Re-entrega: si ya existe esta operación, se responde igual
     if (await replayIfExists({ paymentId, type: 'capture', idempotencyKey }, res)) return;
 
-    // === Lógica de negocio mínima (se reforzará en el siguiente sprint de reglas) ===
-    // Persistimos operación (idempotente mediante persistAndRespond)
-    tx.status = 'captured';
+    // Autorizado por defecto = tx.amount (backward compatible)
+    const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
+
+    // Totales actuales
+    const { capturedAmount, refundedAmount } = await getTotals(paymentId);
+    const remainingToCapture = Math.max(authorizedAmount - capturedAmount, 0);
+
+    // Monto solicitado (por defecto: capturar todo lo pendiente)
+    const amount = reqAmount ?? remainingToCapture;
+
+    // Validaciones de negocio
+    if (!amount || amount <= 0) {
+      return res.status(409).json({ success: false, message: 'Invalid capture amount' });
+    }
+    if (amount > remainingToCapture) {
+      return res.status(409).json({ success: false, message: 'Capture exceeds authorized amount' });
+    }
+    if (refundedAmount > 0) {
+      // En muchos PSP se permite refund tras capture; aquí solo avisamos (no bloqueamos)
+      logger.warn('Capture after refund detected', { paymentId, refundedAmount });
+    }
+
+    // Actualizamos estado "lógico" en tx sin cambiar su schema (solo status)
+    const postCaptured = capturedAmount + amount;
+    tx.status = (postCaptured === authorizedAmount) ? 'captured' : 'partially_captured';
     tx.updatedAt = new Date();
     await tx.save();
 
-    auditLogger.info({ action: 'CAPTURE', paymentId, amount, merchantId: tx.merchantId, idempotencyKey });
+    auditLogger.info({
+      action: 'CAPTURE',
+      paymentId,
+      amount,
+      merchantId: tx.merchantId,
+      authorizedAmount,
+      capturedAmount_before: capturedAmount,
+      capturedAmount_after: postCaptured,
+      idempotencyKey
+    });
 
     const responseBody = {
       success: true,
       status: tx.status,
       paymentId,
-      capturedAmount: amount || tx.amount,
+      capturedAmount: amount,
       currency: tx.currency
     };
 
-    await sendWebhookIfAny(tx, 'payment.captured', { capturedAmount: amount || tx.amount });
+    await sendWebhookIfAny(tx, 'payment.captured', { capturedAmount: amount });
 
     return persistAndRespond({
       res,
@@ -157,29 +199,57 @@ exports.refundPayment = async (req, res) => {
     const { amountOfMoney, references, operationReferences, reason, omnichannelRefundSpecificInput } = req.body || {};
     const idempotencyKey = req.idemKey;
 
-    const amount = amountOfMoney?.amount;
-    const currencyCode = amountOfMoney?.currencyCode;
-
     const tx = await ensureTx(paymentId, res);
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'refund', idempotencyKey }, res)) return;
 
-    tx.status = 'refunded';
+    const requested = amountOfMoney?.amount;
+    const currencyCode = amountOfMoney?.currencyCode || tx.currency;
+
+    // Totales actuales
+    const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
+    const { capturedAmount, refundedAmount } = await getTotals(paymentId);
+    const refundableRemaining = Math.max(capturedAmount - refundedAmount, 0);
+
+    const amount = requested ?? refundableRemaining;
+
+    // Validaciones
+    if (!amount || amount <= 0) {
+      return res.status(409).json({ success: false, message: 'Invalid refund amount' });
+    }
+    if (amount > refundableRemaining) {
+      return res.status(409).json({ success: false, message: 'Refund exceeds captured amount' });
+    }
+
+    // Estado lógico
+    const postRefunded = refundedAmount + amount;
+    const fullyRefunded = (postRefunded === capturedAmount) || (capturedAmount === 0 && amount === authorizedAmount);
+    tx.status = fullyRefunded ? 'refunded' : 'partially_refunded';
     tx.updatedAt = new Date();
     await tx.save();
 
-    auditLogger.info({ action: 'REFUND', paymentId, amount, merchantId: tx.merchantId, reason, idempotencyKey });
+    auditLogger.info({
+      action: 'REFUND',
+      paymentId,
+      amount,
+      merchantId: tx.merchantId,
+      reason,
+      capturedAmount_before: capturedAmount,
+      refundedAmount_before: refundedAmount,
+      refundedAmount_after: postRefunded,
+      idempotencyKey
+    });
 
     const responseBody = {
       success: true,
       status: tx.status,
       paymentId,
-      refundedAmount: amount || tx.amount,
-      currency: currencyCode || tx.currency
+      refundedAmount: amount,
+      currency: currencyCode
     };
 
-    await sendWebhookIfAny(tx, 'payment.refunded', { refundedAmount: amount || tx.amount });
+    await sendWebhookIfAny(tx, 'payment.refunded', { refundedAmount: amount });
 
     return persistAndRespond({
       res,
@@ -187,8 +257,8 @@ exports.refundPayment = async (req, res) => {
       type: 'refund',
       idempotencyKey,
       opPayload: {
-        amount: amount || tx.amount,
-        currencyCode: currencyCode || tx.currency,
+        amount,
+        currencyCode,
         references: references || {},
         operationReferences: operationReferences || {},
         reason,
@@ -214,11 +284,22 @@ exports.cancelPayment = async (req, res) => {
 
     if (await replayIfExists({ paymentId, type: 'cancel', idempotencyKey }, res)) return;
 
+    // Reglas: cancelar solo si NO hay capturas
+    const { capturedAmount } = await getTotals(paymentId);
+    if (capturedAmount > 0) {
+      return res.status(409).json({ success: false, message: 'Cannot cancel: already captured' });
+    }
+
     tx.status = 'canceled';
     tx.updatedAt = new Date();
     await tx.save();
 
-    auditLogger.info({ action: 'CANCEL', paymentId, merchantId: tx.merchantId, idempotencyKey });
+    auditLogger.info({
+      action: 'CANCEL',
+      paymentId,
+      merchantId: tx.merchantId,
+      idempotencyKey
+    });
 
     const responseBody = {
       success: true,
