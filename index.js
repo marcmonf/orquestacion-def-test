@@ -53,6 +53,29 @@ try {
 /* Render/Proxies: evita warnings de X-Forwarded-For si activas rate-limits */
 app.set('trust proxy', 1);
 
+/* ===== Contexto de petición (request-id) ===== */
+const logger = require('./src/utils/logger');
+app.use((req, res, next) => {
+  const rid = req.headers['x-request-id']?.toString().trim() || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  req.context = {
+    requestId: rid,
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  };
+  res.setHeader('x-request-id', rid);
+  // Traza de entrada
+  logger.info('HTTP IN', { requestId: rid, component: 'http', event: `${req.method} ${req.originalUrl}` });
+  res.on('finish', () => {
+    logger.info('HTTP OUT', {
+      requestId: rid,
+      component: 'http',
+      event: `${req.method} ${req.originalUrl}`,
+      data: { statusCode: res.statusCode }
+    });
+  });
+  next();
+});
+
 /* ===== Utilidad ensureRouter ===== */
 const ensureRouter = (moduleExport, moduleName) => {
   const express = require('express');
@@ -79,10 +102,6 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 /* ===== Idempotencia en /initialize (opt-in por header) ===== */
 const idempotency = require('./src/middleware/idempotency');
 app.use('/initialize', idempotency());
-
-/* ======================================================================== */
-/* ============================ BLOQUE DE RUTAS ============================ */
-/* ======================================================================== */
 
 /* ===== Rutas principales (sin cambiar paths ni orden) ===== */
 let initializeRoutesExport;
@@ -115,22 +134,10 @@ try {
 }
 
 // Payment Request
-try {
-  app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
-} catch {
-  console.warn('⚠️ [WARN] /payment-requests no montado (archivo faltante)');
-}
+app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
-// Payments (capture/refund/cancel)
-try {
-  app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
-} catch {
-  console.warn('⚠️ [WARN] /payments no montado (archivo faltante)');
-}
-
-/* ======================================================================== */
-/* ========================== FIN BLOQUE DE RUTAS ========================== */
-/* ======================================================================== */
+// Payments
+app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
 
 /* ===== Static ===== */
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
@@ -138,7 +145,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 /* ===== Error handler global ===== */
 app.use((err, req, res, next) => { // eslint-disable-line
-  console.error('❌ [ERROR]', err);
+  console.error('❌ [ERROR] ', err);
+  logger.error('UNCAUGHT', { component: 'http', requestId: req?.context?.requestId, data: { error: err?.message } });
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
@@ -159,9 +167,9 @@ mongoose.connect(MONGO_URI, {
   // opciones defensivas
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 7000,
-  socketTimeoutMS: 20000,
-  maxPoolSize: 5,
+  serverSelectionTimeoutMS: 7000,   // más agresivo: si no elige nodo rápido, aborta
+  socketTimeoutMS: 20000,           // sockets no eternos
+  maxPoolSize: 5,                   // pool pequeño en Render
   retryWrites: true,
 })
 .then(() => {
