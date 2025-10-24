@@ -1,55 +1,107 @@
+// src/utils/logger.js
 'use strict';
 
+const { TraceLog, isEnabled } = require('../models/TraceLog');
+
+const LEVELS = ['error', 'warning', 'info', 'debug', 'trace'];
+const ENV_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const MIN_LEVEL_INDEX = Math.max(0, LEVELS.indexOf(ENV_LEVEL));
+
 /**
- * Logger mínimo con enmascarado de PII:
- * - PAN: 16/15/14 dígitos → 6 primeros + **** + 4 últimos
- * - CVV: reemplazado por "***"
- * - Tokens largos: muestra solo primeros 6 y últimos 4
+ * Logger con soporte de contexto + envío a Mongo (tracelogs) sin bloquear.
+ * - Llamadas no fallan si la BD de trazas no está disponible.
+ * - Filtrado por nivel con LOG_LEVEL.
+ * - API:
+ *    logger.info(msg, ctx), logger.error(msg, ctx), logger.event(evt, msg, ctx), logger.child(ctxExtra)
  */
-const LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+class Logger {
+  constructor(baseCtx = {}) {
+    this.baseCtx = baseCtx;
+  }
 
-function maskPAN(str) {
-  return str.replace(/\b(\d{6})(\d{4,6})(\d{4})\b/g, '$1******$3');
-}
+  child(extra = {}) {
+    return new Logger({ ...this.baseCtx, ...extra });
+  }
 
-function maskCVV(str) {
-  return str.replace(/"cvv"\s*:\s*"?\d{3,4}"?/gi, '"cvv":"***"');
-}
+  event(event, message, ctx = {}) {
+    return this._write('info', message, { ...ctx, event });
+  }
 
-function maskTokens(str) {
-  return str.replace(/"token"\s*:\s*"(.*?)"/gi, (m, p1) => {
-    if (p1.length <= 12) return '"token":"***"';
-    return `"token":"${p1.slice(0,6)}...${p1.slice(-4)}"`;
-  });
-}
+  error(message, ctx = {}) { return this._write('error', message, ctx); }
+  warn(message, ctx = {})  { return this._write('warning', message, ctx); }
+  info(message, ctx = {})  { return this._write('info', message, ctx); }
+  debug(message, ctx = {}) { return this._write('debug', message, ctx); }
+  trace(message, ctx = {}) { return this._write('trace', message, ctx); }
 
-function redact(obj) {
-  try {
-    const s = JSON.stringify(obj);
-    const x = maskTokens(maskCVV(maskPAN(s)));
-    return JSON.parse(x);
-  } catch {
-    return obj;
+  _write(level, message, ctx = {}) {
+    const idx = LEVELS.indexOf(level);
+    if (idx > MIN_LEVEL_INDEX) return; // filtrado por nivel
+
+    const payload = {
+      level,
+      message,
+      component: ctx.component || this.baseCtx.component || 'app',
+      event: ctx.event,
+      traceId: ctx.traceId || this.baseCtx.traceId,
+      requestId: ctx.requestId || this.baseCtx.requestId,
+      sessionId: ctx.sessionId || this.baseCtx.sessionId,
+      paymentId: ctx.paymentId || this.baseCtx.paymentId,
+      merchantId: ctx.merchantId || this.baseCtx.merchantId,
+      spanId: ctx.spanId || this.baseCtx.spanId,
+      parentSpanId: ctx.parentSpanId || this.baseCtx.parentSpanId,
+      ip: ctx.ip || this.baseCtx.ip,
+      userAgent: ctx.userAgent || this.baseCtx.userAgent,
+      data: sanitizeData(ctx.data),
+    };
+
+    // Consola (no sensible)
+    // eslint-disable-next-line no-console
+    console.log(formatConsole(level, message, payload));
+
+    // Mongo (best-effort, no await)
+    if (isEnabled && TraceLog) {
+      TraceLog.create(payload).catch(err => {
+        // eslint-disable-next-line no-console
+        console.warn('⚠️ [TRACELOG] fallo grabando traza:', err.message);
+      });
+    }
   }
 }
 
-function log(level, msg, obj) {
-  if (!shouldLog(level)) return;
-  const payload = obj ? ` ${JSON.stringify(redact(obj))}` : '';
-  // eslint-disable-next-line no-console
-  console.log(`[${level}] ${msg}${payload}`);
+function formatConsole(level, message, p) {
+  const k = [
+    p.component && `[${p.component}]`,
+    p.event && p.event,
+    p.paymentId && `pid=${p.paymentId}`,
+    p.merchantId && `mid=${p.merchantId}`,
+    p.requestId && `rid=${p.requestId}`,
+  ].filter(Boolean).join(' ');
+  return `${new Date().toISOString()} ${level.toUpperCase()} ${k} :: ${message}${p.data ? ` :: ${safeStringify(p.data)}` : ''}`;
 }
 
-function shouldLog(lvl) {
-  const order = ['trace','debug','info','warn','error','fatal'];
-  return order.indexOf(lvl) >= order.indexOf(LEVEL);
+function safeStringify(obj) {
+  try { return JSON.stringify(obj); } catch { return '[unserializable]'; }
 }
 
-module.exports = {
-  trace: (m,o)=>log('trace', m,o),
-  debug: (m,o)=>log('debug', m,o),
-  info:  (m,o)=>log('info',  m,o),
-  warn:  (m,o)=>log('warn',  m,o),
-  error: (m,o)=>log('error', m,o),
-  fatal: (m,o)=>log('fatal', m,o)
-};
+// IMPORTANTÍSIMO: nunca metas PAN, CVC, PII cruda en data
+function sanitizeData(data) {
+  if (!data || typeof data !== 'object') return data;
+  const clone = JSON.parse(JSON.stringify(data));
+  const scrub = (o) => {
+    for (const k of Object.keys(o)) {
+      const key = k.toLowerCase();
+      if (/(cardnumber|pan|cvc|cvv|expiry|expirymonth|expiryyear|ssn|dni|passport|email|phone)/.test(key)) {
+        o[k] = '[REDACTED]';
+      } else if (o[k] && typeof o[k] === 'object') {
+        scrub(o[k]);
+      }
+    }
+  };
+  scrub(clone);
+  return clone;
+}
+
+// Singleton por defecto
+const logger = new Logger({ component: 'app' });
+module.exports = logger;
+module.exports.Logger = Logger;
