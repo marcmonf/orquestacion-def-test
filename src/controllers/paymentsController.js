@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const Transaction = require('../models/Transaction');
 const Operation = require('../models/Operation');
-const logger = require('../utils/logger');
+const logger = require('../utils/logger');            // <— usamos logger
 const auditLogger = require('../logs/auditLogger');
 
 // === Helpers ===
@@ -38,7 +38,6 @@ async function sendWebhookIfAny(transaction, event, extra = {}) {
     const ts = Math.floor(Date.now() / 1000).toString();
     const secret = process.env.WEBHOOK_SECRET || '';
 
-    // Firma HMAC-SHA256 sobre "<ts>.<body>"
     let signatureHeader = {};
     if (secret) {
       const msg = `${ts}.${body}`;
@@ -56,20 +55,21 @@ async function sendWebhookIfAny(transaction, event, extra = {}) {
       body
     });
   } catch (err) {
-    logger.warn('Webhook emit failed', { error: err.message });
+    logger.warn('Webhook emit failed', { component: 'paymentsController', data: { error: err.message } });
   }
 }
 
 async function ensureTx(paymentId, res) {
   const tx = await Transaction.findOne({ paymentId });
   if (!tx) {
+    logger.warn('Transaction not found', { component: 'paymentsController', paymentId });
     res.status(404).json({ success: false, message: 'Transaction not found' });
     return null;
   }
   return tx;
 }
 
-// Totales calculados desde operaciones ya persistidas (no tocamos Transaction schema)
+// Totales desde operaciones
 async function getTotals(paymentId) {
   const ops = await Operation.find({ paymentId, status: 'succeeded' }).lean();
   let captured = 0;
@@ -81,17 +81,23 @@ async function getTotals(paymentId) {
   return { capturedAmount: captured, refundedAmount: refunded };
 }
 
-// Rejuega respuesta si ya existe misma operación idempotente
+// Rejugar respuesta idempotente
 async function replayIfExists({ paymentId, type, idempotencyKey }, res) {
   const existed = await Operation.findOne({ paymentId, type, idempotencyKey }).lean();
   if (!existed) return false;
+  logger.info('Idempotent replay', {
+    component: 'paymentsController',
+    event: `OP.${type.toUpperCase()}.REPLAY`,
+    paymentId,
+    data: { idempotencyKey }
+  });
   const code = existed.responseStatusCode || 200;
   const body = existed.responseSnapshot || { success: true };
   res.status(code).json(body);
   return true;
 }
 
-// Persistencia con snapshot y manejo de colisión única
+// Persistir op + responder
 async function persistAndRespond({
   res,
   paymentId,
@@ -112,50 +118,76 @@ async function persistAndRespond({
       responseSnapshot: responseBody
     });
     await doc.save();
+
+    logger.info('Operation stored', {
+      component: 'paymentsController',
+      event: `OP.${type.toUpperCase()}.STORED`,
+      paymentId,
+      data: { responseCode, idempotencyKey, opPayload }
+    });
+
     return res.status(responseCode).json(responseBody);
   } catch (err) {
     if (err && err.code === 11000) {
       const existed = await Operation.findOne({ paymentId, type, idempotencyKey }).lean();
       const code = existed?.responseStatusCode || 200;
       const body = existed?.responseSnapshot || { success: true };
+      logger.warn('Operation duplicate key (returning stored)', {
+        component: 'paymentsController',
+        event: `OP.${type.toUpperCase()}.DUPKEY`,
+        paymentId,
+        data: { idempotencyKey }
+      });
       return res.status(code).json(body);
     }
-    logger.error('persistAndRespond error', { error: err.message });
+    logger.error('operation.persist.error', {
+      component: 'paymentsController',
+      event: `OP.${type.toUpperCase()}.PERSIST_ERROR`,
+      paymentId,
+      data: { error: err.message }
+    });
     return res.status(500).json({ success: false, message: 'operation.persist.error' });
   }
 }
 
-// === Controllers con reglas de negocio (sin tocar Transaction.js) ===
+// ===== CAPTURE =====
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { amount: reqAmount, isFinal, references, operationReferences } = req.body || {};
     const idempotencyKey = req.idemKey;
 
+    logger.info('CAPTURE.REQUEST', {
+      component: 'paymentsController',
+      event: 'CAPTURE.REQUEST',
+      paymentId,
+      data: { body: req.body, idempotencyKey }
+    });
+
     const tx = await ensureTx(paymentId, res);
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'capture', idempotencyKey }, res)) return;
 
-    // Autorizado por defecto = tx.amount (compatibilidad)
     const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
-
-    // Totales actuales
     const { capturedAmount, refundedAmount } = await getTotals(paymentId);
     const remainingToCapture = Math.max(authorizedAmount - capturedAmount, 0);
-
-    // Monto solicitado (por defecto: capturar lo pendiente)
     const amount = reqAmount ?? remainingToCapture;
 
-    // Validaciones
     if (!amount || amount <= 0) {
+      logger.warn('Invalid capture amount', { component: 'paymentsController', paymentId, data: { amount } });
       return res.status(409).json({ success: false, message: 'Invalid capture amount' });
     }
     if (amount > remainingToCapture) {
+      logger.warn('Capture exceeds authorized', {
+        component: 'paymentsController',
+        paymentId,
+        data: { amount, remainingToCapture }
+      });
       return res.status(409).json({ success: false, message: 'Capture exceeds authorized amount' });
     }
     if (refundedAmount > 0) {
-      logger.warn('Capture after refund detected', { paymentId, refundedAmount });
+      logger.warn('Capture after refund detected', { component: 'paymentsController', paymentId, data: { refundedAmount } });
     }
 
     const postCaptured = capturedAmount + amount;
@@ -182,6 +214,13 @@ exports.capturePayment = async (req, res) => {
       currency: tx.currency
     };
 
+    logger.info('CAPTURE.RESPONSE', {
+      component: 'paymentsController',
+      event: 'CAPTURE.RESPONSE',
+      paymentId,
+      data: { status: tx.status, amount }
+    });
+
     await sendWebhookIfAny(tx, 'payment.captured', { capturedAmount: amount });
 
     return persistAndRespond({
@@ -200,16 +239,24 @@ exports.capturePayment = async (req, res) => {
       responseBody
     });
   } catch (err) {
-    logger.error('capturePayment error', { error: err.message });
+    logger.error('capture.error', { component: 'paymentsController', paymentId: req?.params?.paymentId, data: { error: err.message } });
     return res.status(500).json({ success: false, message: 'capture.error' });
   }
 };
 
+// ===== REFUND =====
 exports.refundPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { amountOfMoney, references, operationReferences, reason, omnichannelRefundSpecificInput } = req.body || {};
     const idempotencyKey = req.idemKey;
+
+    logger.info('REFUND.REQUEST', {
+      component: 'paymentsController',
+      event: 'REFUND.REQUEST',
+      paymentId,
+      data: { body: req.body, idempotencyKey }
+    });
 
     const tx = await ensureTx(paymentId, res);
     if (!tx) return;
@@ -219,18 +266,21 @@ exports.refundPayment = async (req, res) => {
     const requested = amountOfMoney?.amount;
     const currencyCode = amountOfMoney?.currencyCode || tx.currency;
 
-    // Totales actuales
     const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
     const { capturedAmount, refundedAmount } = await getTotals(paymentId);
     const refundableRemaining = Math.max(capturedAmount - refundedAmount, 0);
-
     const amount = requested ?? refundableRemaining;
 
-    // Validaciones
     if (!amount || amount <= 0) {
+      logger.warn('Invalid refund amount', { component: 'paymentsController', paymentId, data: { amount } });
       return res.status(409).json({ success: false, message: 'Invalid refund amount' });
     }
     if (amount > refundableRemaining) {
+      logger.warn('Refund exceeds captured', {
+        component: 'paymentsController',
+        paymentId,
+        data: { amount, refundableRemaining }
+      });
       return res.status(409).json({ success: false, message: 'Refund exceeds captured amount' });
     }
 
@@ -260,6 +310,13 @@ exports.refundPayment = async (req, res) => {
       currency: currencyCode
     };
 
+    logger.info('REFUND.RESPONSE', {
+      component: 'paymentsController',
+      event: 'REFUND.RESPONSE',
+      paymentId,
+      data: { status: tx.status, amount }
+    });
+
     await sendWebhookIfAny(tx, 'payment.refunded', { refundedAmount: amount });
 
     return persistAndRespond({
@@ -279,16 +336,24 @@ exports.refundPayment = async (req, res) => {
       responseBody
     });
   } catch (err) {
-    logger.error('refundPayment error', { error: err.message });
+    logger.error('refund.error', { component: 'paymentsController', paymentId: req?.params?.paymentId, data: { error: err.message } });
     return res.status(500).json({ success: false, message: 'refund.error' });
   }
 };
 
+// ===== CANCEL =====
 exports.cancelPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { amountOfMoney, isFinal, operationReferences } = req.body || {};
     const idempotencyKey = req.idemKey;
+
+    logger.info('CANCEL.REQUEST', {
+      component: 'paymentsController',
+      event: 'CANCEL.REQUEST',
+      paymentId,
+      data: { body: req.body, idempotencyKey }
+    });
 
     const tx = await ensureTx(paymentId, res);
     if (!tx) return;
@@ -297,6 +362,7 @@ exports.cancelPayment = async (req, res) => {
 
     const { capturedAmount } = await getTotals(paymentId);
     if (capturedAmount > 0) {
+      logger.warn('Cancel blocked: already captured', { component: 'paymentsController', paymentId, data: { capturedAmount } });
       return res.status(409).json({ success: false, message: 'Cannot cancel: already captured' });
     }
 
@@ -317,6 +383,13 @@ exports.cancelPayment = async (req, res) => {
       paymentId
     };
 
+    logger.info('CANCEL.RESPONSE', {
+      component: 'paymentsController',
+      event: 'CANCEL.RESPONSE',
+      paymentId,
+      data: { status: tx.status }
+    });
+
     await sendWebhookIfAny(tx, 'payment.canceled', { canceled: true });
 
     return persistAndRespond({
@@ -334,7 +407,7 @@ exports.cancelPayment = async (req, res) => {
       responseBody
     });
   } catch (err) {
-    logger.error('cancelPayment error', { error: err.message });
+    logger.error('cancel.error', { component: 'paymentsController', paymentId: req?.params?.paymentId, data: { error: err.message } });
     return res.status(500).json({ success: false, message: 'cancel.error' });
   }
 };
