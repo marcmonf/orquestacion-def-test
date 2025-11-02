@@ -107,7 +107,7 @@ const hostedCheckoutSpecificInputSchema = Joi.object({
   }).optional(),
   sessionTimeout: Joi.number().optional(),
   allowedNumberOfPaymentAttempts: Joi.number().optional(),
-  // ➕ Permitimos activar captura automática (SALE)
+  // ⬇️ NUEVO: habilita venta 1-paso (sale)
   autoCapture: Joi.boolean().optional()
 });
 
