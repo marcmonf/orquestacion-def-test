@@ -78,8 +78,8 @@ const createTransaction = async (req, res) => {
   // Validación
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
-    const messageKey = error.details[0].message;
-    const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
+    const messageKey = error.details?.[0]?.message || error.details?.[0]?.type || 'transaction.validation';
+    const translated = res.getMessage?.(messageKey) || messageKey;
     logger.warn('Validación fallida en creación', { details: messageKey });
     auditLogger.info({
       action: 'TRANSACTION_VALIDATION_FAILED',
@@ -90,7 +90,6 @@ const createTransaction = async (req, res) => {
     return res.status(400).json({ success: false, message: translated });
   }
 
-  // Límite duro de la request
   const hardAbortTimer = setTimeout(() => {
     logger.error('TX hard timeout alcanzado', { merchantId: value.merchantId, amount: value.amount });
     try { res.status(504).json({ success: false, error: 'timeout', message: `No respuesta en ${TX_TIMEOUT_MS}ms` }); } catch {}
@@ -99,18 +98,36 @@ const createTransaction = async (req, res) => {
   try {
     const generatedPaymentId = uuidv4();
 
-    // Fast-path total (opcional)
+    // Fast-path opcional
     if (FAST_TX) {
       const sanitized = { ...value };
       delete sanitized.cvv; delete sanitized.cardNumber;
+      let status = 'approved';
+      let capturedAt = undefined;
+      let capturedAmount = undefined;
+
+      if (sanitized.captureNow === true && sanitized.method === 'card') {
+        status = 'captured';
+        capturedAt = nowIso();
+        capturedAmount = sanitized.amount;
+      }
+
       const response = {
-        status: 'approved',
+        status,
         processor: 'fast-sim',
         transactionId: `tx_${Date.now()}`,
         authCode: 'FASTOK',
         timestamp: nowIso()
       };
-      const doc = new Transaction({ ...sanitized, ...response, paymentId: generatedPaymentId });
+
+      const doc = new Transaction({
+        ...sanitized,
+        status,
+        capturedAt,
+        capturedAmount,
+        ...response,
+        paymentId: generatedPaymentId
+      });
 
       const saveP = doc.save();
       if (FEATURE_ASYNC_PERSIST) {
@@ -124,7 +141,6 @@ const createTransaction = async (req, res) => {
         message: res.getMessage('transaction.created'),
         transaction: { ...doc.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' }
       });
-      // webhook en background
       try {
         if (doc.callbackUrl && process.env.WEBHOOK_SECRET) {
           webhookDispatcher.enqueue({
@@ -152,13 +168,7 @@ const createTransaction = async (req, res) => {
       return;
     }
 
-    // ---- SINGLE MESSAGE (SALE) FLAG ---------------------------------------
-    // Aceptamos body.captureNow=true o cabecera X-Capture-Now: 1 (por si viniera de HPP).
-    const captureNowHeader = String(req.get('x-capture-now') || '').trim() === '1';
-    const captureNowBody   = value.captureNow === true;
-    const captureNow       = captureNowHeader || captureNowBody;
-
-    // Recurrencia CIT/MIT mínima
+    // Recurrencia básica
     let recurrenceId = value.recurrenceId || null;
     let token        = value.token        || null;
 
@@ -227,7 +237,7 @@ const createTransaction = async (req, res) => {
       selectedConnector = 'defaultCardAcquirer';
     }
 
-    // Ejecución (card / apms)
+    // Ejecución
     let response;
     let qrCodeImage = null;
 
@@ -236,8 +246,12 @@ const createTransaction = async (req, res) => {
       response = await withTimeout(execP, Math.max(800, TX_TIMEOUT_MS - 2000), 'execute-card');
     } else {
       switch (selectedConnector) {
-        case 'mbwayConnector':  response = await withTimeout(mbwayConnector.process(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mbway'); break;
-        case 'bizumConnector':  response = await withTimeout(initiateBizumPayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-bizum'); break;
+        case 'mbwayConnector':
+          response = await withTimeout(mbwayConnector.process(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mbway');
+          break;
+        case 'bizumConnector':
+          response = await withTimeout(initiateBizumPayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-bizum');
+          break;
         case 'pixConnector': {
           const pixP = initiatePixPayment(value);
           response = await withTimeout(pixP, Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-pix');
@@ -246,34 +260,43 @@ const createTransaction = async (req, res) => {
           qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
           break;
         }
-        case 'visaAcquirer':    response = await withTimeout(visaAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa'); break;
-        case 'mcAcquirer':      response = await withTimeout(mcAcquirer.initiatePayment(value),     Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');   break;
-        case 'amexAcquirer':    response = await withTimeout(amexAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex'); break;
-        case 'defaultCardAcquirer': response = await withTimeout(defaultCardAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-default'); break;
-        default: throw new Error(`Unsupported connector: ${selectedConnector}`);
+        case 'visaAcquirer':
+          response = await withTimeout(visaAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa');
+          break;
+        case 'mcAcquirer':
+          response = await withTimeout(mcAcquirer.initiatePayment(value),     Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');
+          break;
+        case 'amexAcquirer':
+          response = await withTimeout(amexAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex');
+          break;
+        case 'defaultCardAcquirer':
+          response = await withTimeout(defaultCardAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-default');
+          break;
+        default:
+          throw new Error(`Unsupported connector: ${selectedConnector}`);
       }
     }
 
-    // --- POST-PROCESO: SINGLE MESSAGE (SALE) --------------------------------
-    // Si la primera fase devuelve "approved" (AUTH) y nos han pedido capturar ahora,
-    // marcamos la transacción como "captured" en este mismo flujo (dummy).
+    // Persistencia + Autocapture (SALE)
     let finalStatus = response.status;
-    let capturedAmount = null;
+    let capturedAt = undefined;
+    let capturedAmount = undefined;
 
-    if (value.method === 'card' && response.status === 'approved' && captureNow) {
-      // En real haríamos una llamada de capture al PSP; en dummy, confirmamos captura local.
+    if (value.captureNow === true && value.method === 'card' && response.status === 'approved') {
+      // Autocaptura en el mismo mensaje
       finalStatus = 'captured';
+      capturedAt = nowIso();
       capturedAmount = value.amount;
     }
 
-    // Persistencia
-    sanitizedValue.status        = finalStatus;           // <= "approved" o "captured"
+    sanitizedValue.status        = finalStatus;
     sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
     if (response.authCode)   sanitizedValue.authCode   = response.authCode;
     if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
     if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
-    if (capturedAmount != null) sanitizedValue.capturedAmount = capturedAmount;
+    if (capturedAt)          sanitizedValue.capturedAt = capturedAt;
+    if (capturedAmount)      sanitizedValue.capturedAmount = capturedAmount;
 
     const docToSave = new Transaction({
       ...sanitizedValue,
@@ -292,16 +315,11 @@ const createTransaction = async (req, res) => {
       });
     }
 
-    // RESPUESTA
     clearTimeout(hardAbortTimer);
-
-    const ok = finalStatus === 'approved' || finalStatus === 'captured';
-    const httpCode = ok ? 201 : 402;
-
-    res.status(httpCode).json({
-      success: ok,
-      message: res.getMessage(ok ? (finalStatus === 'captured' ? 'transaction.captured' : 'transaction.created') : 'transaction.declined'),
-      transaction: { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
+    res.status(finalStatus === 'approved' || finalStatus === 'captured' ? 201 : 402).json({
+      success:       finalStatus === 'approved' || finalStatus === 'captured',
+      message:       res.getMessage(finalStatus === 'declined' ? 'transaction.declined' : 'transaction.created'),
+      transaction:   { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
       recurrenceId,
       token,
       qrCodeImage
