@@ -31,9 +31,8 @@ const FEATURE_ASYNC_PERSIST = process.env.FEATURE_ASYNC_PERSIST === '1';
 const PERSIST_TIMEOUT_MS    = Math.max(500, Math.min(5000, parseInt(process.env.PERSIST_TIMEOUT_MS || '3000', 10)));
 const DB_QUERY_TIMEOUT_MS   = Math.max(300, Math.min(5000, parseInt(process.env.DB_QUERY_TIMEOUT_MS || '1200', 10)));
 const BIN_OFFLINE           = process.env.BIN_OFFLINE === '1';
-const FAST_TX               = process.env.FAST_TX === '1'; // fast-path opcional
+const FAST_TX               = process.env.FAST_TX === '1';
 
-/* utils */
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`timeout:${label}`)), ms);
@@ -75,11 +74,10 @@ const getAllTransactions = async (req, res) => {
 
 /* --------------------------------------------------------------------------- */
 const createTransaction = async (req, res) => {
-  // Validación
   const { error, value } = transactionSchema.validate(req.body);
   if (error) {
-    const messageKey = error.details?.[0]?.message || error.details?.[0]?.type || 'transaction.validation';
-    const translated = res.getMessage?.(messageKey) || messageKey;
+    const messageKey = error.details[0].message;
+    const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
     logger.warn('Validación fallida en creación', { details: messageKey });
     auditLogger.info({
       action: 'TRANSACTION_VALIDATION_FAILED',
@@ -98,37 +96,23 @@ const createTransaction = async (req, res) => {
   try {
     const generatedPaymentId = uuidv4();
 
-    // Fast-path opcional
     if (FAST_TX) {
       const sanitized = { ...value };
       delete sanitized.cvv; delete sanitized.cardNumber;
-      let status = 'approved';
-      let capturedAt = undefined;
-      let capturedAmount = undefined;
-
-      if (sanitized.captureNow === true && sanitized.method === 'card') {
-        status = 'captured';
-        capturedAt = nowIso();
-        capturedAmount = sanitized.amount;
-      }
-
-      const response = {
-        status,
+      let response = {
+        status: 'approved',
         processor: 'fast-sim',
         transactionId: `tx_${Date.now()}`,
         authCode: 'FASTOK',
         timestamp: nowIso()
       };
 
-      const doc = new Transaction({
-        ...sanitized,
-        status,
-        capturedAt,
-        capturedAmount,
-        ...response,
-        paymentId: generatedPaymentId
-      });
+      // 🔹 SINGLE MESSAGE
+      if (value.captureNow && response.status === 'approved') {
+        response = { ...response, status: 'captured', capturedAt: nowIso() };
+      }
 
+      const doc = new Transaction({ ...sanitized, ...response, paymentId: generatedPaymentId });
       const saveP = doc.save();
       if (FEATURE_ASYNC_PERSIST) {
         setImmediate(async () => { try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast async', { e: e.message }); } });
@@ -136,7 +120,7 @@ const createTransaction = async (req, res) => {
         try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast sync', { e: e.message }); }
       }
       clearTimeout(hardAbortTimer);
-      res.status(201).json({
+      res.status(response.status === 'captured' ? 201 : 201).json({
         success: true,
         message: res.getMessage('transaction.created'),
         transaction: { ...doc.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' }
@@ -168,11 +152,11 @@ const createTransaction = async (req, res) => {
       return;
     }
 
-    // Recurrencia básica
+    // Recurrencia
     let recurrenceId = value.recurrenceId || null;
-    let token        = value.token        || null;
+    let token        = value.token || null;
 
-    if (value.transactionType === 'CIT' && value.isRecurring) {
+    if (value.transactionType === 'CIT' && value.isRecurring && !token) {
       recurrenceId = uuidv4();
       token = await createTokenForCard({
         cardNumber:      value.cardNumber,
@@ -217,7 +201,7 @@ const createTransaction = async (req, res) => {
 
     // BIN enrichment
     let cardInfo = null;
-    if (value.method === 'card' && value.cardNumber) {
+    if (value.method === 'card' && value.cardNumber && !value.token) {
       try {
         const parseP = parseBin(value.cardNumber);
         cardInfo = BIN_OFFLINE ? await parseP : await withTimeout(parseP, 1200, 'bin-lookup');
@@ -237,13 +221,19 @@ const createTransaction = async (req, res) => {
       selectedConnector = 'defaultCardAcquirer';
     }
 
-    // Ejecución
+    // Ejecución protegida
     let response;
     let qrCodeImage = null;
 
     if (value.method === 'card') {
       const execP = executeCardPayment({ paymentRequest: value, paymentId: generatedPaymentId, primaryConnector: selectedConnector });
       response = await withTimeout(execP, Math.max(800, TX_TIMEOUT_MS - 2000), 'execute-card');
+
+      // 🔹 SINGLE MESSAGE: si aprobada y `captureNow` → marcar como capturada
+      if (value.captureNow && response?.status === 'approved') {
+        response = { ...response, status: 'captured', capturedAt: nowIso() };
+      }
+
     } else {
       switch (selectedConnector) {
         case 'mbwayConnector':
@@ -261,42 +251,29 @@ const createTransaction = async (req, res) => {
           break;
         }
         case 'visaAcquirer':
-          response = await withTimeout(visaAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa');
+          response = await withTimeout(visaAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa');
           break;
         case 'mcAcquirer':
-          response = await withTimeout(mcAcquirer.initiatePayment(value),     Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');
+          response = await withTimeout(mcAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');
           break;
         case 'amexAcquirer':
-          response = await withTimeout(amexAcquirer.initiatePayment(value),   Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex');
+          response = await withTimeout(amexAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex');
           break;
         case 'defaultCardAcquirer':
           response = await withTimeout(defaultCardAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-default');
           break;
-        default:
-          throw new Error(`Unsupported connector: ${selectedConnector}`);
+        default: throw new Error(`Unsupported connector: ${selectedConnector}`);
       }
     }
 
-    // Persistencia + Autocapture (SALE)
-    let finalStatus = response.status;
-    let capturedAt = undefined;
-    let capturedAmount = undefined;
-
-    if (value.captureNow === true && value.method === 'card' && response.status === 'approved') {
-      // Autocaptura en el mismo mensaje
-      finalStatus = 'captured';
-      capturedAt = nowIso();
-      capturedAmount = value.amount;
-    }
-
-    sanitizedValue.status        = finalStatus;
+    // Persistencia
+    sanitizedValue.status        = response.status;
     sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
     if (response.authCode)   sanitizedValue.authCode   = response.authCode;
     if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
+    if (response.capturedAt) sanitizedValue.capturedAt = response.capturedAt;
     if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
-    if (capturedAt)          sanitizedValue.capturedAt = capturedAt;
-    if (capturedAmount)      sanitizedValue.capturedAmount = capturedAmount;
 
     const docToSave = new Transaction({
       ...sanitizedValue,
@@ -316,16 +293,16 @@ const createTransaction = async (req, res) => {
     }
 
     clearTimeout(hardAbortTimer);
-    res.status(finalStatus === 'approved' || finalStatus === 'captured' ? 201 : 402).json({
-      success:       finalStatus === 'approved' || finalStatus === 'captured',
-      message:       res.getMessage(finalStatus === 'declined' ? 'transaction.declined' : 'transaction.created'),
+    res.status(['approved','captured'].includes(response.status) ? 201 : 402).json({
+      success:       ['approved','captured'].includes(response.status),
+      message:       res.getMessage(response.status === 'declined' ? 'transaction.declined' : 'transaction.created'),
       transaction:   { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
       recurrenceId,
       token,
       qrCodeImage
     });
 
-    // Webhook (async)
+    // Webhook async
     try {
       const callbackUrl = docToSave.callbackUrl;
       if (callbackUrl && process.env.WEBHOOK_SECRET) {
