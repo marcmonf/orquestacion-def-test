@@ -111,7 +111,7 @@ const createTransaction = async (req, res) => {
         timestamp: nowIso()
       };
       const doc = new Transaction({ ...sanitized, ...response, paymentId: generatedPaymentId });
-      // Persistencia protegida
+
       const saveP = doc.save();
       if (FEATURE_ASYNC_PERSIST) {
         setImmediate(async () => { try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast async', { e: e.message }); } });
@@ -151,6 +151,12 @@ const createTransaction = async (req, res) => {
       } catch {}
       return;
     }
+
+    // ---- SINGLE MESSAGE (SALE) FLAG ---------------------------------------
+    // Aceptamos body.captureNow=true o cabecera X-Capture-Now: 1 (por si viniera de HPP).
+    const captureNowHeader = String(req.get('x-capture-now') || '').trim() === '1';
+    const captureNowBody   = value.captureNow === true;
+    const captureNow       = captureNowHeader || captureNowBody;
 
     // Recurrencia CIT/MIT mínima
     let recurrenceId = value.recurrenceId || null;
@@ -208,7 +214,7 @@ const createTransaction = async (req, res) => {
       } catch { cardInfo = null; }
     }
 
-    // Orquestación (protegida)
+    // Orquestación
     let selectedConnector = 'defaultCardAcquirer';
     try {
       selectedConnector = await withTimeout(
@@ -221,7 +227,7 @@ const createTransaction = async (req, res) => {
       selectedConnector = 'defaultCardAcquirer';
     }
 
-    // Ejecución (card / apms) protegida
+    // Ejecución (card / apms)
     let response;
     let qrCodeImage = null;
 
@@ -248,13 +254,26 @@ const createTransaction = async (req, res) => {
       }
     }
 
+    // --- POST-PROCESO: SINGLE MESSAGE (SALE) --------------------------------
+    // Si la primera fase devuelve "approved" (AUTH) y nos han pedido capturar ahora,
+    // marcamos la transacción como "captured" en este mismo flujo (dummy).
+    let finalStatus = response.status;
+    let capturedAmount = null;
+
+    if (value.method === 'card' && response.status === 'approved' && captureNow) {
+      // En real haríamos una llamada de capture al PSP; en dummy, confirmamos captura local.
+      finalStatus = 'captured';
+      capturedAmount = value.amount;
+    }
+
     // Persistencia
-    sanitizedValue.status        = response.status;
+    sanitizedValue.status        = finalStatus;           // <= "approved" o "captured"
     sanitizedValue.processor     = response.processor;
     sanitizedValue.transactionId = response.transactionId;
     if (response.authCode)   sanitizedValue.authCode   = response.authCode;
     if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
     if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
+    if (capturedAmount != null) sanitizedValue.capturedAmount = capturedAmount;
 
     const docToSave = new Transaction({
       ...sanitizedValue,
@@ -275,10 +294,14 @@ const createTransaction = async (req, res) => {
 
     // RESPUESTA
     clearTimeout(hardAbortTimer);
-    res.status(response.status === 'approved' ? 201 : 402).json({
-      success:       response.status === 'approved',
-      message:       res.getMessage(response.status === 'approved' ? 'transaction.created' : 'transaction.declined'),
-      transaction:   { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
+
+    const ok = finalStatus === 'approved' || finalStatus === 'captured';
+    const httpCode = ok ? 201 : 402;
+
+    res.status(httpCode).json({
+      success: ok,
+      message: res.getMessage(ok ? (finalStatus === 'captured' ? 'transaction.captured' : 'transaction.created') : 'transaction.declined'),
+      transaction: { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
       recurrenceId,
       token,
       qrCodeImage
