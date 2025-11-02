@@ -5,7 +5,7 @@ const paymentRequestSchema = require('../validators/paymentRequestValidator');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Para reusar la lógica actual de creación de transacciones
+// Reusar la lógica actual de creación de transacciones
 const txController = require('./transactionController');
 
 const createPaymentRequest = async (req, res) => {
@@ -47,8 +47,8 @@ const createPaymentRequest = async (req, res) => {
 /**
  * Ejecuta un PaymentRequest existente reusando el orquestador de /transactions.
  * - Mapea los datos mínimos (amount/currency/merchant/return/callback).
- * - Si no hay datos de tarjeta ni token, usa test card dummy (solo para entorno DEV).
- * - No modifica el modelo Transaction (relación la devolvemos en la respuesta).
+ * - Si no hay datos de tarjeta ni token, usa test card dummy (solo DEV).
+ * - Para SALE (single-message), inyecta captureNow=true cuando authorizationMode sea FINAL_AUTHORIZATION.
  */
 const executePaymentRequest = async (req, res) => {
   try {
@@ -81,9 +81,11 @@ const executePaymentRequest = async (req, res) => {
     const isFinalAuth =
       pr?.cardPaymentMethodSpecificInput?.authorizationMode === 'FINAL_AUTHORIZATION';
 
-    // Datos de tarjeta/recurring (DEV fallback si no hay nada)
-    const hasToken = !!pr?.cardPaymentMethodSpecificInput?.token;
+    // method
     const method = 'card';
+
+    // Token o tarjeta (fallback DEV)
+    const hasToken = !!pr?.cardPaymentMethodSpecificInput?.token;
 
     // Fallback DEV seguro (NO producción): tarjeta test
     const devTestCard = {
@@ -94,7 +96,7 @@ const executePaymentRequest = async (req, res) => {
       expiryYear: '2030'
     };
 
-    // Construimos el body para la ruta /transactions
+    // Body para /transactions
     const txBody = {
       merchantId,
       amount,
@@ -102,8 +104,7 @@ const executePaymentRequest = async (req, res) => {
       method,
       returnUrl,
       callbackUrl,
-      // 💡 aquí transferimos el propósito SALE → capturar en el mismo mensaje
-      captureNow: !!isFinalAuth
+      captureNow: !!isFinalAuth // 👈 SALE single-message
     };
 
     if (hasToken) {
