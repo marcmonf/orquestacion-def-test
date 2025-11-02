@@ -5,34 +5,8 @@ const paymentRequestSchema = require('../validators/paymentRequestValidator');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Reusar lógica actual de creación de transacciones
+// Para reusar la lógica actual de creación de transacciones
 const txController = require('./transactionController');
-// ➕ usamos el controlador de pagos para invocar capture internamente
-const paymentsController = require('./paymentsController');
-
-/** Helper: ejecuta un controlador que usa res.status().json() y captura su respuesta */
-async function execController(fn, reqLike) {
-  return new Promise(async (resolve) => {
-    const resLike = {
-      _status: 200,
-      _headers: {},
-      headersSent: false,
-      status(code) { this._status = code; return this; },
-      setHeader(k, v) { this._headers[k.toLowerCase()] = v; },
-      getHeader(k) { return this._headers[k.toLowerCase()]; },
-      json(payload) {
-        this.headersSent = true;
-        resolve({ status: this._status, headers: this._headers, body: payload });
-      }
-    };
-    try {
-      await fn(reqLike, resLike);
-      if (!resLike.headersSent) resolve({ status: resLike._status, headers: resLike._headers, body: null });
-    } catch (err) {
-      resolve({ status: 500, headers: {}, body: { success: false, message: err?.message || 'controller.error' } });
-    }
-  });
-}
 
 const createPaymentRequest = async (req, res) => {
   const { error, value } = paymentRequestSchema.validate(req.body);
@@ -72,8 +46,9 @@ const createPaymentRequest = async (req, res) => {
 
 /**
  * Ejecuta un PaymentRequest existente reusando el orquestador de /transactions.
- * - SALE en 1 paso si hostedCheckoutSpecificInput.autoCapture = true
- * - Si no, mantiene authorize-only (como antes).
+ * - Mapea los datos mínimos (amount/currency/merchant/return/callback).
+ * - Si no hay datos de tarjeta ni token, usa test card dummy (solo para entorno DEV).
+ * - No modifica el modelo Transaction (relación la devolvemos en la respuesta).
  */
 const executePaymentRequest = async (req, res) => {
   try {
@@ -83,6 +58,7 @@ const executePaymentRequest = async (req, res) => {
       return res.status(404).json({ success: false, message: 'PaymentRequest not found' });
     }
 
+    // Map básico → body compatible con /transactions
     const amount = pr?.order?.amountOfMoney?.amount;
     const currency = pr?.order?.amountOfMoney?.currencyCode;
     const merchantId = pr?.merchantId;
@@ -94,17 +70,22 @@ const executePaymentRequest = async (req, res) => {
       });
     }
 
+    // Opcionales
     const returnUrl = pr?.hostedCheckoutSpecificInput?.returnUrl;
     const callbackUrl =
       pr?.order?.feedbacks?.webhookUrl ||
       (Array.isArray(pr?.order?.feedbacks?.webhooksUrls) && pr.order.feedbacks.webhooksUrls[0]) ||
       undefined;
 
-    const autoCapture = pr?.hostedCheckoutSpecificInput?.autoCapture === true;
+    // Detectar SALE (single-message) desde el PaymentRequest
+    const isFinalAuth =
+      pr?.cardPaymentMethodSpecificInput?.authorizationMode === 'FINAL_AUTHORIZATION';
 
-    // Datos de tarjeta (DEV fallback si no hay token)
+    // Datos de tarjeta/recurring (DEV fallback si no hay nada)
     const hasToken = !!pr?.cardPaymentMethodSpecificInput?.token;
     const method = 'card';
+
+    // Fallback DEV seguro (NO producción): tarjeta test
     const devTestCard = {
       cardholderName: 'John Doe',
       cardNumber: '4111111111111111',
@@ -113,68 +94,31 @@ const executePaymentRequest = async (req, res) => {
       expiryYear: '2030'
     };
 
+    // Construimos el body para la ruta /transactions
     const txBody = {
       merchantId,
       amount,
       currency,
       method,
       returnUrl,
-      callbackUrl
+      callbackUrl,
+      // 💡 aquí transferimos el propósito SALE → capturar en el mismo mensaje
+      captureNow: !!isFinalAuth
     };
+
     if (hasToken) {
       txBody.token = pr.cardPaymentMethodSpecificInput.token;
     } else {
       Object.assign(txBody, devTestCard);
     }
 
-    const proxyReq = { ...req, body: txBody };
-
-    if (!autoCapture) {
-      // authorize-only (comportamiento anterior)
-      return txController.createTransaction(proxyReq, res);
-    }
-
-    // === SALE (auth + capture) ===
-    // 1) Crear transacción
-    const createResult = await execController(txController.createTransaction, proxyReq);
-    if (createResult.status >= 400 || !createResult?.body?.transaction?.paymentId) {
-      return res.status(createResult.status).json(createResult.body || { success: false, message: 'transaction.create.error' });
-    }
-
-    const createdTx = createResult.body.transaction;
-    const paymentId = createdTx.paymentId;
-
-    // 2) Capturar automáticamente
-    const idem = req.headers['idempotency-key'] || `auto-${paymentId}`;
-    const captureReq = {
+    // Reusar el controlador existente de transacciones
+    const proxyReq = {
       ...req,
-      params: { paymentId },
-      body: { amount, isFinal: true },
-      idemKey: idem,
-      headers: { ...(req.headers || {}), 'idempotency-key': idem }
+      body: txBody
     };
 
-    const captureResult = await execController(paymentsController.capturePayment, captureReq);
-
-    if (captureResult.status >= 400) {
-      logger.warn('AutoCapture failed after create', {
-        component: 'paymentRequestController',
-        data: { paymentId, captureStatus: captureResult.status }
-      });
-      return res.status(207).json({
-        success: false,
-        message: 'AutoCapture failed after create',
-        transaction: createdTx,
-        captureError: captureResult.body
-      });
-    }
-
-    // 3) Devolver como sale (captured)
-    return res.status(captureResult.status).json({
-      ...captureResult.body,
-      transaction: createdTx
-    });
-
+    return txController.createTransaction(proxyReq, res);
   } catch (err) {
     logger.error('Error en executePaymentRequest', { error: err.message });
     return res.status(500).json({ success: false, message: 'paymentRequest.execute.error' });
