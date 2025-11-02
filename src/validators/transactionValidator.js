@@ -23,46 +23,103 @@ const transactionSchema = Joi.object({
   }),
 
   method: Joi.string()
-    .valid('card','apm','applepay','googlepay','pix','mbway','bizum')
+    .valid('card', 'apm', 'applepay', 'googlepay', 'pix', 'mbway', 'bizum')
     .required()
-    .messages({ 'any.only': 'transaction.invalid.method', 'any.required': 'transaction.invalid.method' }),
-
-  // ---- Datos de tarjeta (cuando se usa tarjeta física) ----
-  cardholderName: Joi.string().min(2).max(64).optional(),
-  cardNumber: Joi.string().pattern(/^\d{13,19}$/).optional()
-    .messages({ 'string.pattern.base': 'transaction.invalid.cardNumber' }),
-  cvv: Joi.string().pattern(/^\d{3,4}$/).optional()
-    .messages({ 'string.pattern.base': 'transaction.invalid.cvv' }),
-  expiryMonth: Joi.string().pattern(/^(0[1-9]|1[0-2])$/).optional()
-    .messages({ 'string.pattern.base': 'transaction.invalid.expiryMonth' }),
-  expiryYear: Joi.string().pattern(/^\d{4}$/).optional().custom((value, helpers) => {
-      if (parseInt(value, 10) < currentYear) return helpers.error('transaction.invalid.expiryYear.tooLow');
-      return value;
-    }).messages({
-      'string.pattern.base': 'transaction.invalid.expiryYear',
-      'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
+    .messages({
+      'any.only': 'transaction.invalid.method',
+      'any.required': 'transaction.invalid.method'
     }),
+
+  /* === CAPTURE EN UN PASO === */
+  captureNow: Joi.boolean().optional(),
+
+  /* === TOKEN o TARJETA (si method=card) === */
+  token: Joi.string().optional(),
+
+  cardholderName: Joi.when('method', {
+    is: 'card',
+    then: Joi.alternatives().conditional('token', {
+      is: Joi.exist(),
+      then: Joi.forbidden(),                       // si hay token, NO exigimos datos de tarjeta
+      otherwise: Joi.string().min(2).max(64).required()
+        .messages({ 'any.required': 'transaction.invalid.cardholderName' })
+    }),
+    otherwise: Joi.forbidden()
+  }),
+
+  cardNumber: Joi.when('method', {
+    is: 'card',
+    then: Joi.alternatives().conditional('token', {
+      is: Joi.exist(),
+      then: Joi.forbidden(),
+      otherwise: Joi.string().pattern(/^\d{13,19}$/).required()
+        .messages({
+          'string.pattern.base': 'transaction.invalid.cardNumber',
+          'any.required': 'transaction.invalid.cardNumber.required'
+        })
+    }),
+    otherwise: Joi.forbidden()
+  }),
+
+  cvv: Joi.when('method', {
+    is: 'card',
+    then: Joi.alternatives().conditional('token', {
+      is: Joi.exist(),
+      then: Joi.forbidden(),
+      otherwise: Joi.string().pattern(/^\d{3,4}$/).required()
+        .messages({
+          'string.pattern.base': 'transaction.invalid.cvv',
+          'any.required': 'transaction.invalid.cvv.required'
+        })
+    }),
+    otherwise: Joi.forbidden()
+  }),
+
+  expiryMonth: Joi.when('method', {
+    is: 'card',
+    then: Joi.alternatives().conditional('token', {
+      is: Joi.exist(),
+      then: Joi.forbidden(),
+      otherwise: Joi.string().pattern(/^(0[1-9]|1[0-2])$/).required()
+        .messages({ 'string.pattern.base': 'transaction.invalid.expiryMonth' })
+    }),
+    otherwise: Joi.forbidden()
+  }),
+
+  expiryYear: Joi.when('method', {
+    is: 'card',
+    then: Joi.alternatives().conditional('token', {
+      is: Joi.exist(),
+      then: Joi.forbidden(),
+      otherwise: Joi.string().pattern(/^\d{4}$/).required().custom((value, helpers) => {
+        if (parseInt(value, 10) < currentYear) {
+          return helpers.error('transaction.invalid.expiryYear.tooLow');
+        }
+        return value;
+      }).messages({
+        'string.pattern.base': 'transaction.invalid.expiryYear',
+        'transaction.invalid.expiryYear.tooLow': 'transaction.invalid.expiryYear.tooLow'
+      })
+    }),
+    otherwise: Joi.forbidden()
+  }),
 
   // Apple/Google Pay
   paymentData: Joi.when('method', {
     is: Joi.valid('applepay','googlepay'),
     then: Joi.required().messages({ 'any.required': 'transaction.invalid.paymentData.required' }),
+    otherwise: Joi.forbidden()
+  }),
+
+  // Recurrencia (por defecto CIT)
+  transactionType: Joi.string().valid('CIT','MIT').default('CIT'),
+  isRecurring: Joi.boolean().optional(),
+  recurrenceId: Joi.string().when('transactionType', {
+    is: 'MIT',
+    then: Joi.required().messages({ 'any.required': 'transaction.invalid.recurrenceId.required' }),
     otherwise: Joi.optional()
   }),
 
-  // Recurrencia
-  transactionType: Joi.string().valid('CIT','MIT').default('CIT'),
-  isRecurring: Joi.boolean().optional(),
-  token: Joi.string().optional(),      // permitido siempre; requerido solo en MIT:
-  recurrenceId: Joi.string().optional(),
-
-  // Reglas MIT: si es MIT, token y recurrenceId son obligatorios
-  // (comprobación cruzada)
-  // Usamos custom para validar dependencias complejas:
-  //   - method=card ⇒ o token o (cardNumber+cvv+expiryMonth+expiryYear+cardholderName)
-  //   - transactionType=MIT ⇒ token y recurrenceId requeridos
-  //   - apple/google pay ⇒ paymentData requerido (ya validado arriba)
-  //   - captureNow opcional (para single-message SALE)
   // APMs específicos
   phone: Joi.when('method', {
     is: Joi.valid('mbway','bizum'),
@@ -75,14 +132,11 @@ const transactionSchema = Joi.object({
   returnUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.returnUrl' }),
   callbackUrl: Joi.string().uri().optional().messages({ 'string.uri': 'transaction.invalid.callbackUrl' }),
 
-  // Opcionales
+  // Opcionales varios
   cardScheme: Joi.string().valid('visa','mastercard','amex','maestro','discover','diners','jcb').optional(),
   status: Joi.string().valid('approved','declined','pending','captured').optional(),
   userId: Joi.string().optional(),
   reference: Joi.string().optional(),
-
-  // Single-message SALE
-  captureNow: Joi.boolean().optional(),
 
   // Hospitality opcional
   reservationId: Joi.string().optional(),
@@ -93,30 +147,6 @@ const transactionSchema = Joi.object({
   rateCode: Joi.string().optional(),
   channel: Joi.string().optional(),
   folioNumber: Joi.string().optional()
-})
-.custom((value, helpers) => {
-  // MIT ⇒ token + recurrenceId obligatorios
-  if (value.transactionType === 'MIT') {
-    if (!value.token) {
-      return helpers.error('any.custom', { message: 'transaction.invalid.token.required' });
-    }
-    if (!value.recurrenceId) {
-      return helpers.error('any.custom', { message: 'transaction.invalid.recurrenceId.required' });
-    }
-  }
-
-  // method=card ⇒ token OR full card data
-  if (value.method === 'card') {
-    const hasToken = !!value.token;
-    const hasFullCard =
-      !!value.cardNumber && !!value.cvv && !!value.expiryMonth && !!value.expiryYear && !!value.cardholderName;
-
-    if (!hasToken && !hasFullCard) {
-      return helpers.error('any.custom', { message: 'transaction.card.missing.credentials' });
-    }
-  }
-
-  return value;
 })
 .prefs({ allowUnknown: false });
 
