@@ -106,7 +106,9 @@ const hostedCheckoutSpecificInputSchema = Joi.object({
     paymentProductPreferredOrder: Joi.array().items(Joi.number()).optional()
   }).optional(),
   sessionTimeout: Joi.number().optional(),
-  allowedNumberOfPaymentAttempts: Joi.number().optional()
+  allowedNumberOfPaymentAttempts: Joi.number().optional(),
+  // ➕ Permitimos activar captura automática (SALE)
+  autoCapture: Joi.boolean().optional()
 });
 
 const orderSchema = Joi.object({
