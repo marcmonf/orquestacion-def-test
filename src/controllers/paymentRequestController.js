@@ -7,10 +7,10 @@ const auditLogger = require('../logs/auditLogger');
 
 // Reusar lógica actual de creación de transacciones
 const txController = require('./transactionController');
-// ➕ Importamos el controlador de pagos para invocar capture internamente
+// ➕ usamos el controlador de pagos para invocar capture internamente
 const paymentsController = require('./paymentsController');
 
-/** Helper: ejecutar un controlador que usa res.status().json() y capturar su salida */
+/** Helper: ejecuta un controlador que usa res.status().json() y captura su respuesta */
 async function execController(fn, reqLike) {
   return new Promise(async (resolve) => {
     const resLike = {
@@ -27,7 +27,6 @@ async function execController(fn, reqLike) {
     };
     try {
       await fn(reqLike, resLike);
-      // Por si el controlador no llama a json (no debería pasar):
       if (!resLike.headersSent) resolve({ status: resLike._status, headers: resLike._headers, body: null });
     } catch (err) {
       resolve({ status: 500, headers: {}, body: { success: false, message: err?.message || 'controller.error' } });
@@ -73,9 +72,8 @@ const createPaymentRequest = async (req, res) => {
 
 /**
  * Ejecuta un PaymentRequest existente reusando el orquestador de /transactions.
- * - Mapea los datos mínimos (amount/currency/merchant/return/callback).
- * - Si hostedCheckoutSpecificInput.autoCapture = true => hace SALE (auth+capture en 1 paso).
- * - Si no, mantiene el comportamiento anterior (solo crea la transacción - authorize).
+ * - SALE en 1 paso si hostedCheckoutSpecificInput.autoCapture = true
+ * - Si no, mantiene authorize-only (como antes).
  */
 const executePaymentRequest = async (req, res) => {
   try {
@@ -85,7 +83,6 @@ const executePaymentRequest = async (req, res) => {
       return res.status(404).json({ success: false, message: 'PaymentRequest not found' });
     }
 
-    // Datos mínimos necesarios
     const amount = pr?.order?.amountOfMoney?.amount;
     const currency = pr?.order?.amountOfMoney?.currencyCode;
     const merchantId = pr?.merchantId;
@@ -97,21 +94,17 @@ const executePaymentRequest = async (req, res) => {
       });
     }
 
-    // Opcionales de retorno/callback
     const returnUrl = pr?.hostedCheckoutSpecificInput?.returnUrl;
     const callbackUrl =
       pr?.order?.feedbacks?.webhookUrl ||
       (Array.isArray(pr?.order?.feedbacks?.webhooksUrls) && pr.order.feedbacks.webhooksUrls[0]) ||
       undefined;
 
-    // ¿Auto-captura?
     const autoCapture = pr?.hostedCheckoutSpecificInput?.autoCapture === true;
 
-    // Datos de tarjeta/recurring (DEV fallback si no hay nada)
+    // Datos de tarjeta (DEV fallback si no hay token)
     const hasToken = !!pr?.cardPaymentMethodSpecificInput?.token;
     const method = 'card';
-
-    // Fallback DEV seguro (NO producción): tarjeta test
     const devTestCard = {
       cardholderName: 'John Doe',
       cardNumber: '4111111111111111',
@@ -120,7 +113,6 @@ const executePaymentRequest = async (req, res) => {
       expiryYear: '2030'
     };
 
-    // Construimos el body para la ruta /transactions
     const txBody = {
       merchantId,
       amount,
@@ -135,19 +127,17 @@ const executePaymentRequest = async (req, res) => {
       Object.assign(txBody, devTestCard);
     }
 
-    // Proxy del req original para conservar headers (x-api-key, etc.)
     const proxyReq = { ...req, body: txBody };
 
     if (!autoCapture) {
-      // === Comportamiento anterior (solo crear transacción) ===
+      // authorize-only (comportamiento anterior)
       return txController.createTransaction(proxyReq, res);
     }
 
-    // === SALE (autoCapture: true) ===
-    // 1) Crear la transacción
+    // === SALE (auth + capture) ===
+    // 1) Crear transacción
     const createResult = await execController(txController.createTransaction, proxyReq);
     if (createResult.status >= 400 || !createResult?.body?.transaction?.paymentId) {
-      // Si falla la creación, devolvemos tal cual
       return res.status(createResult.status).json(createResult.body || { success: false, message: 'transaction.create.error' });
     }
 
@@ -160,13 +150,12 @@ const executePaymentRequest = async (req, res) => {
       ...req,
       params: { paymentId },
       body: { amount, isFinal: true },
-      idemKey: idem,                  // nuestro middleware de idempotencia lo lee así
+      idemKey: idem,
       headers: { ...(req.headers || {}), 'idempotency-key': idem }
     };
 
     const captureResult = await execController(paymentsController.capturePayment, captureReq);
 
-    // Si la captura falla, al menos devolvemos la transacción creada
     if (captureResult.status >= 400) {
       logger.warn('AutoCapture failed after create', {
         component: 'paymentRequestController',
@@ -180,10 +169,10 @@ const executePaymentRequest = async (req, res) => {
       });
     }
 
-    // 3) Éxito: devolvemos el resultado de la captura (estado "captured")
+    // 3) Devolver como sale (captured)
     return res.status(captureResult.status).json({
       ...captureResult.body,
-      transaction: createdTx  // útil por si el integrador quiere correlacionar
+      transaction: createdTx
     });
 
   } catch (err) {
