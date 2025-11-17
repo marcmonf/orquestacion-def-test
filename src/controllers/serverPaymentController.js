@@ -1,26 +1,17 @@
 // src/controllers/serverPaymentController.js
 'use strict';
 
-const Joi = require('joi');
 const { v4: uuidv4 } = require('uuid');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Validación laxa: solo exigimos merchantId y cardPaymentMethodSpecificInput;
-// el resto lo dejamos libre. Luego comprobamos amount/currency/returnUrl a mano.
-const createServerPaymentSchema = Joi.object({
-  merchantId: Joi.string().required(),
+const {
+  ServerPaymentRequestDTO,
+  buildServerPaymentCreateResponse,
+  buildServerPaymentStatusResponse
+} = require('../dtos/serverPaymentDTO');
 
-  cardPaymentMethodSpecificInput: Joi.object().required(),
-  fraudFields: Joi.object().optional(),
-  order: Joi.object().optional(),
-  hostedTokenizationId: Joi.string().optional(),
-  hostedFieldsSessionId: Joi.string().optional(),
-  feedbacks: Joi.object().optional()
-});
-
-// Mapeo simple de estados internos a statusOutput "tipo Worldline"
 function mapStatusToStatusOutput(status) {
   switch (status) {
     case 'authorized':
@@ -52,27 +43,13 @@ function mapStatusToStatusOutput(status) {
   }
 }
 
-// Regla simple para decidir si se requiere challenge 3DS (ejemplo)
 function shouldRequire3DSChallenge(amount) {
   const threshold = Number(process.env.THREEDS_CHALLENGE_THRESHOLD || 0);
   return threshold > 0 ? amount >= threshold : false;
 }
 
-/**
- * POST /payments/server
- * Simula CreatePayment server-to-server con estructura tipo Worldline:
- * {
- *   merchantId,
- *   cardPaymentMethodSpecificInput: { ... },
- *   fraudFields: { ... },
- *   order: { ... },
- *   hostedTokenizationId,
- *   hostedFieldsSessionId,
- *   feedbacks: { ... }
- * }
- */
 async function createServerPayment(req, res) {
-  const { error, value } = createServerPaymentSchema.validate(req.body);
+  const { error, value } = ServerPaymentRequestDTO.validate(req.body);
   if (error) {
     return res.status(400).json({
       success: false,
@@ -89,40 +66,18 @@ async function createServerPayment(req, res) {
     hostedFieldsSessionId
   } = value;
 
-  // Extraemos amount y currency desde order.amountOfMoney (laxo)
-  const amount = order?.amountOfMoney?.amount;
-  const currency = order?.amountOfMoney?.currencyCode;
+  const amount = order.amountOfMoney.amount;
+  const currency = order.amountOfMoney.currencyCode;
 
-  if (typeof amount !== 'number' || !currency) {
-    return res.status(400).json({
-      success: false,
-      error: 'missing_amount_or_currency',
-      detail:
-        'order.amountOfMoney.amount (number) and order.amountOfMoney.currencyCode (string) are required'
-    });
-  }
-
-  // returnUrl oficial desde cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl
   const returnUrl =
-    cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl;
-
-  if (!returnUrl) {
-    return res.status(400).json({
-      success: false,
-      error: 'missing_return_url',
-      detail:
-        'cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl is required'
-    });
-  }
+    cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
   const timestamp = new Date();
   const paymentId = uuidv4();
 
   try {
-    // Decidir si vamos a frictionless o challenge 3DS
     const requiresChallenge = shouldRequire3DSChallenge(amount);
 
-    // En Monetiser S2S, preparamos un merchantAction que imita la estructura Worldline
     let merchantAction;
     let internalStatus;
 
@@ -142,7 +97,6 @@ async function createServerPayment(req, res) {
       };
       internalStatus = 'pending_3ds';
     } else {
-      // Flujo frictionless: la autorización termina aquí
       merchantAction = {
         actionType: null,
         redirectData: null
@@ -152,8 +106,6 @@ async function createServerPayment(req, res) {
 
     const statusOutput = mapStatusToStatusOutput(internalStatus);
 
-    // Persistimos la transacción básica.
-    // No guardamos cardPaymentMethodSpecificInput para no arrastrar PAN ni otros datos sensibles.
     const txn = new Transaction({
       paymentId,
       merchantId,
@@ -176,8 +128,7 @@ async function createServerPayment(req, res) {
       metadata: { createdAt: timestamp.toISOString(), flow: 'server_to_server' }
     });
 
-    return res.status(200).json({
-      success: true,
+    const responsePayload = buildServerPaymentCreateResponse({
       paymentId,
       merchantId,
       amount,
@@ -189,6 +140,8 @@ async function createServerPayment(req, res) {
       statusOutput,
       timestamp: timestamp.toISOString()
     });
+
+    return res.status(200).json(responsePayload);
   } catch (e) {
     logger.error('Error in createServerPayment', { error: e.message });
     auditLogger.info({
@@ -205,10 +158,6 @@ async function createServerPayment(req, res) {
   }
 }
 
-/**
- * GET /payments/server/:paymentId
- * Simula GetPaymentDetails: devolvemos el estado de la transacción y un statusOutput coherente.
- */
 async function getServerPaymentStatus(req, res) {
   const { paymentId } = req.params;
 
@@ -231,19 +180,9 @@ async function getServerPaymentStatus(req, res) {
     }
 
     const statusOutput = mapStatusToStatusOutput(tx.status);
+    const responsePayload = buildServerPaymentStatusResponse(tx, statusOutput);
 
-    return res.status(200).json({
-      success: true,
-      paymentId: tx.paymentId,
-      merchantId: tx.merchantId,
-      amount: tx.amount,
-      currency: tx.currency,
-      method: tx.method,
-      status: tx.status,
-      connectorUsed: tx.connectorUsed || null,
-      statusOutput,
-      timestamp: (tx.updatedAt || tx.createdAt || new Date()).toISOString()
-    });
+    return res.status(200).json(responsePayload);
   } catch (e) {
     return res.status(500).json({
       success: false,
