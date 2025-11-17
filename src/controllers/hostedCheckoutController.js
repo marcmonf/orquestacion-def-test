@@ -9,25 +9,26 @@ const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
+// Validación laxa: solo exigimos merchantId y el objeto cardPaymentMethodSpecificInput;
+// el resto lo dejamos libre para no romper ni acotar el contrato.
 const hostedCheckoutSchema = Joi.object({
   merchantId: Joi.string().required(),
-  amount: Joi.number().positive().required(),
-  currency: Joi.string().length(3).required(),
-  // Estructura "tipo Worldline" pero muy simplificada
-  hostedCheckoutSpecificInput: Joi.object({
-    returnUrl: Joi.string().uri().required(),
-    callbackUrl: Joi.string().uri().optional(),
-    sessionTimeout: Joi.number().integer().min(60).max(3 * 60 * 60).optional() // segundos
-  }).required(),
-  order: Joi.object().optional() // placeholder: aquí puedes meter datos de pedido
+
+  cardPaymentMethodSpecificInput: Joi.object().required(),
+  fraudFields: Joi.object().optional(),
+  order: Joi.object().optional(),
+  feedbacks: Joi.object().optional()
 });
 
-// TTL máximo imitanto los 3h de Worldline
+// TTL máximo (imitando idea de sesiones limitadas)
 const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos por defecto
 const MAX_SESSION_SECONDS = 3 * 60 * 60; // 3 horas
 
 function computeSessionExpiry(now, timeoutSeconds) {
-  const t = Math.min(timeoutSeconds || DEFAULT_SESSION_TIMEOUT_SECONDS, MAX_SESSION_SECONDS);
+  const t = Math.min(
+    timeoutSeconds || DEFAULT_SESSION_TIMEOUT_SECONDS,
+    MAX_SESSION_SECONDS
+  );
   return new Date(now.getTime() + t * 1000);
 }
 
@@ -41,10 +42,14 @@ function generateReturnMac(payload, secret) {
 
 /**
  * POST /payments/hosted
- * Simula CreateHostedCheckout:
- * - hostedCheckoutId
- * - redirectUrl / partialRedirectUrl
- * - RETURNMAC
+ * Simula CreateHostedCheckout con la estructura de entrada tipo Worldline:
+ * {
+ *   merchantId,
+ *   cardPaymentMethodSpecificInput: { ... },
+ *   fraudFields: { ... },
+ *   order: { ... },
+ *   feedbacks: { ... }
+ * }
  */
 async function createHostedCheckout(req, res) {
   const { error, value } = hostedCheckoutSchema.validate(req.body);
@@ -56,13 +61,45 @@ async function createHostedCheckout(req, res) {
     });
   }
 
-  const { merchantId, amount, currency, hostedCheckoutSpecificInput } = value;
-  const { returnUrl, callbackUrl, sessionTimeout } = hostedCheckoutSpecificInput;
+  const { merchantId, cardPaymentMethodSpecificInput, order, feedbacks } = value;
+
+  // Extracción laxa de amount y currency desde order.amountOfMoney
+  const amount = order?.amountOfMoney?.amount;
+  const currency = order?.amountOfMoney?.currencyCode;
+
+  if (typeof amount !== 'number' || !currency) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_amount_or_currency',
+      detail:
+        'order.amountOfMoney.amount (number) and order.amountOfMoney.currencyCode (string) are required'
+    });
+  }
+
+  // returnUrl oficial: cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl
+  const returnUrl =
+    cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl;
+
+  if (!returnUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_return_url',
+      detail:
+        'cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl is required'
+    });
+  }
+
+  // Callback principal: feedbacks.webhookUrl o el primero de feedbacks.webhooksUrls
+  const callbackUrl =
+    feedbacks?.webhookUrl ||
+    (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
+      ? feedbacks.webhooksUrls[0]
+      : null);
 
   const timestamp = new Date();
   const paymentId = uuidv4();
   const hostedCheckoutId = uuidv4();
-  const expiresAt = computeSessionExpiry(timestamp, sessionTimeout);
+  const expiresAt = computeSessionExpiry(timestamp, null);
 
   try {
     // Secreto por merchant para RETURNMAC
@@ -108,6 +145,8 @@ async function createHostedCheckout(req, res) {
       callbackUrl: callbackUrl || null,
       createdAt: timestamp,
       sessionExpiresAt: expiresAt
+      // Nota: no guardamos cardPaymentMethodSpecificInput para no arrastrar datos sensibles.
+      // Si quieres guardar algún campo no-PCI, se puede añadir un subdocumento "metadata".
     });
     await txn.save();
 
@@ -133,7 +172,7 @@ async function createHostedCheckout(req, res) {
       partialRedirectUrl,
       redirectUrl,
       session: {
-        timeoutSeconds: sessionTimeout || DEFAULT_SESSION_TIMEOUT_SECONDS,
+        timeoutSeconds: DEFAULT_SESSION_TIMEOUT_SECONDS,
         expiresAt: expiresAt.toISOString()
       },
       timestamp: timestamp.toISOString()
@@ -183,7 +222,9 @@ async function getHostedCheckoutStatus(req, res) {
     const expired =
       tx.sessionExpiresAt && now.getTime() > new Date(tx.sessionExpiresAt).getTime();
     const isFinal =
-      ['approved', 'authorized', 'declined', 'refused', 'cancelled'].includes(tx.status);
+      ['approved', 'authorized', 'declined', 'refused', 'cancelled'].includes(
+        tx.status
+      );
 
     return res.status(200).json({
       success: true,
