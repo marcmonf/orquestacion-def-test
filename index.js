@@ -3,6 +3,8 @@ const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const mongoose = require('mongoose');
+const serverPaymentRoutes = require('./src/routes/serverPaymentRoutes');
+const hostedCheckoutRoutes = require('./src/routes/hostedCheckoutRoutes');
 
 let morgan = null;
 try { morgan = require('morgan'); }
@@ -22,6 +24,9 @@ try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch
 /* ===== Middlewares globales ===== */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
+
+app.use('/payments/server', serverPaymentRoutes);
+app.use('/payments/hosted', hostedCheckoutRoutes);
 
 app.use(cors({
   origin(origin, cb) {
