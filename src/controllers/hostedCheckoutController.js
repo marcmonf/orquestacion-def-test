@@ -14,7 +14,6 @@ const {
   buildHostedCheckoutStatusResponse
 } = require('../dtos/hostedCheckoutDTO');
 
-// TTL máximo (imitando idea de sesiones limitadas)
 const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos
 const MAX_SESSION_SECONDS = 3 * 60 * 60; // 3 horas
 
@@ -34,27 +33,36 @@ function generateReturnMac(payload, secret) {
 }
 
 /**
- * POST /payments/hosted
- * Estructura de entrada tipo Worldline:
- * {
- *   merchantId,
- *   cardPaymentMethodSpecificInput: { threeDSecure.redirectionData.returnUrl, ... },
- *   fraudFields,
- *   order: { amountOfMoney.amount, amountOfMoney.currencyCode, ... },
- *   feedbacks: { webhookUrl, webhooksUrls[], ... }
- * }
+ * merchantId se obtiene de req.params.merchantId
+ */
+function resolveMerchantIdFromRequest(req) {
+  if (req.params && req.params.merchantId) return req.params.merchantId;
+  if (req.merchantId) return req.merchantId;
+  if (req.merchant && typeof req.merchant === 'string') return req.merchant;
+  if (req.merchant && req.merchant.merchantId) return req.merchant.merchantId;
+  return null;
+}
+
+/**
+ * POST /:merchantId/payments/hosted
  */
 async function createHostedCheckout(req, res) {
-  // PROTECCIÓN: si no hay body, forzamos un objeto vacío para evitar crash
   const body = req.body || {};
 
-  // VALIDACIÓN ESTRICTA con DTO de raíz
+  if (Object.keys(body).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'empty_body',
+      detail:
+        'Request body is empty. Ensure you are sending JSON and Content-Type: application/json'
+    });
+  }
+
   const { error, value } = HostedCheckoutRequestDTO.validate(body, {
     abortEarly: false
   });
 
   if (error || !value) {
-    // Aquí devolvemos 400 y NO intentamos destructurar "value"
     return res.status(400).json({
       success: false,
       error: 'validation_error',
@@ -62,18 +70,23 @@ async function createHostedCheckout(req, res) {
     });
   }
 
-  // A partir de aquí, "value" está garantizado por Joi y no será undefined
-  const { merchantId, cardPaymentMethodSpecificInput, order, feedbacks } = value;
+  const merchantId = resolveMerchantIdFromRequest(req);
+  if (!merchantId) {
+    return res.status(401).json({
+      success: false,
+      error: 'merchant_not_authenticated',
+      detail: 'Unable to resolve merchantId from URL or request context'
+    });
+  }
 
-  // El DTO garantiza que amountOfMoney existe y tiene amount + currencyCode
+  const { cardPaymentMethodSpecificInput, order, feedbacks } = value;
+
   const amount = order.amountOfMoney.amount;
   const currency = order.amountOfMoney.currencyCode;
 
-  // returnUrl oficial desde threeDSecure.redirectionData.returnUrl
   const returnUrl =
     cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
-  // Callback principal: feedbacks.webhookUrl o primer elemento de feedbacks.webhooksUrls
   const callbackUrl =
     feedbacks?.webhookUrl ||
     (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
@@ -86,7 +99,6 @@ async function createHostedCheckout(req, res) {
   const expiresAt = computeSessionExpiry(timestamp, null);
 
   try {
-    // Obtenemos el secreto del merchant para RETURNMAC
     const merchant = await Merchant.findOne(
       { merchantId },
       { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
@@ -109,14 +121,12 @@ async function createHostedCheckout(req, res) {
 
     const RETURNMAC = generateReturnMac(macPayload, merchantSecret);
 
-    // Construimos URLs de redirección (HPP interno)
     const baseHpp = process.env.HPP_BASE_URL || '';
     const partialRedirectUrl = `/hpp/${encodeURIComponent(hostedCheckoutId)}`;
     const redirectUrl = baseHpp
       ? `${baseHpp.replace(/\/$/, '')}${partialRedirectUrl}`
       : partialRedirectUrl;
 
-    // Persistimos la transacción en estado "hosted_pending"
     const txn = new Transaction({
       paymentId,
       merchantId,
@@ -129,7 +139,6 @@ async function createHostedCheckout(req, res) {
       callbackUrl: callbackUrl || null,
       createdAt: timestamp,
       sessionExpiresAt: expiresAt
-      // NO guardamos cardPaymentMethodSpecificInput para no arrastrar datos PCI.
     });
     await txn.save();
 
@@ -178,8 +187,7 @@ async function createHostedCheckout(req, res) {
 }
 
 /**
- * GET /payments/hosted/:hostedCheckoutId/status
- * Simula GetHostedCheckoutStatus.
+ * GET /:merchantId/payments/hosted/:hostedCheckoutId/status
  */
 async function getHostedCheckoutStatus(req, res) {
   const { hostedCheckoutId } = req.params;
