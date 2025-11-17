@@ -33,26 +33,47 @@ function generateReturnMac(payload, secret) {
     .digest('hex');
 }
 
+/**
+ * POST /payments/hosted
+ * Estructura de entrada tipo Worldline:
+ * {
+ *   merchantId,
+ *   cardPaymentMethodSpecificInput: { threeDSecure.redirectionData.returnUrl, ... },
+ *   fraudFields,
+ *   order: { amountOfMoney.amount, amountOfMoney.currencyCode, ... },
+ *   feedbacks: { webhookUrl, webhooksUrls[], ... }
+ * }
+ */
 async function createHostedCheckout(req, res) {
-  const { error, value } = HostedCheckoutRequestDTO.validate(req.body);
-  if (error) {
+  // PROTECCIÓN: si no hay body, forzamos un objeto vacío para evitar crash
+  const body = req.body || {};
+
+  // VALIDACIÓN ESTRICTA con DTO de raíz
+  const { error, value } = HostedCheckoutRequestDTO.validate(body, {
+    abortEarly: false
+  });
+
+  if (error || !value) {
+    // Aquí devolvemos 400 y NO intentamos destructurar "value"
     return res.status(400).json({
       success: false,
       error: 'validation_error',
-      detail: error.details[0].message
+      detail: error ? error.details.map(d => d.message) : ['Invalid payload']
     });
   }
 
+  // A partir de aquí, "value" está garantizado por Joi y no será undefined
   const { merchantId, cardPaymentMethodSpecificInput, order, feedbacks } = value;
 
+  // El DTO garantiza que amountOfMoney existe y tiene amount + currencyCode
   const amount = order.amountOfMoney.amount;
   const currency = order.amountOfMoney.currencyCode;
 
-  // returnUrl oficial
+  // returnUrl oficial desde threeDSecure.redirectionData.returnUrl
   const returnUrl =
     cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
-  // Callback principal
+  // Callback principal: feedbacks.webhookUrl o primer elemento de feedbacks.webhooksUrls
   const callbackUrl =
     feedbacks?.webhookUrl ||
     (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
@@ -65,6 +86,7 @@ async function createHostedCheckout(req, res) {
   const expiresAt = computeSessionExpiry(timestamp, null);
 
   try {
+    // Obtenemos el secreto del merchant para RETURNMAC
     const merchant = await Merchant.findOne(
       { merchantId },
       { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
@@ -87,12 +109,14 @@ async function createHostedCheckout(req, res) {
 
     const RETURNMAC = generateReturnMac(macPayload, merchantSecret);
 
+    // Construimos URLs de redirección (HPP interno)
     const baseHpp = process.env.HPP_BASE_URL || '';
     const partialRedirectUrl = `/hpp/${encodeURIComponent(hostedCheckoutId)}`;
     const redirectUrl = baseHpp
       ? `${baseHpp.replace(/\/$/, '')}${partialRedirectUrl}`
       : partialRedirectUrl;
 
+    // Persistimos la transacción en estado "hosted_pending"
     const txn = new Transaction({
       paymentId,
       merchantId,
@@ -105,6 +129,7 @@ async function createHostedCheckout(req, res) {
       callbackUrl: callbackUrl || null,
       createdAt: timestamp,
       sessionExpiresAt: expiresAt
+      // NO guardamos cardPaymentMethodSpecificInput para no arrastrar datos PCI.
     });
     await txn.save();
 
@@ -152,6 +177,10 @@ async function createHostedCheckout(req, res) {
   }
 }
 
+/**
+ * GET /payments/hosted/:hostedCheckoutId/status
+ * Simula GetHostedCheckoutStatus.
+ */
 async function getHostedCheckoutStatus(req, res) {
   const { hostedCheckoutId } = req.params;
 
