@@ -12,9 +12,20 @@ const {
 
 /**
  * DTO raíz para Server-to-Server (CreatePayment-style).
+ *
+ * Estructura esperada en el body:
+ * {
+ *   cardPaymentMethodSpecificInput: { ... },
+ *   fraudFields: { ... },
+ *   order: { ... },
+ *   hostedTokenizationId: "string",
+ *   hostedFieldsSessionId: "string",
+ *   feedbacks: { ... }
+ * }
+ *
+ * El merchantId SE LEE DE LA URL (/:merchantId/...) y no forma parte del body.
  */
 const ServerPaymentRequestDTO = Joi.object({
-  merchantId: Joi.string().required(),
   cardPaymentMethodSpecificInput: CardPaymentMethodSpecificInputDTO.required(),
   fraudFields: FraudFieldsDTO.optional(),
   order: OrderDTO.required(),
@@ -23,9 +34,6 @@ const ServerPaymentRequestDTO = Joi.object({
   feedbacks: FeedbacksDTO.optional()
 });
 
-/**
- * Builders de respuesta estándar Monetiser
- */
 function buildServerPaymentCreateResponse(payload) {
   const {
     paymentId,
