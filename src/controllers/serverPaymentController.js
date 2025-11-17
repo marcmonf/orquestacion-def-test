@@ -7,28 +7,21 @@ const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Esquema de entrada para el flujo server-to-server (CreatePayment-like)
+// Validación laxa: solo exigimos merchantId y cardPaymentMethodSpecificInput;
+// el resto lo dejamos libre. Luego comprobamos amount/currency/returnUrl a mano.
 const createServerPaymentSchema = Joi.object({
   merchantId: Joi.string().required(),
-  amount: Joi.number().positive().required(),
-  currency: Joi.string().length(3).required(),
-  method: Joi.string().valid('card').required(),
-  // Datos de tarjeta: los aceptamos pero no los devolvemos nunca
-  card: Joi.object({
-    pan: Joi.string().min(8).max(19).required(),
-    expiryMonth: Joi.string().pattern(/^\d{1,2}$/).required(),
-    expiryYear: Joi.string().pattern(/^\d{2,4}$/).required(),
-    cvv: Joi.string().min(2).max(4).required(),
-    cardHolderName: Joi.string().allow('', null)
-  }).required(),
-  // URLs para challenge 3DS y callbacks
-  returnUrl: Joi.string().uri().required(),
-  callbackUrl: Joi.string().uri().optional()
+
+  cardPaymentMethodSpecificInput: Joi.object().required(),
+  fraudFields: Joi.object().optional(),
+  order: Joi.object().optional(),
+  hostedTokenizationId: Joi.string().optional(),
+  hostedFieldsSessionId: Joi.string().optional(),
+  feedbacks: Joi.object().optional()
 });
 
-// Pequeño helper para mapear el estado interno a un statusOutput “tipo Worldline”
+// Mapeo simple de estados internos a statusOutput "tipo Worldline"
 function mapStatusToStatusOutput(status) {
-  // Puedes ajustar estos códigos a tu taxonomía interna
   switch (status) {
     case 'authorized':
     case 'approved':
@@ -67,9 +60,16 @@ function shouldRequire3DSChallenge(amount) {
 
 /**
  * POST /payments/server
- * Simula un CreatePayment server-to-server con estructura tipo Worldline:
- * - merchantAction (actionType = null o "REDIRECT")
- * - statusOutput (statusCode, isFinal, statusCategory)
+ * Simula CreatePayment server-to-server con estructura tipo Worldline:
+ * {
+ *   merchantId,
+ *   cardPaymentMethodSpecificInput: { ... },
+ *   fraudFields: { ... },
+ *   order: { ... },
+ *   hostedTokenizationId,
+ *   hostedFieldsSessionId,
+ *   feedbacks: { ... }
+ * }
  */
 async function createServerPayment(req, res) {
   const { error, value } = createServerPaymentSchema.validate(req.body);
@@ -83,13 +83,37 @@ async function createServerPayment(req, res) {
 
   const {
     merchantId,
-    amount,
-    currency,
-    method,
-    card,
-    returnUrl,
-    callbackUrl
+    cardPaymentMethodSpecificInput,
+    order,
+    hostedTokenizationId,
+    hostedFieldsSessionId
   } = value;
+
+  // Extraemos amount y currency desde order.amountOfMoney (laxo)
+  const amount = order?.amountOfMoney?.amount;
+  const currency = order?.amountOfMoney?.currencyCode;
+
+  if (typeof amount !== 'number' || !currency) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_amount_or_currency',
+      detail:
+        'order.amountOfMoney.amount (number) and order.amountOfMoney.currencyCode (string) are required'
+    });
+  }
+
+  // returnUrl oficial desde cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl
+  const returnUrl =
+    cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl;
+
+  if (!returnUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_return_url',
+      detail:
+        'cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl is required'
+    });
+  }
 
   const timestamp = new Date();
   const paymentId = uuidv4();
@@ -98,14 +122,16 @@ async function createServerPayment(req, res) {
     // Decidir si vamos a frictionless o challenge 3DS
     const requiresChallenge = shouldRequire3DSChallenge(amount);
 
-    // En Monetiser S2S, no redirigimos aquí a un tercero real; preparamos una URL interna
+    // En Monetiser S2S, preparamos un merchantAction que imita la estructura Worldline
     let merchantAction;
     let internalStatus;
 
     if (requiresChallenge) {
       const base3DS = process.env.THREEDS_CHALLENGE_BASE_URL || '';
       const redirectURL = base3DS
-        ? `${base3DS.replace(/\/$/, '')}/3ds-challenge?paymentId=${encodeURIComponent(paymentId)}`
+        ? `${base3DS.replace(/\/$/, '')}/3ds-challenge?paymentId=${encodeURIComponent(
+            paymentId
+          )}`
         : `/3ds-challenge?paymentId=${encodeURIComponent(paymentId)}`;
 
       merchantAction = {
@@ -126,25 +152,27 @@ async function createServerPayment(req, res) {
 
     const statusOutput = mapStatusToStatusOutput(internalStatus);
 
-    // Persistimos una transacción muy básica
+    // Persistimos la transacción básica.
+    // No guardamos cardPaymentMethodSpecificInput para no arrastrar PAN ni otros datos sensibles.
     const txn = new Transaction({
       paymentId,
       merchantId,
       amount,
       currency,
-      method,
+      method: 'card',
       status: internalStatus,
       returnUrl,
-      callbackUrl: callbackUrl || null,
+      callbackUrl: null,
+      hostedTokenizationId: hostedTokenizationId || null,
+      hostedFieldsSessionId: hostedFieldsSessionId || null,
       createdAt: timestamp
-      // NO guardamos datos de tarjeta en claro
     });
     await txn.save();
 
     auditLogger.info({
       action: 'SERVER_PAYMENT_CREATED',
       user: merchantId || 'unknown',
-      details: { paymentId, amount, currency, method, internalStatus },
+      details: { paymentId, amount, currency, method: 'card', internalStatus },
       metadata: { createdAt: timestamp.toISOString(), flow: 'server_to_server' }
     });
 
@@ -154,9 +182,9 @@ async function createServerPayment(req, res) {
       merchantId,
       amount,
       currency,
-      method,
+      method: 'card',
       status: internalStatus,
-      connectorUsed: 'dummyCard', // luego lo puedes poblar desde tu motor de orquestación
+      connectorUsed: 'dummyCard',
       merchantAction,
       statusOutput,
       timestamp: timestamp.toISOString()
@@ -179,7 +207,7 @@ async function createServerPayment(req, res) {
 
 /**
  * GET /payments/server/:paymentId
- * Simula un GetPaymentDetails: devolvemos el estado de la transacción y un statusOutput coherente.
+ * Simula GetPaymentDetails: devolvemos el estado de la transacción y un statusOutput coherente.
  */
 async function getServerPaymentStatus(req, res) {
   const { paymentId } = req.params;
