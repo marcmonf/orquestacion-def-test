@@ -12,6 +12,7 @@ const {
   buildServerPaymentStatusResponse
 } = require('../dtos/serverPaymentDTO');
 
+// Mapeo simple de estados internos a statusOutput "tipo Worldline"
 function mapStatusToStatusOutput(status) {
   switch (status) {
     case 'authorized':
@@ -43,21 +44,47 @@ function mapStatusToStatusOutput(status) {
   }
 }
 
+// Regla simple para decidir si se requiere challenge 3DS (ejemplo)
 function shouldRequire3DSChallenge(amount) {
   const threshold = Number(process.env.THREEDS_CHALLENGE_THRESHOLD || 0);
   return threshold > 0 ? amount >= threshold : false;
 }
 
+/**
+ * POST /payments/server
+ * Estructura de entrada tipo Worldline:
+ * {
+ *   merchantId,
+ *   cardPaymentMethodSpecificInput: {
+ *     threeDSecure.redirectionData.returnUrl,
+ *     ...
+ *   },
+ *   fraudFields,
+ *   order: { amountOfMoney.amount, amountOfMoney.currencyCode, ... },
+ *   hostedTokenizationId,
+ *   hostedFieldsSessionId,
+ *   feedbacks
+ * }
+ */
 async function createServerPayment(req, res) {
-  const { error, value } = ServerPaymentRequestDTO.validate(req.body);
-  if (error) {
+  // PROTECCIÓN: si no hay body, usamos objeto vacío para evitar crash
+  const body = req.body || {};
+
+  // VALIDACIÓN ESTRICTA usando DTO raíz
+  const { error, value } = ServerPaymentRequestDTO.validate(body, {
+    abortEarly: false
+  });
+
+  if (error || !value) {
+    // Si el payload no cumple el DTO, devolvemos 400 y NO desestructuramos "value"
     return res.status(400).json({
       success: false,
       error: 'validation_error',
-      detail: error.details[0].message
+      detail: error ? error.details.map(d => d.message) : ['Invalid payload']
     });
   }
 
+  // A partir de aquí, "value" está garantizado y ya no será undefined
   const {
     merchantId,
     cardPaymentMethodSpecificInput,
@@ -69,6 +96,7 @@ async function createServerPayment(req, res) {
   const amount = order.amountOfMoney.amount;
   const currency = order.amountOfMoney.currencyCode;
 
+  // returnUrl oficial desde cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl
   const returnUrl =
     cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
@@ -76,6 +104,7 @@ async function createServerPayment(req, res) {
   const paymentId = uuidv4();
 
   try {
+    // Decidir si vamos a frictionless o challenge 3DS
     const requiresChallenge = shouldRequire3DSChallenge(amount);
 
     let merchantAction;
@@ -106,6 +135,7 @@ async function createServerPayment(req, res) {
 
     const statusOutput = mapStatusToStatusOutput(internalStatus);
 
+    // Persistimos la transacción básica (sin datos PCI).
     const txn = new Transaction({
       paymentId,
       merchantId,
@@ -158,6 +188,10 @@ async function createServerPayment(req, res) {
   }
 }
 
+/**
+ * GET /payments/server/:paymentId
+ * Simula GetPaymentDetails.
+ */
 async function getServerPaymentStatus(req, res) {
   const { paymentId } = req.params;
 
