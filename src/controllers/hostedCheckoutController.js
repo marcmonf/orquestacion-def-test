@@ -1,7 +1,6 @@
 // src/controllers/hostedCheckoutController.js
 'use strict';
 
-const Joi = require('joi');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const Transaction = require('../models/Transaction');
@@ -9,19 +8,14 @@ const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 
-// Validación laxa: solo exigimos merchantId y el objeto cardPaymentMethodSpecificInput;
-// el resto lo dejamos libre para no romper ni acotar el contrato.
-const hostedCheckoutSchema = Joi.object({
-  merchantId: Joi.string().required(),
-
-  cardPaymentMethodSpecificInput: Joi.object().required(),
-  fraudFields: Joi.object().optional(),
-  order: Joi.object().optional(),
-  feedbacks: Joi.object().optional()
-});
+const {
+  HostedCheckoutRequestDTO,
+  buildHostedCheckoutCreateResponse,
+  buildHostedCheckoutStatusResponse
+} = require('../dtos/hostedCheckoutDTO');
 
 // TTL máximo (imitando idea de sesiones limitadas)
-const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos por defecto
+const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos
 const MAX_SESSION_SECONDS = 3 * 60 * 60; // 3 horas
 
 function computeSessionExpiry(now, timeoutSeconds) {
@@ -32,7 +26,6 @@ function computeSessionExpiry(now, timeoutSeconds) {
   return new Date(now.getTime() + t * 1000);
 }
 
-// HMAC simple para RETURNMAC
 function generateReturnMac(payload, secret) {
   return crypto
     .createHmac('sha256', String(secret))
@@ -40,19 +33,8 @@ function generateReturnMac(payload, secret) {
     .digest('hex');
 }
 
-/**
- * POST /payments/hosted
- * Simula CreateHostedCheckout con la estructura de entrada tipo Worldline:
- * {
- *   merchantId,
- *   cardPaymentMethodSpecificInput: { ... },
- *   fraudFields: { ... },
- *   order: { ... },
- *   feedbacks: { ... }
- * }
- */
 async function createHostedCheckout(req, res) {
-  const { error, value } = hostedCheckoutSchema.validate(req.body);
+  const { error, value } = HostedCheckoutRequestDTO.validate(req.body);
   if (error) {
     return res.status(400).json({
       success: false,
@@ -63,33 +45,14 @@ async function createHostedCheckout(req, res) {
 
   const { merchantId, cardPaymentMethodSpecificInput, order, feedbacks } = value;
 
-  // Extracción laxa de amount y currency desde order.amountOfMoney
-  const amount = order?.amountOfMoney?.amount;
-  const currency = order?.amountOfMoney?.currencyCode;
+  const amount = order.amountOfMoney.amount;
+  const currency = order.amountOfMoney.currencyCode;
 
-  if (typeof amount !== 'number' || !currency) {
-    return res.status(400).json({
-      success: false,
-      error: 'missing_amount_or_currency',
-      detail:
-        'order.amountOfMoney.amount (number) and order.amountOfMoney.currencyCode (string) are required'
-    });
-  }
-
-  // returnUrl oficial: cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl
+  // returnUrl oficial
   const returnUrl =
-    cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl;
+    cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
-  if (!returnUrl) {
-    return res.status(400).json({
-      success: false,
-      error: 'missing_return_url',
-      detail:
-        'cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl is required'
-    });
-  }
-
-  // Callback principal: feedbacks.webhookUrl o el primero de feedbacks.webhooksUrls
+  // Callback principal
   const callbackUrl =
     feedbacks?.webhookUrl ||
     (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
@@ -102,7 +65,6 @@ async function createHostedCheckout(req, res) {
   const expiresAt = computeSessionExpiry(timestamp, null);
 
   try {
-    // Secreto por merchant para RETURNMAC
     const merchant = await Merchant.findOne(
       { merchantId },
       { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
@@ -114,7 +76,7 @@ async function createHostedCheckout(req, res) {
       merchant?.secret ||
       (process.env.MERCHANT_SECRET || 'default_merchant_secret');
 
-    const payloadForMac = {
+    const macPayload = {
       merchantId,
       hostedCheckoutId,
       paymentId,
@@ -123,16 +85,14 @@ async function createHostedCheckout(req, res) {
       exp: expiresAt.toISOString()
     };
 
-    const RETURNMAC = generateReturnMac(payloadForMac, merchantSecret);
+    const RETURNMAC = generateReturnMac(macPayload, merchantSecret);
 
-    // Construimos URLs de redirección:
     const baseHpp = process.env.HPP_BASE_URL || '';
     const partialRedirectUrl = `/hpp/${encodeURIComponent(hostedCheckoutId)}`;
     const redirectUrl = baseHpp
       ? `${baseHpp.replace(/\/$/, '')}${partialRedirectUrl}`
       : partialRedirectUrl;
 
-    // Persistimos la transacción en estado "hosted_pending"
     const txn = new Transaction({
       paymentId,
       merchantId,
@@ -145,8 +105,6 @@ async function createHostedCheckout(req, res) {
       callbackUrl: callbackUrl || null,
       createdAt: timestamp,
       sessionExpiresAt: expiresAt
-      // Nota: no guardamos cardPaymentMethodSpecificInput para no arrastrar datos sensibles.
-      // Si quieres guardar algún campo no-PCI, se puede añadir un subdocumento "metadata".
     });
     await txn.save();
 
@@ -161,8 +119,7 @@ async function createHostedCheckout(req, res) {
       }
     });
 
-    return res.status(200).json({
-      success: true,
+    const responsePayload = buildHostedCheckoutCreateResponse({
       paymentId,
       hostedCheckoutId,
       merchantId,
@@ -177,6 +134,8 @@ async function createHostedCheckout(req, res) {
       },
       timestamp: timestamp.toISOString()
     });
+
+    return res.status(200).json(responsePayload);
   } catch (e) {
     logger.error('Error in createHostedCheckout', { error: e.message });
     auditLogger.info({
@@ -193,10 +152,6 @@ async function createHostedCheckout(req, res) {
   }
 }
 
-/**
- * GET /payments/hosted/:hostedCheckoutId/status
- * Simula GetHostedCheckoutStatus: devolvemos el estado de la sesión y de la transacción.
- */
 async function getHostedCheckoutStatus(req, res) {
   const { hostedCheckoutId } = req.params;
 
@@ -226,21 +181,12 @@ async function getHostedCheckoutStatus(req, res) {
         tx.status
       );
 
-    return res.status(200).json({
-      success: true,
-      hostedCheckoutId: tx.hostedCheckoutId,
-      paymentId: tx.paymentId,
-      merchantId: tx.merchantId,
-      amount: tx.amount,
-      currency: tx.currency,
-      status: tx.status,
+    const responsePayload = buildHostedCheckoutStatusResponse(tx, {
       completed: isFinal,
-      expired,
-      sessionExpiresAt: tx.sessionExpiresAt
-        ? new Date(tx.sessionExpiresAt).toISOString()
-        : null,
-      timestamp: (tx.updatedAt || tx.createdAt || new Date()).toISOString()
+      expired
     });
+
+    return res.status(200).json(responsePayload);
   } catch (e) {
     return res.status(500).json({
       success: false,
