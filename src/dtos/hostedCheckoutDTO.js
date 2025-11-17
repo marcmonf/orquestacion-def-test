@@ -12,18 +12,24 @@ const {
 
 /**
  * DTO raíz para Hosted Checkout (CreateHostedCheckout-style).
+ *
+ * Estructura esperada en el body:
+ * {
+ *   cardPaymentMethodSpecificInput: { ... },
+ *   fraudFields: { ... },
+ *   order: { ... },
+ *   feedbacks: { ... }
+ * }
+ *
+ * El merchantId SE LEE DE LA URL (/:merchantId/...) y no forma parte del body.
  */
 const HostedCheckoutRequestDTO = Joi.object({
-  merchantId: Joi.string().required(),
   cardPaymentMethodSpecificInput: CardPaymentMethodSpecificInputDTO.required(),
   fraudFields: FraudFieldsDTO.optional(),
   order: OrderDTO.required(),
   feedbacks: FeedbacksDTO.optional()
 });
 
-/**
- * Builders de respuesta estándar Monetiser
- */
 function buildHostedCheckoutCreateResponse(payload) {
   const {
     paymentId,
