@@ -25,8 +25,9 @@ try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-app.use('/payments/server', serverPaymentRoutes);
-app.use('/payments/hosted', hostedCheckoutRoutes);
+// ⚠️ OJO: antes montabas aquí /payments/server y /payments/hosted,
+// por delante de express.json(). Eso hacía que req.body llegara vacío.
+// Esas líneas se han movido más abajo, después de los parsers.
 
 app.use(cors({
   origin(origin, cb) {
@@ -141,7 +142,15 @@ try {
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
-// Payments
+// 📌 NUEVO: Endpoints S2S + Hosted con merchantId COMO SEGMENTO DE URL
+//    POST /:merchantId/payments/server
+//    POST /:merchantId/payments/hosted
+//    GET  /:merchantId/payments/server/:paymentId
+//    GET  /:merchantId/payments/hosted/:hostedCheckoutId/status
+app.use('/:merchantId/payments/server', serverPaymentRoutes);
+app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
+
+// Payments (router agregador existente, lo dejamos tal cual)
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
 
 /* ===== Static ===== */
