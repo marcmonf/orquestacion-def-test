@@ -5,7 +5,7 @@ const express  = require('express');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const router   = express.Router();
+const router   = express.Router({ mergeParams: true });
 
 const Transaction = require('../models/Transaction');
 const Merchant    = require('../models/Merchant');
@@ -47,11 +47,26 @@ const CSP_HEADER =
 function safeCompare(a,b){try{const A=Buffer.from(String(a||''),'utf8');const B=Buffer.from(String(b||''),'utf8');if(A.length!==B.length)return false;return crypto.timingSafeEqual(A,B);}catch{return false;}}
 function generateSignature(payload,secret){return crypto.createHmac('sha256',String(secret)).update(JSON.stringify(payload)).digest('hex');}
 function readHtml(abs){try{return fs.readFileSync(abs,'utf8');}catch{return null;}}
-function injectBranding(html,branding){
+
+function injectBranding(html,branding,runtime){
   if(!html) return null;
   const {logoUrl='/Logo_Monetiser.png',brandColor='#0070f3',accentColor='#0053b3'}=branding||{};
-  return html.replace(/__LOGO_SRC__/g,logoUrl).replace(/__BRAND_COLOR__/g,brandColor).replace(/__ACCENT_COLOR__/g,accentColor);
+  const rt = runtime || {};
+  let out = html
+    .replace(/__LOGO_SRC__/g,logoUrl)
+    .replace(/__BRAND_COLOR__/g,brandColor)
+    .replace(/__ACCENT_COLOR__/g,accentColor);
+
+  // Inyección de datos de la transacción en el HTML
+  out = out
+    .replace(/__AMOUNT__/g, (rt.amount !== undefined && rt.amount !== null) ? String(rt.amount) : '')
+    .replace(/__CURRENCY__/g, rt.currency || '')
+    .replace(/__MERCHANT_ID__/g, rt.merchantId || '')
+    .replace(/__PAYMENT_ID__/g, rt.paymentId || '');
+
+  return out;
 }
+
 function brandedError(res,code){
   const map={400:'400.html',403:'403.html',404:'404.html',409:'409.html',410:'410.html',500:'500.html'};
   const abs=path.join(__dirname,'../../public/errors',map[code]||'403.html');
@@ -59,17 +74,19 @@ function brandedError(res,code){
   return res.status(code).send(html||String(code));
 }
 
-// GET /iframe
+// GET /iframe  (y /:merchantId/iframe)
 router.get('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   const { paymentId, signature, exp, nonce } = req.query || {};
+  const merchantIdFromUrl = req.params.merchantId || null;
 
   // Carga base (sin params) para pruebas locales
   if(!paymentId && !signature && !exp){
     const abs = path.join(__dirname,'../../public/iframe.html');
     const base = readHtml(abs);
     if(!base) return res.status(500).send('Error cargando iframe');
-    return res.send(injectBranding(base, {}) || base);
+    // Sin runtime: solo branding genérico
+    return res.send(injectBranding(base, {}, {}) || base);
   }
 
   if(!paymentId || !signature || !exp) return brandedError(res,400);
@@ -82,6 +99,11 @@ router.get('/', async (req,res)=>{
   try{
     const tx = await Transaction.findOne({paymentId}).lean(false);
     if(!tx) return brandedError(res,404);
+
+    // Si la URL incluye merchantId, comprobamos coherencia con la transacción
+    if (merchantIdFromUrl && merchantIdFromUrl !== tx.merchantId) {
+      return brandedError(res,403);
+    }
 
     const merchant = await Merchant.findOne(
       {merchantId:tx.merchantId},
@@ -135,12 +157,19 @@ router.get('/', async (req,res)=>{
     } catch {}
     await tx.save();
 
-    // Branding dinámico
+    // Branding dinámico + datos de la transacción (importe, moneda, merchant, paymentId)
     const branding=merchant?{logoUrl:merchant.logoUrl,brandColor:merchant.brandColor,accentColor:merchant.accentColor}:{};
+    const runtime = {
+      amount: tx.amount,
+      currency: tx.currency,
+      merchantId: tx.merchantId,
+      paymentId: tx.paymentId
+    };
+
     const basePath=path.join(__dirname,'../../public/iframe.html');
     const baseHtml=readHtml(basePath);
     if(!baseHtml) return res.status(500).send('Error cargando iframe');
-    return res.send(injectBranding(baseHtml,branding)||baseHtml);
+    return res.send(injectBranding(baseHtml,branding,runtime)||baseHtml);
   }catch(err){
     console.error('Error en /iframe:',err);
     return brandedError(res,500);
@@ -151,7 +180,7 @@ router.get('/', async (req,res)=>{
 router.post('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   try{
-    const { amount, currency, merchantId, method, status, returnUrl } = req.body || {};
+    const { amount, currency, merchantId, method, status, returnUrl, paymentId } = req.body || {};
     if(typeof amount!=='number' || !currency || !merchantId){
       return res.status(400).json({ success:false, message:'payload inválido' });
     }
@@ -162,6 +191,7 @@ router.post('/', async (req,res)=>{
       currency,
       method: method || 'card',
       status: status || 'approved',
+      paymentId: paymentId || null,
       returnUrl: returnUrl || null,
       createdAt: new Date().toISOString()
     };
