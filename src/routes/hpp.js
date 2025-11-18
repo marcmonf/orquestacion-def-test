@@ -31,13 +31,23 @@ router.get('/:hostedCheckoutId', async (req, res) => {
 
     const now = new Date();
 
+    // Si la sesión está expirada, devolvemos 410
     if (tx.sessionExpiresAt && now > tx.sessionExpiresAt) {
       return res.status(410).send('Hosted checkout session expired');
     }
 
-    if (tx.status !== 'hosted_pending') {
-      return res.status(409).send('Hosted checkout not in a redirectable state');
-    }
+    // IMPORTANTE:
+    // Antes aquí bloqueábamos si tx.status !== 'hosted_pending',
+    // devolviendo: 'Hosted checkout not in a redirectable state'.
+    //
+    // Ese control de estado es redundante y conflictivo, porque:
+    //  - La lógica de si el pago está en un estado válido para mostrar
+    //    el iFrame ya se controla en src/routes/iframe.js
+    //    mediante ALLOWED_INITIAL_STATUSES y iframeServedAt.
+    //  - Aquí lo único que necesitamos es construir la URL firmada y redirigir.
+    //
+    // Por eso ELIMINAMOS ese check de estado y dejamos que sea /iframe
+    // quien devuelva el error 409 bonito cuando corresponda.
 
     const merchant = await Merchant.findOne(
       { merchantId: tx.merchantId },
