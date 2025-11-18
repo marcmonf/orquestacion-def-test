@@ -89,13 +89,12 @@ function injectBranding(html, branding, runtime){
     .replace(/__BRAND_COLOR__/g, brandColor)
     .replace(/__ACCENT_COLOR__/g, accentColor);
 
-  // Inyección de datos de la transacción en el HTML
+  // Inyección de datos de la transacción SOLO para mostrar al usuario
   out = out
     .replace(/__AMOUNT__/g, (rt.amount !== undefined && rt.amount !== null) ? String(rt.amount) : '')
     .replace(/__CURRENCY__/g, rt.currency || '')
     .replace(/__MERCHANT_ID__/g, rt.merchantId || '')
-    .replace(/__PAYMENT_ID__/g, rt.paymentId || '')
-    .replace(/__MINOR_UNITS__/g, String(rt.minorUnits ?? 2));
+    .replace(/__PAYMENT_ID__/g, rt.paymentId || '');
 
   return out;
 }
@@ -231,12 +230,12 @@ router.get('/', async (req,res)=>{
     // Conversión de minor units -> importe "humano" según la divisa
     const cfg         = getCurrencyConfig(tx.currency);
     const majorAmount = toMajorUnits(tx.amount, tx.currency);
+
     const runtime = {
       amount: majorAmount.toFixed(cfg.minorUnits),
       currency: tx.currency,
       merchantId: tx.merchantId,
-      paymentId: tx.paymentId,
-      minorUnits: cfg.minorUnits
+      paymentId: tx.paymentId
     };
 
     const basePath = path.join(__dirname, '../../public/iframe.html');
@@ -249,26 +248,57 @@ router.get('/', async (req,res)=>{
   }
 });
 
-// POST /iframe-process (mock)
+// POST /iframe-process  (mock de pago, tomando amount/currency SOLO de Mongo)
 router.post('/', async (req,res)=>{
   res.setHeader('Content-Security-Policy', CSP_HEADER);
+
   try{
-    const { amount, currency, merchantId, method, status, returnUrl, paymentId } = req.body || {};
-    if (typeof amount !== 'number' || !currency || !merchantId) {
-      return res.status(400).json({ success:false, message:'payload inválido' });
+    const { paymentId, method, transactionType, returnUrl } = req.body || {};
+
+    if (!paymentId) {
+      return res.status(400).json({
+        success: false,
+        message: 'paymentId es obligatorio'
+      });
     }
-    const txn = {
-      _id: (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex')),
-      merchantId,
-      amount,
-      currency,
+
+    const tx = await Transaction.findOne({ paymentId }).lean(false);
+    if (!tx) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transacción no encontrada'
+      });
+    }
+
+    // No permitimos reprocesar pagos ya finalizados
+    if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
+      return res.status(409).json({
+        success: false,
+        message: 'Transacción ya procesada o en estado no válido'
+      });
+    }
+
+    // Amount y currency SIEMPRE vienen de Mongo, nunca del navegador
+    const cfg         = getCurrencyConfig(tx.currency);
+    const majorAmount = toMajorUnits(tx.amount, tx.currency);
+
+    // MOCK: marcamos la transacción como aprobada (hasta enganchar con S2S real)
+    tx.status    = 'approved';
+    tx.updatedAt = new Date();
+    await tx.save();
+
+    const txnResponse = {
+      paymentId: tx.paymentId,
+      merchantId: tx.merchantId,
+      amount: majorAmount,               // en unidades "humanas" para mostrar
+      currency: tx.currency,
       method: method || 'card',
-      status: status || 'approved',
-      paymentId: paymentId || null,
-      returnUrl: returnUrl || null,
-      createdAt: new Date().toISOString()
+      status: tx.status,
+      transactionType: transactionType || 'CIT',
+      returnUrl: returnUrl || tx.returnUrl || null
     };
-    return res.json({ success:true, transaction: txn });
+
+    return res.json({ success:true, transaction: txnResponse });
   }catch(e){
     console.error('Error en POST /iframe-process:', e);
     return res.status(500).json({ success:false, message:'error interno' });
