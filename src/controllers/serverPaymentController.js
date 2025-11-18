@@ -102,11 +102,19 @@ async function createServerPayment(req, res) {
     hostedFieldsSessionId
   } = value;
 
-  const amount = order.amountOfMoney.amount;
+  const amount = order.amountOfMoney.amount;          // minor units (p.ej. 2500 = 25.00 EUR)
   const currency = order.amountOfMoney.currencyCode;
 
   const returnUrl =
     cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
+
+  // Nuevo: merchantReference desde order.references, si viene informado
+  const merchantReference =
+    order &&
+    order.references &&
+    typeof order.references.merchantReference !== 'undefined'
+      ? String(order.references.merchantReference)
+      : null;
 
   const timestamp = new Date();
   const paymentId = uuidv4();
@@ -153,6 +161,7 @@ async function createServerPayment(req, res) {
       callbackUrl: null,
       hostedTokenizationId: hostedTokenizationId || null,
       hostedFieldsSessionId: hostedFieldsSessionId || null,
+      merchantReference: merchantReference || null,   // ← NUEVO: guardamos merchantReference
       createdAt: timestamp
     });
     await txn.save();
@@ -160,7 +169,14 @@ async function createServerPayment(req, res) {
     auditLogger.info({
       action: 'SERVER_PAYMENT_CREATED',
       user: merchantId || 'unknown',
-      details: { paymentId, amount, currency, method: 'card', internalStatus },
+      details: {
+        paymentId,
+        amount,
+        currency,
+        method: 'card',
+        internalStatus,
+        merchantReference: merchantReference || null
+      },
       metadata: { createdAt: timestamp.toISOString(), flow: 'server_to_server' }
     });
 
@@ -175,6 +191,9 @@ async function createServerPayment(req, res) {
       merchantAction,
       statusOutput,
       timestamp: timestamp.toISOString()
+      // Si en futuro quieres devolver merchantReference en la respuesta,
+      // aquí podríamos añadirlo sin romper nada:
+      // merchantReference
     });
 
     return res.status(200).json(responsePayload);
