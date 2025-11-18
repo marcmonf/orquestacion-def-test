@@ -202,12 +202,15 @@ router.get('/', async (req,res)=>{
       if (!safeCompare(expected, signature)) return brandedError(res, 403);
     }
 
-    // Bloqueo si ya se sirvió o el estado no es inicial (initialized / hosted_pending)
-    if (tx.iframeServedAt || !ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
+    // BLOQUEO SOLO POR ESTADO:
+    // - Si la transacción ya no está en un estado inicial (initialized / hosted_pending)
+    //   devolvemos 409.
+    // - iframeServedAt se usa SOLO para trazabilidad, no para bloquear.
+    if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
       return brandedError(res, 409);
     }
 
-    // Marca trazabilidad iFrame
+    // Marca trazabilidad iFrame (pero NO bloqueamos futuras cargas por esto)
     tx.iframeServedAt = new Date();
     try {
       tx.iframeClientIp  =
@@ -270,7 +273,7 @@ router.post('/', async (req,res)=>{
       });
     }
 
-    // No permitimos reprocesar pagos ya finalizados
+    // No permitimos reprocesar pagos ya finalizados o en estado no inicial
     if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
       return res.status(409).json({
         success: false,
