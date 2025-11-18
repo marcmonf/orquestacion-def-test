@@ -44,6 +44,39 @@ function resolveMerchantIdFromRequest(req) {
 }
 
 /**
+ * Resuelve la base URL para construir redirectUrl absoluto.
+ *
+ * Prioridad:
+ *  1) process.env.HPP_BASE_URL (o BASE_URL)
+ *  2) x-forwarded-proto / req.protocol + host (Render / proxies)
+ *  3) si no hay host, devuelve cadena vacía (se usará ruta relativa)
+ */
+function resolveBaseUrl(req) {
+  const envBase = (process.env.HPP_BASE_URL || process.env.BASE_URL || '').trim();
+  if (envBase) {
+    return envBase.replace(/\/$/, '');
+  }
+
+  const protoHeader = (req.headers['x-forwarded-proto'] || '')
+    .toString()
+    .split(',')[0]
+    .trim();
+
+  const proto = protoHeader || req.protocol || 'https';
+  const host =
+    (req.headers['x-forwarded-host'] ||
+      req.headers.host ||
+      '').toString().trim();
+
+  if (host) {
+    return `${proto}://${host}`.replace(/\/$/, '');
+  }
+
+  // Fallback: se devolverá redirectUrl relativo
+  return '';
+}
+
+/**
  * POST /:merchantId/payments/hosted
  */
 async function createHostedCheckout(req, res) {
@@ -121,10 +154,10 @@ async function createHostedCheckout(req, res) {
 
     const RETURNMAC = generateReturnMac(macPayload, merchantSecret);
 
-    const baseHpp = process.env.HPP_BASE_URL || '';
+    const baseHpp = resolveBaseUrl(req);
     const partialRedirectUrl = `/hpp/${encodeURIComponent(hostedCheckoutId)}`;
     const redirectUrl = baseHpp
-      ? `${baseHpp.replace(/\/$/, '')}${partialRedirectUrl}`
+      ? `${baseHpp}${partialRedirectUrl}`
       : partialRedirectUrl;
 
     const txn = new Transaction({
