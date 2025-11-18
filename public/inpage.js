@@ -1,5 +1,7 @@
-//public/inpage.js
+// public/inpage.js
 
+// De momento este endpoint es el mock de salida del iframe.
+// Más adelante lo reconduciremos al flujo S2S real.
 const apiUrl = '/iframe-process';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,38 +29,28 @@ document.addEventListener('DOMContentLoaded', () => {
     googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
   }
 
-  // Prefijar importe y moneda desde el contexto (HostedCheckout)
-  const ctx = window.MONETISER_CONTEXT || {};
-  const amountInput = document.getElementById('amount');
-  const currencyInput = document.getElementById('currency');
-
-  if (amountInput && ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '') {
-    amountInput.value = ctx.amount;
-    amountInput.readOnly = true;
-  }
-  if (currencyInput && ctx.currency) {
-    currencyInput.value = ctx.currency;
-    currencyInput.readOnly = true;
-  }
+  // Trazas básicas para validar que inyectamos bien los metadatos
+  const merchantId = document.getElementById('merchantId')?.value;
+  const paymentId  = document.getElementById('paymentId')?.value;
+  console.debug('[iframe] merchantId, paymentId:', merchantId, paymentId);
 });
 
 function mostrarMensajeExito(transaction) {
-  const ctx = window.MONETISER_CONTEXT || {};
-  const decimals =
-    typeof ctx.minorUnits === 'number' && Number.isFinite(ctx.minorUnits)
-      ? ctx.minorUnits
-      : 2;
-
   const returnUrl = transaction.returnUrl || 'https://orquestacion-def-test.onrender.com';
   const successDiv = document.getElementById('success-message');
+
+  const amountNumber = Number(transaction.amount);
+  const currency = transaction.currency || '';
+
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
-    Importe: ${Number(transaction.amount).toFixed(decimals)} ${transaction.currency}<br>
-    ID: <small>${transaction._id}</small><br>
-    Merchant: <small>${transaction.merchantId}</small><br><br>
+    Importe: ${isNaN(amountNumber) ? '-' : amountNumber.toFixed(2)} ${currency}<br>
+    ID: <small>${transaction.paymentId || transaction._id || '-'}</small><br>
+    Merchant: <small>${transaction.merchantId || '-'}</small><br><br>
     <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
   `;
   successDiv.style.display = 'block';
+
   const formCard = document.getElementById('card-form');
   const headerCard = document.getElementById('method-card');
   if (formCard) formCard.style.display = 'none';
@@ -68,20 +60,8 @@ function mostrarMensajeExito(transaction) {
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
 
-  const ctx = window.MONETISER_CONTEXT || {};
-
-  const amountFromCtx =
-    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
-      ? Number(ctx.amount)
-      : parseFloat(document.getElementById('amount').value);
-
-  const currencyFromCtx =
-    (ctx.currency && ctx.currency !== '')
-      ? ctx.currency
-      : document.getElementById('currency').value;
-
-  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
-  const paymentIdFromCtx  = ctx.paymentId || null;
+  const merchantId = document.getElementById('merchantId')?.value || 'demo-merchant';
+  const paymentId  = document.getElementById('paymentId')?.value || null;
 
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
@@ -89,45 +69,46 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
     expiryMonth: document.getElementById('expiryMonth').value,
     expiryYear: document.getElementById('expiryYear').value,
     cvv: document.getElementById('cvv').value,
-    amount: amountFromCtx,
-    currency: currencyFromCtx,
-    merchantId: merchantIdFromCtx,
-    paymentId: paymentIdFromCtx,
+
+    // No enviamos amount ni currency: se toman SIEMPRE de Mongo
+    merchantId,
+    paymentId,
+
     method: 'card',
-    status: 'approved',
     transactionType: 'CIT',
     returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
   };
 
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
+  try {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
 
-  const result = await res.json();
-  if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction);
-  } else {
-    alert(result.message || 'Error en el pago.');
+    const result = await res.json();
+    if (result.success && result.transaction) {
+      mostrarMensajeExito(result.transaction);
+    } else {
+      alert(result.message || 'Error en el pago.');
+    }
+  } catch (err) {
+    console.error('Error llamando al endpoint de pago desde el iframe:', err);
+    alert('Error en la comunicación con el orquestador.');
   }
 });
 
+// APPLE PAY (sigue siendo mock; no toca Mongo ni S2S todavía)
+
 function startApplePaySession() {
-  const ctx = window.MONETISER_CONTEXT || {};
-  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
-  const currencyFromCtx = ctx.currency || 'EUR';
-  const amountFromCtx =
-    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
-      ? String(ctx.amount)
-      : '99.90';
+  const merchantId = document.getElementById('merchantId')?.value || 'demo-merchant';
 
   const session = new ApplePaySession(3, {
     countryCode: 'ES',
-    currencyCode: currencyFromCtx,
+    currencyCode: 'EUR',
     supportedNetworks: ['visa', 'masterCard'],
     merchantCapabilities: ['supports3DS'],
-    total: { label: merchantIdFromCtx, amount: amountFromCtx }
+    total: { label: merchantId || 'Demo Merchant', amount: '99.90' }
   });
 
   session.onvalidatemerchant = async (event) => {
@@ -142,41 +123,41 @@ function startApplePaySession() {
 
   session.onpaymentauthorized = async (event) => {
     const paymentData = event.payment.token.paymentData;
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        method: 'applepay',
-        paymentData,
-        amount: Number(amountFromCtx),
-        currency: currencyFromCtx,
-        merchantId: merchantIdFromCtx,
-        transactionType: 'CIT',
-        returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
-      })
-    });
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'applepay',
+          paymentData,
+          merchantId,
+          transactionType: 'CIT',
+          returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
+        })
+      });
 
-    const result = await response.json();
-    if (result.success && result.transaction) {
-      session.completePayment(ApplePaySession.STATUS_SUCCESS);
-      mostrarMensajeExito(result.transaction);
-    } else {
+      const result = await response.json();
+      if (result.success && result.transaction) {
+        session.completePayment(ApplePaySession.STATUS_SUCCESS);
+        mostrarMensajeExito(result.transaction);
+      } else {
+        session.completePayment(ApplePaySession.STATUS_FAILURE);
+        alert(result.message || 'Apple Pay falló');
+      }
+    } catch (err) {
+      console.error('Error en Apple Pay:', err);
       session.completePayment(ApplePaySession.STATUS_FAILURE);
-      alert(result.message || 'Apple Pay falló');
+      alert('Error en la comunicación con el orquestador.');
     }
   };
 
   session.begin();
 }
 
+// GOOGLE PAY (igual: mock sin impacto en Mongo por ahora)
+
 async function onGooglePayButtonClicked() {
-  const ctx = window.MONETISER_CONTEXT || {};
-  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
-  const currencyFromCtx = ctx.currency || 'EUR';
-  const amountFromCtx =
-    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
-      ? String(ctx.amount)
-      : '99.90';
+  const merchantId = document.getElementById('merchantId')?.value || 'demo-merchant';
 
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
   const paymentData = await client.loadPaymentData({
@@ -184,32 +165,46 @@ async function onGooglePayButtonClicked() {
     apiVersionMinor: 0,
     allowedPaymentMethods: [{
       type: 'CARD',
-      parameters: { allowedAuthMethods: ['PAN_ONLY','CRYPTOGRAM_3DS'], allowedCardNetworks: ['VISA','MASTERCARD'] },
-      tokenizationSpecification: { type: 'PAYMENT_GATEWAY', parameters: { gateway: 'stripe', gatewayMerchantId: merchantIdFromCtx } }
+      parameters: {
+        allowedAuthMethods: ['PAN_ONLY','CRYPTOGRAM_3DS'],
+        allowedCardNetworks: ['VISA','MASTERCARD']
+      },
+      tokenizationSpecification: {
+        type: 'PAYMENT_GATEWAY',
+        parameters: { gateway: 'stripe', gatewayMerchantId: 'demo_merchant' }
+      }
     }],
-    transactionInfo: { totalPriceStatus: 'FINAL', totalPrice: amountFromCtx, currencyCode: currencyFromCtx, countryCode: 'ES' },
-    merchantInfo: { merchantName: merchantIdFromCtx }
+    transactionInfo: {
+      totalPriceStatus: 'FINAL',
+      totalPrice: '99.90',
+      currencyCode: 'EUR',
+      countryCode: 'ES'
+    },
+    merchantInfo: { merchantName: merchantId || 'Demo Merchant' }
   });
 
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      method: 'googlepay',
-      paymentData,
-      amount: Number(amountFromCtx),
-      currency: currencyFromCtx,
-      merchantId: merchantIdFromCtx,
-      transactionType: 'CIT',
-      returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
-    })
-  });
+  try {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'googlepay',
+        paymentData,
+        merchantId,
+        transactionType: 'CIT',
+        returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
+      })
+    });
 
-  const result = await res.json();
-  if (result.success && result.transaction) {
-    mostrarMensajeExito(result.transaction);
-  } else {
-    alert(result.message || 'Google Pay falló');
+    const result = await res.json();
+    if (result.success && result.transaction) {
+      mostrarMensajeExito(result.transaction);
+    } else {
+      alert(result.message || 'Google Pay falló');
+    }
+  } catch (err) {
+    console.error('Error en Google Pay:', err);
+    alert('Error en la comunicación con el orquestador.');
   }
 }
 
