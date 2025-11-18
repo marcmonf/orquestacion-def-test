@@ -117,6 +117,9 @@ async function createHostedCheckout(req, res) {
   const amount = order.amountOfMoney.amount;
   const currency = order.amountOfMoney.currencyCode;
 
+  // NUEVO: referencia propia del merchant (orderId, bookingId, etc.)
+  const merchantReference = order.references?.merchantReference || null;
+
   const returnUrl =
     cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
 
@@ -163,6 +166,7 @@ async function createHostedCheckout(req, res) {
     const txn = new Transaction({
       paymentId,
       merchantId,
+      merchantReference,    // ← NUEVO: guardamos la referencia del comercio
       amount,
       currency,
       method: 'card',
@@ -178,7 +182,7 @@ async function createHostedCheckout(req, res) {
     auditLogger.info({
       action: 'HOSTED_CHECKOUT_CREATED',
       user: merchantId || 'unknown',
-      details: { paymentId, hostedCheckoutId, amount, currency },
+      details: { paymentId, hostedCheckoutId, amount, currency, merchantReference },
       metadata: {
         createdAt: timestamp.toISOString(),
         flow: 'hosted_checkout',
@@ -190,6 +194,7 @@ async function createHostedCheckout(req, res) {
       paymentId,
       hostedCheckoutId,
       merchantId,
+      merchantReference,  // ← lo devolvemos también en la respuesta por claridad
       amount,
       currency,
       RETURNMAC,
