@@ -9,6 +9,7 @@ const router   = express.Router({ mergeParams: true });
 
 const Transaction = require('../models/Transaction');
 const Merchant    = require('../models/Merchant');
+const { getCurrencyConfig, toMajorUnits } = require('../utils/currencyConfig');
 
 /* Guard HMAC con exp+nonce (opcional por flag) */
 let iframeGuard = null;
@@ -62,7 +63,8 @@ function injectBranding(html,branding,runtime){
     .replace(/__AMOUNT__/g, (rt.amount !== undefined && rt.amount !== null) ? String(rt.amount) : '')
     .replace(/__CURRENCY__/g, rt.currency || '')
     .replace(/__MERCHANT_ID__/g, rt.merchantId || '')
-    .replace(/__PAYMENT_ID__/g, rt.paymentId || '');
+    .replace(/__PAYMENT_ID__/g, rt.paymentId || '')
+    .replace(/__MINOR_UNITS__/g, String(rt.minorUnits ?? 2));
 
   return out;
 }
@@ -159,11 +161,16 @@ router.get('/', async (req,res)=>{
 
     // Branding dinámico + datos de la transacción (importe, moneda, merchant, paymentId)
     const branding=merchant?{logoUrl:merchant.logoUrl,brandColor:merchant.brandColor,accentColor:merchant.accentColor}:{};
+
+    // Conversión de minor units -> importe "humano" según la divisa
+    const cfg = getCurrencyConfig(tx.currency);
+    const majorAmount = toMajorUnits(tx.amount, tx.currency);
     const runtime = {
-      amount: tx.amount,
+      amount: majorAmount.toFixed(cfg.minorUnits),
       currency: tx.currency,
       merchantId: tx.merchantId,
-      paymentId: tx.paymentId
+      paymentId: tx.paymentId,
+      minorUnits: cfg.minorUnits
     };
 
     const basePath=path.join(__dirname,'../../public/iframe.html');
