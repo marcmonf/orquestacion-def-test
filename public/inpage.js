@@ -43,11 +43,17 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function mostrarMensajeExito(transaction) {
+  const ctx = window.MONETISER_CONTEXT || {};
+  const decimals =
+    typeof ctx.minorUnits === 'number' && Number.isFinite(ctx.minorUnits)
+      ? ctx.minorUnits
+      : 2;
+
   const returnUrl = transaction.returnUrl || 'https://orquestacion-def-test.onrender.com';
   const successDiv = document.getElementById('success-message');
   successDiv.innerHTML = `
     <strong>✅ ¡Pago realizado con éxito!</strong>
-    Importe: ${Number(transaction.amount).toFixed(2)} ${transaction.currency}<br>
+    Importe: ${Number(transaction.amount).toFixed(decimals)} ${transaction.currency}<br>
     ID: <small>${transaction._id}</small><br>
     Merchant: <small>${transaction.merchantId}</small><br><br>
     <button onclick="window.location.href='${returnUrl}'">Volver a la tienda</button>
