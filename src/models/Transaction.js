@@ -10,6 +10,10 @@ const transactionSchema = new mongoose.Schema({
   method:         { type: String, required: true },
   status:         { type: String, required: true },
 
+  // Hosted Checkout / HPP
+  hostedCheckoutId: { type: String, index: true },
+  sessionExpiresAt: { type: Date },
+
   // Tarjeta (solo cuando el merchant postea los datos)
   cardholderName: { type: String },
   expiryMonth:    { type: String },
@@ -30,7 +34,7 @@ const transactionSchema = new mongoose.Schema({
   processor:      String,
   fallbackUsed:   { type: Boolean, default: false },
   returnUrl:      String,
-  callbackUrl:    String,   // ← añadido para webhooks
+  callbackUrl:    String,   // ← para webhooks
 
   // Tracking iFrame
   iframeServedAt:   Date,
@@ -45,6 +49,7 @@ transactionSchema.index({ merchantId: 1 });
 transactionSchema.index({ createdAt: -1 });
 transactionSchema.index({ bin: 1 });
 transactionSchema.index({ issuerCountry: 1 });
+transactionSchema.index({ hostedCheckoutId: 1 });
 
 module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);
