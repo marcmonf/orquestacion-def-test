@@ -26,6 +26,20 @@ document.addEventListener('DOMContentLoaded', () => {
   if (isAndroid && window.google) {
     googlePayBtn.addEventListener('click', onGooglePayButtonClicked);
   }
+
+  // Prefijar importe y moneda desde el contexto (HostedCheckout)
+  const ctx = window.MONETISER_CONTEXT || {};
+  const amountInput = document.getElementById('amount');
+  const currencyInput = document.getElementById('currency');
+
+  if (amountInput && ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '') {
+    amountInput.value = ctx.amount;
+    amountInput.readOnly = true;
+  }
+  if (currencyInput && ctx.currency) {
+    currencyInput.value = ctx.currency;
+    currencyInput.readOnly = true;
+  }
 });
 
 function mostrarMensajeExito(transaction) {
@@ -47,15 +61,32 @@ function mostrarMensajeExito(transaction) {
 
 document.getElementById('card-payment-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+
+  const ctx = window.MONETISER_CONTEXT || {};
+
+  const amountFromCtx =
+    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
+      ? Number(ctx.amount)
+      : parseFloat(document.getElementById('amount').value);
+
+  const currencyFromCtx =
+    (ctx.currency && ctx.currency !== '')
+      ? ctx.currency
+      : document.getElementById('currency').value;
+
+  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
+  const paymentIdFromCtx  = ctx.paymentId || null;
+
   const data = {
     cardholderName: document.getElementById('cardholderName').value,
     cardNumber: document.getElementById('cardNumber').value,
     expiryMonth: document.getElementById('expiryMonth').value,
     expiryYear: document.getElementById('expiryYear').value,
     cvv: document.getElementById('cvv').value,
-    amount: parseFloat(document.getElementById('amount').value),
-    currency: document.getElementById('currency').value,
-    merchantId: 'demo-merchant',
+    amount: amountFromCtx,
+    currency: currencyFromCtx,
+    merchantId: merchantIdFromCtx,
+    paymentId: paymentIdFromCtx,
     method: 'card',
     status: 'approved',
     transactionType: 'CIT',
@@ -77,12 +108,20 @@ document.getElementById('card-payment-form').addEventListener('submit', async (e
 });
 
 function startApplePaySession() {
+  const ctx = window.MONETISER_CONTEXT || {};
+  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
+  const currencyFromCtx = ctx.currency || 'EUR';
+  const amountFromCtx =
+    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
+      ? String(ctx.amount)
+      : '99.90';
+
   const session = new ApplePaySession(3, {
     countryCode: 'ES',
-    currencyCode: 'EUR',
+    currencyCode: currencyFromCtx,
     supportedNetworks: ['visa', 'masterCard'],
     merchantCapabilities: ['supports3DS'],
-    total: { label: 'Demo Merchant', amount: '99.90' }
+    total: { label: merchantIdFromCtx, amount: amountFromCtx }
   });
 
   session.onvalidatemerchant = async (event) => {
@@ -103,9 +142,9 @@ function startApplePaySession() {
       body: JSON.stringify({
         method: 'applepay',
         paymentData,
-        amount: 99.90,
-        currency: 'EUR',
-        merchantId: 'demo-merchant',
+        amount: Number(amountFromCtx),
+        currency: currencyFromCtx,
+        merchantId: merchantIdFromCtx,
         transactionType: 'CIT',
         returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
       })
@@ -125,6 +164,14 @@ function startApplePaySession() {
 }
 
 async function onGooglePayButtonClicked() {
+  const ctx = window.MONETISER_CONTEXT || {};
+  const merchantIdFromCtx = ctx.merchantId || 'demo-merchant';
+  const currencyFromCtx = ctx.currency || 'EUR';
+  const amountFromCtx =
+    (ctx.amount !== undefined && ctx.amount !== null && ctx.amount !== '')
+      ? String(ctx.amount)
+      : '99.90';
+
   const client = new google.payments.api.PaymentsClient({ environment: 'TEST' });
   const paymentData = await client.loadPaymentData({
     apiVersion: 2,
@@ -132,10 +179,10 @@ async function onGooglePayButtonClicked() {
     allowedPaymentMethods: [{
       type: 'CARD',
       parameters: { allowedAuthMethods: ['PAN_ONLY','CRYPTOGRAM_3DS'], allowedCardNetworks: ['VISA','MASTERCARD'] },
-      tokenizationSpecification: { type: 'PAYMENT_GATEWAY', parameters: { gateway: 'stripe', gatewayMerchantId: 'demo_merchant' } }
+      tokenizationSpecification: { type: 'PAYMENT_GATEWAY', parameters: { gateway: 'stripe', gatewayMerchantId: merchantIdFromCtx } }
     }],
-    transactionInfo: { totalPriceStatus: 'FINAL', totalPrice: '99.90', currencyCode: 'EUR', countryCode: 'ES' },
-    merchantInfo: { merchantName: 'Demo Merchant' }
+    transactionInfo: { totalPriceStatus: 'FINAL', totalPrice: amountFromCtx, currencyCode: currencyFromCtx, countryCode: 'ES' },
+    merchantInfo: { merchantName: merchantIdFromCtx }
   });
 
   const res = await fetch(apiUrl, {
@@ -144,9 +191,9 @@ async function onGooglePayButtonClicked() {
     body: JSON.stringify({
       method: 'googlepay',
       paymentData,
-      amount: 99.90,
-      currency: 'EUR',
-      merchantId: 'demo-merchant',
+      amount: Number(amountFromCtx),
+      currency: currencyFromCtx,
+      merchantId: merchantIdFromCtx,
       transactionType: 'CIT',
       returnUrl: 'https://orquestacion-def-test.onrender.com/gracias'
     })
