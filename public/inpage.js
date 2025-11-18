@@ -1,3 +1,5 @@
+//public/inpage.js
+
 const apiUrl = '/iframe-process';
 
 document.addEventListener('DOMContentLoaded', () => {
