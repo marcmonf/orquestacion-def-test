@@ -124,6 +124,13 @@ const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
 
+// NUEVO: versiones con merchantId en la URL para el iframe
+app.use('/:merchantId/iframe', iframeRouter);
+app.use('/:merchantId/iframe-process', iframeRouter);
+
+// Hosted Payment Page (HPP) para redirectUrl de HostedCheckout
+app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
+
 // APMs y Tokens
 app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
 app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
@@ -142,11 +149,7 @@ try {
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
-// 📌 NUEVO: Endpoints S2S + Hosted con merchantId COMO SEGMENTO DE URL
-//    POST /:merchantId/payments/server
-//    POST /:merchantId/payments/hosted
-//    GET  /:merchantId/payments/server/:paymentId
-//    GET  /:merchantId/payments/hosted/:hostedCheckoutId/status
+// 📌 Endpoints S2S + Hosted con merchantId COMO SEGMENTO DE URL
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
 
@@ -181,9 +184,9 @@ mongoose.connect(MONGO_URI, {
   // opciones defensivas
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 7000,   // más agresivo: si no elige nodo rápido, aborta
-  socketTimeoutMS: 20000,           // sockets no eternos
-  maxPoolSize: 5,                   // pool pequeño en Render
+  serverSelectionTimeoutMS: 7000,
+  socketTimeoutMS: 20000,
+  maxPoolSize: 5,
   retryWrites: true,
 })
 .then(() => {
