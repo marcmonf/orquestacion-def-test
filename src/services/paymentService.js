@@ -10,7 +10,7 @@
  *   4. Persiste cada intento en PaymentAttempt
  */
 
-const PaymentAttempt = require('../models/paymentAttempt');
+const PaymentAttempt = require('../models/PaymentAttempt');
 const MerchantRules  = require('../models/MerchantRules');
 const { getConnector } = require('./connectorRegistry');
 const { evaluate }   = require('../rules/ruleEngineV2');
@@ -105,12 +105,11 @@ async function processCardPayment(paymentData) {
       // Persistencia del intento
       try {
         await PaymentAttempt.create({
-          paymentId:          paymentData.paymentId,
-          connector:          connector.name,
+          paymentId:     paymentData.paymentId,
+          connector:     connector.name,
           attemptNumber,
-          success:            result.success,
-          responseCode:       result.responseCode,
-          processorReference: result.processorReference,
+          status:        result.success ? 'approved' : 'declined',
+          reasonCode:    result.success ? null : (result.responseCode || 'unknown'),
         });
       } catch (dbErr) {
         // No bloqueamos el pago por un error de log
