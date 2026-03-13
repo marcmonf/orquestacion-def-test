@@ -117,11 +117,15 @@ async function createHostedCheckout(req, res) {
   const amount = order.amountOfMoney.amount;
   const currency = order.amountOfMoney.currencyCode;
 
-  // NUEVO: referencia propia del merchant (orderId, bookingId, etc.)
+  // Referencia propia del merchant (orderId, bookingId, etc.)
   const merchantReference = order.references?.merchantReference || null;
 
+  // returnUrl: se lee de feedbacks.returnUrl (flujo HC)
+  // o como fallback de threeDSecure.redirectionData.returnUrl si viene informado (compatibilidad S2S)
   const returnUrl =
-    cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
+    feedbacks?.returnUrl ||
+    cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl ||
+    null;
 
   const callbackUrl =
     feedbacks?.webhookUrl ||
@@ -166,7 +170,7 @@ async function createHostedCheckout(req, res) {
     const txn = new Transaction({
       paymentId,
       merchantId,
-      merchantReference,    // ← NUEVO: guardamos la referencia del comercio
+      merchantReference,
       amount,
       currency,
       method: 'card',
@@ -194,7 +198,7 @@ async function createHostedCheckout(req, res) {
       paymentId,
       hostedCheckoutId,
       merchantId,
-      merchantReference,  // ← lo devolvemos también en la respuesta por claridad
+      merchantReference,
       amount,
       currency,
       RETURNMAC,
@@ -208,6 +212,7 @@ async function createHostedCheckout(req, res) {
     });
 
     return res.status(200).json(responsePayload);
+
   } catch (e) {
     logger.error('Error in createHostedCheckout', { error: e.message });
     auditLogger.info({
@@ -262,6 +267,7 @@ async function getHostedCheckoutStatus(req, res) {
     });
 
     return res.status(200).json(responsePayload);
+
   } catch (e) {
     return res.status(500).json({
       success: false,
