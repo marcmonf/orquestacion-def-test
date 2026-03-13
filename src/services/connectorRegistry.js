@@ -1,3 +1,4 @@
+// src/services/connectorRegistry.js
 'use strict';
 
 /**
@@ -6,19 +7,20 @@
  * Registro central de conectores de pago disponibles.
  *
  * CONECTORES ACTIVOS:
- *   - dummyCard: conector de test/simulación, siempre aprueba. Usado como default.
+ *   - dummyCard:  conector de test/simulación, siempre aprueba.
+ *   - payNoPain:  adquirente real (PayLands / PayNoPain) — sandbox activo.
  *
  * CONECTORES FUTUROS (comentados hasta tener credenciales):
- *   - payNoPain: adquirente principal (PayLands / PayNoPain)
  *   - nassauBank: banco de Nassau, convierte pago a USDT
  *
  * Stripe y Adyen se eliminan como conectores activos — no son adquirentes
  * reales en esta plataforma.
  */
 
-const dummyCard = require('../connectors/dummy/dummyCardConnector');
+const dummyCard  = require('../connectors/dummy/dummyCardConnector');
+const payNoPain  = require('../connectors/paynopain/payNoPainConnector');
 
-// --- Adaptador: normaliza la interfaz de dummyCardConnector ---
+// ─── Adaptador dummyCard ─────────────────────────────────────────────────────
 // dummyCard devuelve { status, authCode, transactionId, ... }
 // paymentService espera  { success, responseCode, processorReference }
 function adaptDummy(connector) {
@@ -28,23 +30,15 @@ function adaptDummy(connector) {
     async authorize(paymentData) {
       const result = await connector.authorize(paymentData);
       return {
-        success: result.status === 'approved',
-        responseCode: result.authCode || result.status,
+        success:            result.status === 'approved',
+        responseCode:       result.authCode || result.status,
         processorReference: result.transactionId || null,
       };
     },
 
-    async capture(data) {
-      return connector.capture(data);
-    },
-
-    async void(data) {
-      return connector.void(data);
-    },
-
-    async refund(data) {
-      return connector.refund(data);
-    },
+    async capture(data)  { return connector.capture(data); },
+    async void(data)     { return connector.void(data); },
+    async refund(data)   { return connector.refund(data); },
 
     isSoftDecline(/* responseCode */) {
       // dummyCard nunca hace soft decline — siempre aprueba
@@ -53,11 +47,28 @@ function adaptDummy(connector) {
   };
 }
 
-// ---- Registro ----
-const registry = {
-  dummyCard: adaptDummy(dummyCard),
+// ─── Adaptador payNoPain ─────────────────────────────────────────────────────
+// payNoPainConnector ya cumple la interfaz estándar Monetiser directamente:
+//   authorize() → { success, responseCode, processorReference }
+//   isSoftDecline() → boolean
+function adaptPayNoPain(connector) {
+  return {
+    name: connector.ID,
 
-  // payNoPain: new PayNoPainConnector(process.env.PAYNOPAIN_API_KEY, process.env.PAYNOPAIN_MERCHANT_ID),
+    async authorize(paymentData) { return connector.authorize(paymentData); },
+    async capture(data)          { return connector.capture(data); },
+    async void(data)             { return connector.void(data); },
+    async refund(data)           { return connector.refund(data); },
+
+    isSoftDecline(responseCode)  { return connector.isSoftDecline(responseCode); }
+  };
+}
+
+// ─── Registro ────────────────────────────────────────────────────────────────
+const registry = {
+  dummyCard:  adaptDummy(dummyCard),
+  payNoPain:  adaptPayNoPain(payNoPain),
+
   // nassauBank: new NassauBankConnector(process.env.NASSAU_API_KEY),
 };
 
