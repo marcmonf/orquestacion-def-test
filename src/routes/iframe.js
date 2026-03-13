@@ -178,7 +178,7 @@ router.get('/', async (req,res)=>{
         amount: tx.amount,
         currency: tx.currency,
         nonce,
-        exp: expStr,     // el guard acepta epoch o ISO
+        exp: expStr,
         signature,
         secret
       });
@@ -251,60 +251,89 @@ router.get('/', async (req,res)=>{
   }
 });
 
-// POST /iframe-process  (mock de pago, tomando amount/currency SOLO de Mongo)
-router.post('/', async (req,res)=>{
+// POST /iframe-process — conectado con el rule engine real
+router.post('/', async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP_HEADER);
 
-  try{
-    const { paymentId, method, transactionType, returnUrl } = req.body || {};
+  try {
+    const {
+      paymentId,
+      cardholderName,
+      cardNumber,
+      expiryMonth,
+      expiryYear,
+      cvv,
+      method,
+      transactionType,
+      returnUrl
+    } = req.body || {};
 
     if (!paymentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'paymentId es obligatorio'
-      });
+      return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
     }
 
     const tx = await Transaction.findOne({ paymentId }).lean(false);
     if (!tx) {
-      return res.status(404).json({
-        success: false,
-        message: 'Transacción no encontrada'
-      });
+      return res.status(404).json({ success: false, message: 'Transacción no encontrada' });
     }
 
     // No permitimos reprocesar pagos ya finalizados o en estado no inicial
     if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
-      return res.status(409).json({
-        success: false,
-        message: 'Transacción ya procesada o en estado no válido'
-      });
+      return res.status(409).json({ success: false, message: 'Transacción ya procesada o en estado no válido' });
     }
 
-    // Amount y currency SIEMPRE vienen de Mongo, nunca del navegador
+    // Amount y currency SIEMPRE de Mongo, nunca del navegador
     const cfg         = getCurrencyConfig(tx.currency);
     const majorAmount = toMajorUnits(tx.amount, tx.currency);
 
-    // MOCK: marcamos la transacción como aprobada (hasta enganchar con S2S real)
-    tx.status    = 'approved';
+    // Construir paymentData para el rule engine
+    const paymentData = {
+      paymentId:  tx.paymentId,
+      merchantId: tx.merchantId,
+      amount:     tx.amount,
+      currency:   tx.currency,
+      method:     'card',
+      card: {
+        number:   cardNumber  || null,
+        expMonth: expiryMonth || null,
+        expYear:  expiryYear  || null,
+        cvc:      cvv         || null,
+      },
+      bin:           cardNumber ? String(cardNumber).replace(/\s/g, '').slice(0, 8) : null,
+      cardBrand:     null,
+      issuerCountry: null,
+      cardType:      null,
+    };
+
+    // Llamar al conector a través del rule engine
+    const { processCardPayment } = require('../services/paymentService');
+    const result = await processCardPayment(paymentData);
+
+    // Actualizar transacción con el resultado real
+    const finalStatus = result.status === 'approved' ? 'authorized' : 'declined';
+    tx.status    = finalStatus;
+    tx.processor = result.connectorUsed || null;
+    tx.authCode  = result.processorReference || null;
     tx.updatedAt = new Date();
     await tx.save();
 
     const txnResponse = {
-      paymentId: tx.paymentId,
-      merchantId: tx.merchantId,
-      amount: majorAmount,               // en unidades "humanas" para mostrar
-      currency: tx.currency,
-      method: method || 'card',
-      status: tx.status,
+      paymentId:       tx.paymentId,
+      merchantId:      tx.merchantId,
+      amount:          majorAmount,
+      currency:        tx.currency,
+      method:          method || 'card',
+      status:          finalStatus,
+      connectorUsed:   result.connectorUsed || null,
       transactionType: transactionType || 'CIT',
-      returnUrl: returnUrl || tx.returnUrl || null
+      returnUrl:       returnUrl || tx.returnUrl || null
     };
 
-    return res.json({ success:true, transaction: txnResponse });
-  }catch(e){
+    return res.json({ success: true, transaction: txnResponse });
+
+  } catch (e) {
     console.error('Error en POST /iframe-process:', e);
-    return res.status(500).json({ success:false, message:'error interno' });
+    return res.status(500).json({ success: false, message: 'error interno' });
   }
 });
 
