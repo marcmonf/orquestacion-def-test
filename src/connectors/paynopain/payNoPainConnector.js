@@ -67,7 +67,6 @@ async function authorize(paymentData) {
     secure:          false,                           // sin 3DS en fase inicial
     customer_ext_id: paymentData.merchantId || 'monetiser',
     service,
-    currency:        paymentData.currency || 'EUR',
     description:     `Payment ${paymentData.paymentId}`,
     reference:       paymentData.paymentId,           // nuestra referencia
     card_holder:     card.holder || 'Card Holder',
