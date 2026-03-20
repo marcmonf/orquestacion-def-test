@@ -77,11 +77,25 @@ async function authorize(paymentData) {
     card_cvv:        card.cvc || card.cvv || null,
   };
 
+  const url = resolveUrl();
+
+  console.log('[payNoPain] ── AUTHORIZE START ──────────────────────────');
+  console.log('[payNoPain] URL:', url);
+  console.log('[payNoPain] API_KEY presente:', !!apiKey, '| longitud:', apiKey?.length);
+  console.log('[payNoPain] SIGNATURE presente:', !!signature, '| longitud:', signature?.length);
+  console.log('[payNoPain] SERVICE_UUID:', service);
+  console.log('[payNoPain] Body enviado:', JSON.stringify({
+    ...body,
+    card_pan:  body.card_pan  ? `${String(body.card_pan).slice(0,6)}******${String(body.card_pan).slice(-4)}` : null,
+    card_cvv:  body.card_cvv  ? '***' : null,
+  }, null, 2));
+
   const start = Date.now();
   let rawResponse;
+  let httpStatus;
 
   try {
-    const res = await fetch(resolveUrl(), {
+    const res = await fetch(url, {
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
@@ -90,7 +104,18 @@ async function authorize(paymentData) {
       body: JSON.stringify(body)
     });
 
-    rawResponse = await res.json();
+    httpStatus = res.status;
+    console.log('[payNoPain] HTTP status recibido:', httpStatus);
+
+    const rawText = await res.text();
+    console.log('[payNoPain] Raw response text:', rawText);
+
+    try {
+      rawResponse = JSON.parse(rawText);
+    } catch {
+      rawResponse = { message: rawText };
+    }
+
   } catch (networkErr) {
     console.error('[payNoPain] Error de red:', networkErr.message);
     recordAttempt(ID, { ok: false, latencyMs: Date.now() - start, costBps: 0 });
@@ -106,7 +131,13 @@ async function authorize(paymentData) {
   const status  = order.status || rawResponse?.message || 'UNKNOWN';
   const success = SUCCESS_STATUSES.includes(status);
 
-  recordAttempt(ID, { ok: success, latencyMs: latency, costBps: 150 }); // coste estimado sandbox
+  console.log('[payNoPain] order.status:', order.status);
+  console.log('[payNoPain] order.uuid:', order.uuid);
+  console.log('[payNoPain] success:', success);
+  console.log('[payNoPain] latencia:', latency, 'ms');
+  console.log('[payNoPain] ── AUTHORIZE END ────────────────────────────');
+
+  recordAttempt(ID, { ok: success, latencyMs: latency, costBps: 150 });
 
   if (success) {
     return {
