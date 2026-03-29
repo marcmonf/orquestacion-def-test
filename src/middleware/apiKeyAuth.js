@@ -1,87 +1,79 @@
 // src/middleware/apiKeyAuth.js
 'use strict';
 
-const logger = require('../utils/logger');
-
 /**
- * Middleware de autenticación por API key.
- *
- * - Lee la cabecera `x-api-key` (o `X-API-Key`).
- * - Por defecto es LAxo (no bloquea), para no romper integraciones actuales.
- * - Si defines ENFORCE_API_KEY_AUTH=true, pasa a modo estricto:
- *    - Si no hay API key -> 401
- *    - Si hay ALLOWED_API_KEYS, comprueba que la clave esté en la lista.
- *
- * Esto nos permite ir endureciendo seguridad sin frenar el desarrollo.
+ * MONETISER: Este archivo es un alias de src/middleware/auth.js
+ * 
+ * El middleware canónico de autenticación por API key de merchant es auth.js.
+ * Este re-export existe para no romper imports históricos que apunten a este archivo.
+ * 
+ * NO añadir lógica aquí. Modificar solo auth.js.
  */
-module.exports = function apiKeyAuth(req, res, next) {
-  const apiKey =
-    req.header('x-api-key') ||
-    req.header('X-API-Key') ||
-    null;
+module.exports = require('./auth');
+```
 
-  const enforce = String(process.env.ENFORCE_API_KEY_AUTH || 'false').toLowerCase() === 'true';
+**Por qué esto es mejor que eliminar el archivo:** hay rutas (`orchestrationRoutes.js`) que hacen `require('../middleware/auth')` con un try/catch manual. Dejando el re-export nos aseguramos de que cualquier path funcione.
 
-  // Guardamos la apiKey en la request para logging / futura lógica
-  req.apiKey = apiKey;
+---
 
-  if (!enforce) {
-    // Modo laxo: no bloqueamos, solo trazamos.
-    if (!apiKey) {
-      logger.info('apiKeyAuth (laxo): petición sin x-api-key', {
-        component: 'security',
-        event: 'API_KEY_MISSING',
-        data: { path: req.originalUrl, method: req.method }
-      });
-    } else {
-      logger.info('apiKeyAuth (laxo): petición con x-api-key', {
-        component: 'security',
-        event: 'API_KEY_PRESENT',
-        data: { path: req.originalUrl, method: req.method }
-      });
-    }
-    return next();
-  }
+### Paso 4 — Añadir variable de entorno en Render para `API_KEYS_MAP`
 
-  // Modo estricto: exigimos API key
-  if (!apiKey) {
-    logger.warn('apiKeyAuth: falta x-api-key', {
-      component: 'security',
-      event: 'API_KEY_REQUIRED',
-      data: { path: req.originalUrl, method: req.method }
-    });
-    return res.status(401).json({
-      success: false,
-      error: 'api_key_missing',
-      detail: 'x-api-key header is required'
-    });
-  }
+Para que `auth.js` pueda validar la key de `demo-merchant`, necesita el mapa definido. Ve a Render → Environment y añade:
+```
+API_KEYS_MAP={"demo-merchant":"TU_API_KEY_ACTUAL"}
+```
 
-  // Si defines una lista de claves válidas, las comprobamos.
-  const allowedKeys = (process.env.ALLOWED_API_KEYS || '')
-    .split(',')
-    .map(k => k.trim())
-    .filter(Boolean);
+Donde `TU_API_KEY_ACTUAL` es la misma key que tienes configurada en Postman como `x-api-key` para los tests de demo-merchant.
 
-  if (allowedKeys.length && !allowedKeys.includes(apiKey)) {
-    logger.warn('apiKeyAuth: api key no permitida', {
-      component: 'security',
-      event: 'API_KEY_INVALID',
-      data: { path: req.originalUrl, method: req.method }
-    });
-    return res.status(401).json({
-      success: false,
-      error: 'api_key_invalid',
-      detail: 'API key not allowed'
-    });
-  }
+> ⚠️ Si ya tienes `API_KEY` definida como variable global en Render, `auth.js` la usa como fallback cuando no encuentra el merchant en el mapa. Esto significa que funciona, pero con el mapa tienes control por merchant.
 
-  // Pasó la verificación estricta
-  logger.info('apiKeyAuth: api key autorizada', {
-    component: 'security',
-    event: 'API_KEY_ACCEPTED',
-    data: { path: req.originalUrl, method: req.method }
-  });
+---
 
-  return next();
-};
+### Pasos de despliegue en Render
+
+1. Aplica los tres cambios de código y haz push a `main`
+2. En Render → Environment, añade `API_KEYS_MAP` con el valor del paso 4
+3. Render detecta el push y redespliega automáticamente
+4. Verifica en los logs de Render que arranca sin errores
+
+---
+
+### Verificación en Postman tras el despliegue
+
+**Test 1 — Request válida (debe dar 200 authorized):**
+```
+POST https://orquestacion-def-test.onrender.com/demo-merchant/payments/server
+Headers:
+  x-api-key: <tu key>
+  x-merchant-id: demo-merchant
+  Content-Type: application/json
+```
+
+**Test 2 — Request sin key (debe dar 403):**
+```
+POST https://orquestacion-def-test.onrender.com/demo-merchant/payments/server
+Headers:
+  Content-Type: application/json
+  (sin x-api-key)
+```
+Respuesta esperada: `{ "success": false, "message": "..." }`
+
+**Test 3 — Request con key incorrecta (debe dar 403):**
+```
+x-api-key: clave_inventada
+```
+
+Si los tres tests responden como se espera, el auth unificado está operativo.
+
+---
+
+### Resultado final del mapa de auth
+```
+/rules/*                     → adminAuth.js       (X-Admin-Token)
+/:merchantId/payments/server → auth.js            (x-api-key + x-merchant-id)
+/:merchantId/payments/hosted → auth.js            (x-api-key + x-merchant-id)
+/tokens                      → validateTokenApiKey.js (TOKEN_API_KEY, opt-in)
+/pms/*                       → auth.js            (ya lo usaba)
+/initialize                  → auth.js            (opt-in por ENV)
+/orchestration               → auth.js            (opt-in por ENV)
+apiKeyAuth.js                → re-export de auth.js (alias, sin lógica propia)
