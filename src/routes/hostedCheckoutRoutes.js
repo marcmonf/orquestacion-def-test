@@ -19,4 +19,3 @@ router.post('/', rateLimiterPayments, apiKeyAuth, createHostedCheckout);
 router.get('/:hostedCheckoutId/status', rateLimiterPayments, apiKeyAuth, getHostedCheckoutStatus);
 
 module.exports = router;
-```
