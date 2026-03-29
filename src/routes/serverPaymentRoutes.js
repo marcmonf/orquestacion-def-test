@@ -4,7 +4,9 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
 
-const apiKeyAuth = require('../middleware/apiKeyAuth');
+// MONETISER: auth canónico — valida x-api-key contra API_KEYS_MAP por merchantId
+const apiKeyAuth = require('../middleware/auth');
+
 const {
   createServerPayment,
   getServerPaymentStatus
