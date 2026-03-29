@@ -2,10 +2,10 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router({ mergeParams: true });
+const router  = express.Router({ mergeParams: true });
 
-// MONETISER: auth canónico — valida x-api-key contra API_KEYS_MAP por merchantId
-const apiKeyAuth = require('../middleware/auth');
+const apiKeyAuth          = require('../middleware/auth');
+const rateLimiterPayments = require('../middleware/rateLimiterPayments');
 
 const {
   createServerPayment,
@@ -13,9 +13,9 @@ const {
 } = require('../controllers/serverPaymentController');
 
 // POST /:merchantId/payments/server
-router.post('/', apiKeyAuth, createServerPayment);
+router.post('/', rateLimiterPayments, apiKeyAuth, createServerPayment);
 
 // GET /:merchantId/payments/server/:paymentId
-router.get('/:paymentId', apiKeyAuth, getServerPaymentStatus);
+router.get('/:paymentId', rateLimiterPayments, apiKeyAuth, getServerPaymentStatus);
 
 module.exports = router;
