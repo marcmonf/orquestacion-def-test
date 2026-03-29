@@ -2,10 +2,10 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router({ mergeParams: true });
+const router  = express.Router({ mergeParams: true });
 
-// MONETISER: auth canónico — valida x-api-key contra API_KEYS_MAP por merchantId
-const apiKeyAuth = require('../middleware/auth');
+const apiKeyAuth          = require('../middleware/auth');
+const rateLimiterPayments = require('../middleware/rateLimiterPayments');
 
 const {
   createHostedCheckout,
@@ -13,9 +13,20 @@ const {
 } = require('../controllers/hostedCheckoutController');
 
 // POST /:merchantId/payments/hosted
-router.post('/', apiKeyAuth, createHostedCheckout);
+router.post('/', rateLimiterPayments, apiKeyAuth, createHostedCheckout);
 
 // GET /:merchantId/payments/hosted/:hostedCheckoutId/status
-router.get('/:hostedCheckoutId/status', apiKeyAuth, getHostedCheckoutStatus);
+router.get('/:hostedCheckoutId/status', rateLimiterPayments, apiKeyAuth, getHostedCheckoutStatus);
 
 module.exports = router;
+```
+
+---
+
+## Pasos de despliegue en Render
+
+No hay variables de entorno nuevas obligatorias — los valores por defecto son correctos para producción. Pero si quieres ajustarlos, puedes añadir en Render:
+```
+RL_PAYMENTS_WINDOW_MS=60000     # ventana en ms (default: 1 min)
+RL_PAYMENTS_IP_MAX=30           # max req por IP por ventana (default: 30)
+RL_PAYMENTS_MERCHANT_MAX=60     # max req por merchant por ventana (default: 60)
