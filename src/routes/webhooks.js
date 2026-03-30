@@ -1,28 +1,15 @@
+// src/routes/webhooks.js
+'use strict';
+
 const express = require('express');
-const router = express.Router();
-const WebhookEvent = require('../models/WebhookEvent');
+const router  = express.Router();
+const { handlePayNoPainWebhook } = require('../controllers/webhookController');
 
-// GET /webhooks con filtros opcionales
-router.get('/', async (req, res) => {
-  try {
-    const { status, paymentId, from, to } = req.query;
-
-    const filters = {};
-
-    if (status) filters.status = status;
-    if (paymentId) filters.paymentId = paymentId;
-    if (from || to) {
-      filters.timestamp = {};
-      if (from) filters.timestamp.$gte = new Date(from);
-      if (to) filters.timestamp.$lte = new Date(to);
-    }
-
-    const results = await WebhookEvent.find(filters).sort({ timestamp: -1 });
-    res.status(200).json(results);
-  } catch (err) {
-    console.error('Error al filtrar webhooks:', err);
-    res.status(500).json({ error: 'Error interno al obtener webhooks' });
-  }
-});
+/**
+ * POST /webhooks/paynopain
+ * Recibe notificaciones de Paylands cuando un pago finaliza.
+ * No requiere autenticación por API key — usa validación por hash interno.
+ */
+router.post('/paynopain', handlePayNoPainWebhook);
 
 module.exports = router;
