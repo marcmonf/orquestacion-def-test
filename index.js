@@ -139,6 +139,9 @@ app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoute
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
 
+// Webhooks entrantes de PSPs
+app.use('/webhooks', ensureRouter(require('./src/routes/webhooks'), 'webhooks'));
+
 // Transactions
 try {
   app.use('/transactions', ensureRouter(require('./src/routes/transactions'), 'transactions'));
