@@ -160,10 +160,11 @@ async function createServerPayment(req, res) {
       connectorUsed  = result.connectorUsed  || null;
       internalStatus = result.status === 'approved' ? 'authorized' : 'declined';
 
-      txn.status       = internalStatus;
-      txn.processor    = connectorUsed;
-      txn.authCode     = result.processorReference || null;
-      txn.updatedAt    = new Date();
+      txn.status             = internalStatus;
+      txn.processor          = connectorUsed;
+      txn.processorReference = result.processorReference || null;  // ← orderUuid de Paylands
+      txn.authCode           = result.processorReference || null;  // ← compatibilidad con campo legacy
+      txn.updatedAt          = new Date();
       await txn.save();
     }
 
