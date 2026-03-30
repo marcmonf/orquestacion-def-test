@@ -1,183 +1,235 @@
 // src/connectors/paynopain/payNoPainConnector.js
 'use strict';
 
-const { recordAttempt } = require('../../orchestrator/metrics/metricsService');
-
-const ID = 'payNoPain';
-
-const SANDBOX_URL  = 'https://api.paylands.com/v1/sandbox/charge';
-const PROD_URL     = 'https://api.paylands.com/v1/charge';
-
-// Códigos de estado de orden que Paylands considera éxito
-const SUCCESS_STATUSES = ['SUCCESS'];
-
-// Códigos de rechazo blando (reintentable)
-const SOFT_DECLINE_CODES = ['PENDING_PROCESSOR_RESPONSE'];
+const crypto = require('crypto');
+const https  = require('https');
+const URL    = require('url').URL;
+const logger = require('../../utils/logger');
 
 /**
- * Resuelve la URL activa según entorno.
- * Por defecto usa sandbox hasta que PAYNOPAIN_ENV=production
+ * Conector PayNoPain (Paylands) — Integración simple con carta de pago.
+ *
+ * Flujo:
+ *   1. authorize() → crea orden en Paylands → devuelve redirectUrl
+ *   2. Usuario completa el pago en la carta de pago de Paylands
+ *   3. Paylands notifica el resultado vía webhook a /webhooks/paynopain
+ *
+ * Autenticación: HTTP Basic Auth con API_KEY como username (base64).
+ * Firma: MD5(amount + operative + service_uuid + signature).
+ * Entorno: sandbox si PAYNOPAIN_ENV !== 'production'.
  */
-function resolveUrl() {
-  return process.env.PAYNOPAIN_ENV === 'production' ? PROD_URL : SANDBOX_URL;
+
+const ENV         = process.env.PAYNOPAIN_ENV || 'sandbox';
+const API_KEY     = process.env.PAYNOPAIN_API_KEY;
+const SIGNATURE   = process.env.PAYNOPAIN_SIGNATURE;
+const SERVICE_UUID = process.env.PAYNOPAIN_SERVICE_UUID;
+
+const BASE_URL = ENV === 'production'
+  ? 'https://api.paylands.com/v1'
+  : 'https://api.paylands.com/v1/sandbox';
+
+// URL base del servidor de Monetiser — usada como url_post para webhooks
+const SERVER_URL = process.env.SERVER_URL || 'https://orquestacion-def-test.onrender.com';
+
+/**
+ * Calcula la firma MD5 requerida por Paylands.
+ * Fórmula: MD5(amount + operative + service_uuid + signature_key)
+ */
+function calcSignature(amount, operative, serviceUuid, signatureKey) {
+  const raw = `${amount}${operative}${serviceUuid}${signatureKey}`;
+  return crypto.createHash('md5').update(raw).digest('hex');
 }
 
 /**
- * authorize(paymentData)
- *
- * Interfaz estándar Monetiser:
- *   paymentData.amount       — importe en unidades menores (céntimos)
- *   paymentData.currency     — ISO 4217 (ej: "EUR")
- *   paymentData.paymentId    — nuestra referencia interna
- *   paymentData.merchantId   — ID del merchant en Monetiser
- *   paymentData.card.number  — PAN
- *   paymentData.card.expMonth — MM
- *   paymentData.card.expYear  — YY o YYYY
- *   paymentData.card.cvc     — CVV
- *   paymentData.card.holder  — nombre titular (opcional)
- *
- * Devuelve interfaz estándar Monetiser:
- *   { success, responseCode, processorReference }
+ * Genera el header Authorization en formato Basic Auth.
+ * Paylands requiere API_KEY como username, password vacío.
  */
-async function authorize(paymentData) {
-  const apiKey    = process.env.PAYNOPAIN_API_KEY;
-  const signature = process.env.PAYNOPAIN_SIGNATURE;
-  const service   = process.env.PAYNOPAIN_SERVICE_UUID;
+function buildAuthHeader(apiKey) {
+  const encoded = Buffer.from(`${apiKey}:`).toString('base64');
+  return `Basic ${encoded}`;
+}
 
-  if (!apiKey || !signature || !service) {
-    console.error('[payNoPain] Faltan variables de entorno: PAYNOPAIN_API_KEY, PAYNOPAIN_SIGNATURE o PAYNOPAIN_SERVICE_UUID');
-    return {
-      success:            false,
-      responseCode:       'connector_misconfigured',
-      processorReference: null
-    };
-  }
+/**
+ * Hace una petición POST JSON a la API de Paylands.
+ */
+function postJson(path, body, apiKey) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body), 'utf8');
+    const u = new URL(`${BASE_URL}${path}`);
 
-  const card = paymentData.card || {};
-
-  // Paylands espera el año en 2 dígitos (YY)
-  const expYear = card.expYear
-    ? String(card.expYear).slice(-2)
-    : null;
-
-  const body = {
-    signature,
-    amount:          paymentData.amount,             // ya en céntimos
-    operative:       'AUTHORIZATION',
-    secure:          false,                           // sin 3DS en fase inicial
-    customer_ext_id: paymentData.merchantId || 'monetiser',
-    service,
-    description:     `Payment ${paymentData.paymentId}`,
-    reference:       paymentData.paymentId,           // nuestra referencia
-    card_holder:     card.holder || 'Card Holder',
-    card_pan:        card.number,
-    card_expiry_month: String(card.expMonth || ''),
-    card_expiry_year:  expYear,
-    card_cvv:        card.cvc || card.cvv || null,
-  };
-
-  const url = resolveUrl();
-
-  console.log('[payNoPain] ── AUTHORIZE START ──────────────────────────');
-  console.log('[payNoPain] URL:', url);
-  console.log('[payNoPain] API_KEY presente:', !!apiKey, '| longitud:', apiKey?.length);
-  console.log('[payNoPain] SIGNATURE presente:', !!signature, '| longitud:', signature?.length);
-  console.log('[payNoPain] SERVICE_UUID:', service);
-  console.log('[payNoPain] Body enviado:', JSON.stringify({
-    ...body,
-    card_pan:  body.card_pan  ? `${String(body.card_pan).slice(0,6)}******${String(body.card_pan).slice(-4)}` : null,
-    card_cvv:  body.card_cvv  ? '***' : null,
-  }, null, 2));
-
-  const start = Date.now();
-  let rawResponse;
-  let httpStatus;
-
-  try {
-    const res = await fetch(url, {
-      method:  'POST',
+    const opts = {
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'POST',
       headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(body)
+        'Content-Type': 'application/json',
+        'Content-Length': String(payload.length),
+        'Authorization': buildAuthHeader(apiKey)
+      }
+    };
+
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(data) });
+        } catch {
+          resolve({ status: res.statusCode, body: data });
+        }
+      });
     });
 
-    httpStatus = res.status;
-    console.log('[payNoPain] HTTP status recibido:', httpStatus);
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
 
-    const rawText = await res.text();
-    console.log('[payNoPain] Raw response text:', rawText);
+/**
+ * Valida el hash de una notificación entrante de Paylands.
+ * Hash = SHA256(JSON(order + client + extra_data) + signature)
+ */
+function validateNotificationHash(notification, signatureKey) {
+  try {
+    const arr = {
+      order:      notification.order,
+      client:     notification.client,
+      extra_data: notification.extra_data || null
+    };
+    const data = JSON.stringify(arr);
+    const expected = crypto.createHash('sha256')
+      .update(data + signatureKey)
+      .digest('hex');
+    return expected === notification.validation_hash;
+  } catch {
+    return false;
+  }
+}
 
-    try {
-      rawResponse = JSON.parse(rawText);
-    } catch {
-      rawResponse = { message: rawText };
-    }
+/**
+ * Crea una orden de pago en Paylands.
+ *
+ * Devuelve:
+ *   { success: true, redirectUrl, orderUuid, token }  — si OK
+ *   { success: false, responseCode, error }           — si falla
+ *
+ * IMPORTANTE: success:true NO significa pago completado.
+ * Significa que la orden fue creada y hay una URL donde el usuario
+ * debe completar el pago. El resultado final llega por webhook.
+ */
+async function authorize(paymentData) {
+  if (!API_KEY || !SIGNATURE || !SERVICE_UUID) {
+    logger.error('payNoPainConnector: faltan variables de entorno', {
+      component: 'connector',
+      event: 'PAYNOPAIN_CONFIG_ERROR'
+    });
+    return { success: false, responseCode: 'config_error', processorReference: null };
+  }
 
-  } catch (networkErr) {
-    console.error('[payNoPain] Error de red:', networkErr.message);
-    recordAttempt(ID, { ok: false, latencyMs: Date.now() - start, costBps: 0 });
+  const {
+    paymentId,
+    amount,       // en céntimos (ya viene así desde paymentService)
+    currency,
+    merchantId,
+    returnUrl,
+    merchantReference
+  } = paymentData;
+
+  const operative = 'AUTHORIZATION';
+
+  // Calcular firma
+  const signature = calcSignature(amount, operative, SERVICE_UUID, SIGNATURE);
+
+  const body = {
+    amount,
+    operative,
+    signature,
+    service:          SERVICE_UUID,
+    customer_ext_id:  merchantId || 'monetiser-user',
+    description:      merchantReference || paymentId,
+    additional:       paymentId, // lo usamos para correlacionar en el webhook
+    url_post:         `${SERVER_URL}/webhooks/paynopain`,
+    url_ok:           returnUrl || `${SERVER_URL}/payment/success`,
+    url_ko:           returnUrl || `${SERVER_URL}/payment/error`,
+    secure:           true,
+    save_card:        false,
+    reference:        paymentId
+  };
+
+  logger.info('payNoPainConnector: creando orden', {
+    component: 'connector',
+    event: 'PAYNOPAIN_ORDER_CREATE',
+    data: { paymentId, amount, operative, env: ENV }
+  });
+
+  let response;
+  try {
+    response = await postJson('/payment', body, API_KEY);
+  } catch (err) {
+    logger.error('payNoPainConnector: error de red', {
+      component: 'connector',
+      event: 'PAYNOPAIN_NETWORK_ERROR',
+      data: { error: err.message }
+    });
+    return { success: false, responseCode: 'network_error', processorReference: null };
+  }
+
+  logger.info('payNoPainConnector: respuesta Paylands', {
+    component: 'connector',
+    event: 'PAYNOPAIN_ORDER_RESPONSE',
+    data: { status: response.status, code: response.body?.code }
+  });
+
+  if (response.status !== 200 || response.body?.code !== 200) {
+    logger.warn('payNoPainConnector: orden rechazada', {
+      component: 'connector',
+      event: 'PAYNOPAIN_ORDER_REJECTED',
+      data: { status: response.status, body: response.body }
+    });
     return {
-      success:            false,
-      responseCode:       'network_error',
+      success: false,
+      responseCode: `paynopain_${response.status}`,
       processorReference: null
     };
   }
 
-  const latency = Date.now() - start;
-  const order   = rawResponse?.order || {};
-  const status  = order.status || rawResponse?.message || 'UNKNOWN';
-  const success = SUCCESS_STATUSES.includes(status);
+  const order = response.body.order;
+  const redirectUrl = order?.urls?.payment_card;
+  const orderUuid   = order?.uuid;
+  const token       = order?.token;
 
-  console.log('[payNoPain] order.status:', order.status);
-  console.log('[payNoPain] order.uuid:', order.uuid);
-  console.log('[payNoPain] success:', success);
-  console.log('[payNoPain] latencia:', latency, 'ms');
-  console.log('[payNoPain] ── AUTHORIZE END ────────────────────────────');
+  logger.info('payNoPainConnector: orden creada OK', {
+    component: 'connector',
+    event: 'PAYNOPAIN_ORDER_CREATED',
+    data: { paymentId, orderUuid, env: ENV }
+  });
 
-  recordAttempt(ID, { ok: success, latencyMs: latency, costBps: 150 });
-
-  if (success) {
-    return {
-      success:            true,
-      responseCode:       status,
-      processorReference: order.uuid || null
-    };
-  }
-
-  console.warn('[payNoPain] Pago rechazado. Status:', status, '| Raw:', JSON.stringify(rawResponse));
+  // Devolvemos success:true con redirectUrl
+  // El paymentService debe interpretar esto como "pendiente de pago del usuario"
   return {
-    success:            false,
-    responseCode:       status,
-    processorReference: order.uuid || null
+    success:            true,
+    status:             'pending_redirect',
+    redirectUrl,
+    orderUuid,
+    token,
+    processorReference: orderUuid
   };
 }
 
 /**
- * isSoftDecline(responseCode)
- * Devuelve true si el rechazo es reintentable.
+ * El conector PayNoPain no distingue soft decline — todos los errores
+ * son hard decline para efectos de la lógica de reintentos.
  */
-function isSoftDecline(responseCode) {
-  return SOFT_DECLINE_CODES.includes(responseCode);
+function isSoftDecline() {
+  return false;
 }
 
-async function capture({ processorReference }) {
-  // TODO: implementar cuando se active operativa DEFERRED
-  console.warn('[payNoPain] capture() no implementado aún');
-  return { status: 'not_implemented', processorReference };
-}
-
-async function voidOp({ processorReference }) {
-  // TODO: implementar cancelación
-  console.warn('[payNoPain] void() no implementado aún');
-  return { status: 'not_implemented', processorReference };
-}
-
-async function refund({ processorReference, amount }) {
-  // TODO: implementar devolución via /payment/refund
-  console.warn('[payNoPain] refund() no implementado aún');
-  return { status: 'not_implemented', processorReference, amount };
-}
-
-module.exports = { ID, authorize, isSoftDecline, capture, void: voidOp, refund };
+module.exports = {
+  name: 'payNoPain',
+  authorize,
+  isSoftDecline,
+  validateNotificationHash,
+  SIGNATURE // exportado para uso en webhookController
+};
