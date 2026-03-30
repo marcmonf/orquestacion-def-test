@@ -1,5 +1,8 @@
 // src/models/Transaction.js
 'use strict';
+/**
+ * src/models/Transaction.js
+ */
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
@@ -8,6 +11,10 @@ const transactionSchema = new mongoose.Schema({
 
   // Referencia propia del merchant (orderId, bookingId, etc.)
   merchantReference:  { type: String },
+
+  // Referencia del adquirente (orderUuid de Paylands, etc.)
+  // Usada por el webhook entrante para encontrar la transacción correcta
+  processorReference: { type: String, default: null },
 
   amount:             { type: Number, required: true },
   currency:           { type: String, required: true },
@@ -34,12 +41,16 @@ const transactionSchema = new mongoose.Schema({
   processor:          String,
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
-  callbackUrl:        String,   // ← webhooks
+  callbackUrl:        String,
 
   // Tracking iFrame
   iframeServedAt:     Date,
   iframeClientIp:     String,
   iframeUserAgent:    String,
+
+  // Campos adicionales para hosted checkout
+  hostedTokenizationId:  String,
+  hostedFieldsSessionId: String,
 
   createdAt:          { type: Date, default: Date.now },
   updatedAt:          { type: Date, default: Date.now }
@@ -49,9 +60,8 @@ transactionSchema.index({ merchantId: 1 });
 transactionSchema.index({ createdAt: -1 });
 transactionSchema.index({ bin: 1 });
 transactionSchema.index({ issuerCountry: 1 });
-
-// Índice para poder buscar por referencia del comercio
 transactionSchema.index({ merchantReference: 1 });
+transactionSchema.index({ processorReference: 1 }); // ← para búsqueda rápida por webhook
 
 module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);
