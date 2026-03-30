@@ -75,14 +75,19 @@ async function createServerPayment(req, res) {
     });
   }
 
-  const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedFieldsSessionId } = value;
+const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedFieldsSessionId, feedbacks } = value;
 
   const amount    = order.amountOfMoney.amount;
   const currency  = order.amountOfMoney.currencyCode;
   const returnUrl = cardPaymentMethodSpecificInput.threeDSecure.redirectionData.returnUrl;
+  const callbackUrl = feedbacks?.webhookUrl ||
+    (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
+      ? feedbacks.webhooksUrls[0]
+      : null);
   const merchantReference = order?.references?.merchantReference
     ? String(order.references.merchantReference)
     : null;
+
 
   const timestamp = new Date();
   const paymentId = uuidv4();
@@ -116,7 +121,7 @@ async function createServerPayment(req, res) {
       method: 'card',
       status: internalStatus,
       returnUrl,
-      callbackUrl: null,
+      callbackUrl: callbackUrl || null,
       hostedTokenizationId:  hostedTokenizationId  || null,
       hostedFieldsSessionId: hostedFieldsSessionId || null,
       merchantReference:     merchantReference     || null,
