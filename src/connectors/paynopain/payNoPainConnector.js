@@ -6,39 +6,16 @@ const https  = require('https');
 const URL    = require('url').URL;
 const logger = require('../../utils/logger');
 
-/**
- * Conector PayNoPain (Paylands) — Integración simple con carta de pago.
- *
- * Flujo:
- *   1. authorize() → crea orden en Paylands → devuelve redirectUrl
- *   2. Usuario completa el pago en la carta de pago de Paylands
- *   3. Paylands notifica el resultado vía webhook a /webhooks/paynopain
- *
- * Autenticación: HTTP Basic Auth con API_KEY como username (base64).
- * Firma: MD5(amount + operative + service_uuid + signature).
- * Entorno: sandbox si PAYNOPAIN_ENV !== 'production'.
- */
-
-const ENV         = process.env.PAYNOPAIN_ENV || 'sandbox';
-const API_KEY     = process.env.PAYNOPAIN_API_KEY;
-const SIGNATURE   = process.env.PAYNOPAIN_SIGNATURE;
+const ENV          = process.env.PAYNOPAIN_ENV || 'sandbox';
+const API_KEY      = process.env.PAYNOPAIN_API_KEY;
+const SIGNATURE    = process.env.PAYNOPAIN_SIGNATURE;
 const SERVICE_UUID = process.env.PAYNOPAIN_SERVICE_UUID;
 
 const BASE_URL = ENV === 'production'
   ? 'https://api.paylands.com/v1'
   : 'https://api.paylands.com/v1/sandbox';
 
-// URL base del servidor de Monetiser — usada como url_post para webhooks
 const SERVER_URL = process.env.SERVER_URL || 'https://orquestacion-def-test.onrender.com';
-
-/**
- * Calcula la firma MD5 requerida por Paylands.
- * Fórmula: MD5(amount + operative + service_uuid + signature_key)
- */
-function calcSignature(amount, operative, serviceUuid, signatureKey) {
-  const raw = `${amount}${operative}${serviceUuid}${signatureKey}`;
-  return crypto.createHash('md5').update(raw).digest('hex');
-}
 
 /**
  * Genera el header Authorization en formato Basic Auth.
@@ -110,14 +87,6 @@ function validateNotificationHash(notification, signatureKey) {
 
 /**
  * Crea una orden de pago en Paylands.
- *
- * Devuelve:
- *   { success: true, redirectUrl, orderUuid, token }  — si OK
- *   { success: false, responseCode, error }           — si falla
- *
- * IMPORTANTE: success:true NO significa pago completado.
- * Significa que la orden fue creada y hay una URL donde el usuario
- * debe completar el pago. El resultado final llega por webhook.
  */
 async function authorize(paymentData) {
   if (!API_KEY || !SIGNATURE || !SERVICE_UUID) {
@@ -130,30 +99,25 @@ async function authorize(paymentData) {
 
   const {
     paymentId,
-    amount,       // en céntimos (ya viene así desde paymentService)
-    currency,
-    merchantId,
+    amount,
     returnUrl,
+    merchantId,
     merchantReference
   } = paymentData;
 
-  const operative = 'AUTHORIZATION';
-
-  // Calcular firma
-  const signature = calcSignature(amount, operative, SERVICE_UUID, SIGNATURE);
-
+  // La signature se envía tal cual — es el valor literal de PAYNOPAIN_SIGNATURE
   const body = {
+    signature:        SIGNATURE,
     amount,
-    operative,
-    signature,
+    operative:        'AUTHORIZATION',
+    secure:           true,
     service:          SERVICE_UUID,
     customer_ext_id:  merchantId || 'monetiser-user',
     description:      merchantReference || paymentId,
-    additional:       paymentId, // lo usamos para correlacionar en el webhook
+    additional:       paymentId,
     url_post:         `${SERVER_URL}/webhooks/paynopain`,
     url_ok:           returnUrl || `${SERVER_URL}/payment/success`,
     url_ko:           returnUrl || `${SERVER_URL}/payment/error`,
-    secure:           true,
     save_card:        false,
     reference:        paymentId
   };
@@ -161,7 +125,7 @@ async function authorize(paymentData) {
   logger.info('payNoPainConnector: creando orden', {
     component: 'connector',
     event: 'PAYNOPAIN_ORDER_CREATE',
-    data: { paymentId, amount, operative, env: ENV }
+    data: { paymentId, amount, env: ENV }
   });
 
   let response;
@@ -198,7 +162,6 @@ async function authorize(paymentData) {
   const order = response.body.order;
   const redirectUrl = order?.urls?.payment_card;
   const orderUuid   = order?.uuid;
-  const token       = order?.token;
 
   logger.info('payNoPainConnector: orden creada OK', {
     component: 'connector',
@@ -206,22 +169,15 @@ async function authorize(paymentData) {
     data: { paymentId, orderUuid, env: ENV }
   });
 
-  // Devolvemos success:true con redirectUrl
-  // El paymentService debe interpretar esto como "pendiente de pago del usuario"
   return {
     success:            true,
     status:             'pending_redirect',
     redirectUrl,
     orderUuid,
-    token,
     processorReference: orderUuid
   };
 }
 
-/**
- * El conector PayNoPain no distingue soft decline — todos los errores
- * son hard decline para efectos de la lógica de reintentos.
- */
 function isSoftDecline() {
   return false;
 }
@@ -231,5 +187,5 @@ module.exports = {
   authorize,
   isSoftDecline,
   validateNotificationHash,
-  SIGNATURE // exportado para uso en webhookController
+  SIGNATURE
 };
