@@ -146,6 +146,9 @@ try {
   console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
 }
 
+// API Keys management (admin)
+app.use('/api-keys', ensureRouter(require('./src/routes/apiKeyRoutes'), 'apiKeyRoutes'));
+
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
