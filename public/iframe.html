@@ -102,8 +102,9 @@
     .row { display: flex; gap: 12px; }
     .row .form-group { flex: 1; }
 
-    /* Contenedor del sub-iFrame de Paylands (Proxy PCI) */
-    #pan-container {
+    /* Contenedor del sub-iFrame de Paylands (Proxy PCI) — PAN y CVV */
+    #pan-container,
+    #cvv-container {
       width: 100%;
       padding: 0 14px;
       border: 1.5px solid #ddd;
@@ -115,11 +116,15 @@
       transition: border-color 0.2s;
     }
 
-    #pan-container.ready { border-color: #ddd; }
-    #pan-container.error { border-color: #e53e3e; }
+    #pan-container.ready,
+    #cvv-container.ready { border-color: #ddd; }
 
-    /* El iFrame interno de Paylands hereda el ancho y se centra */
-    #pan-container iframe {
+    #pan-container.error,
+    #cvv-container.error { border-color: #e53e3e; }
+
+    /* El iFrame interno de Paylands llena el contenedor */
+    #pan-container iframe,
+    #cvv-container iframe {
       width: 100%;
       height: 100%;
       border: none;
@@ -229,7 +234,7 @@
       </div>
     </div>
 
-    <!-- MODO PROXY PCI: sub-iFrame de Paylands para el PAN -->
+    <!-- MODO PROXY PCI: sub-iFrames de Paylands para PAN y CVV -->
     <div id="proxy-pci-form">
       <div class="form-group">
         <label>Número de tarjeta</label>
@@ -244,6 +249,10 @@
         <div class="form-group">
           <label for="expiry-year">Año</label>
           <input type="tel" id="expiry-year" placeholder="AA" maxlength="2" autocomplete="cc-exp-year">
+        </div>
+        <div class="form-group">
+          <label>CVV</label>
+          <div id="cvv-container"></div>
         </div>
       </div>
       <div class="form-group">
@@ -363,28 +372,36 @@
           sessionToken = sessionData.sessionToken;
 
           proxyFields = new ProxyFields();
-          proxyFields.init(sessionToken, { cardNumber: 'pan-container' });
+          proxyFields.init(sessionToken, {
+            cardNumber: 'pan-container',
+            cvv:        'cvv-container'
+          });
+
+          const fieldStyle = 'width: 100%; height: 44px; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 0 14px;';
 
           proxyFields.on('ready', () => {
-            proxyFields.setStyle(
-              'cardNumber',
-              'width: 100%; height: 44px; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 0 14px;'
-            );
+            proxyFields.setStyle('cardNumber', fieldStyle);
             proxyFields.setStyle('cardNumber::placeholder', 'color: #aaa');
             proxyFields.setPlaceholder('cardNumber', '4111 1111 1111 1111');
 
+            proxyFields.setStyle('cvv', fieldStyle);
+            proxyFields.setStyle('cvv::placeholder', 'color: #aaa');
+            proxyFields.setPlaceholder('cvv', '123');
+
             document.getElementById('pan-container').classList.add('ready');
+            document.getElementById('cvv-container').classList.add('ready');
             payBtn.disabled    = false;
             payBtn.textContent = 'Pagar ahora';
           });
 
           proxyFields.on('validate', (data) => {
-            const pan = document.getElementById('pan-container');
             if (data && data.hasErrors) {
-              pan.classList.add('error');
-              showStatus('error', 'El número de tarjeta no es válido.');
+              if (data.fields?.cardNumber) document.getElementById('pan-container').classList.add('error');
+              if (data.fields?.cvv)        document.getElementById('cvv-container').classList.add('error');
+              showStatus('error', 'Revisa los datos de la tarjeta.');
             } else {
-              pan.classList.remove('error');
+              document.getElementById('pan-container').classList.remove('error');
+              document.getElementById('cvv-container').classList.remove('error');
               statusMsg.className = 'status-message';
             }
           });
