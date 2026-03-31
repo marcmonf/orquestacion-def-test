@@ -26,8 +26,8 @@ const rateLimiter = require('../middleware/rateLimiterPayments');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
 const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
-const dispatcher  = require('../services/webhookDispatcher');
-const logger      = require('../utils/logger');
+const { enqueue }  = require('../services/webhookDispatcher');
+const logger       = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['initialized', 'hosted_pending'];
 
@@ -142,10 +142,12 @@ router.post('/charge', rateLimiter, async (req, res) => {
 
     // Webhook saliente al merchant
     if (tx.callbackUrl) {
-      dispatcher.dispatch({
-        url:     tx.callbackUrl,
-        event:   'payment.updated',
+      enqueue({
+        paymentId:  tx.paymentId,
+        merchantId: tx.merchantId,
+        url:        tx.callbackUrl,
         payload: {
+          event:              'payment.updated',
           paymentId:          tx.paymentId,
           merchantId:         tx.merchantId,
           status:             tx.status,
@@ -154,11 +156,6 @@ router.post('/charge', rateLimiter, async (req, res) => {
           processor:          'payNoPain',
           processorReference: tx.processorReference,
         },
-      }).catch(err => {
-        logger.warn('PROXY_PCI_WEBHOOK_DISPATCH_ERROR', {
-          component: 'proxyPciRoutes',
-          data: { paymentId, error: err.message },
-        });
       });
     }
 
