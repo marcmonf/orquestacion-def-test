@@ -6,7 +6,6 @@ const mongoose = require('mongoose');
 const serverPaymentRoutes = require('./src/routes/serverPaymentRoutes');
 const hostedCheckoutRoutes = require('./src/routes/hostedCheckoutRoutes');
 const proxyPciRoutes = require('./src/routes/proxyPciRoutes');
-app.use('/:merchantId/proxy-pci', proxyPciRoutes);
 
 let morgan = null;
 try { morgan = require('morgan'); }
@@ -26,10 +25,6 @@ try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch
 /* ===== Middlewares globales ===== */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
-
-// ⚠️ OJO: antes montabas aquí /payments/server y /payments/hosted,
-// por delante de express.json(). Eso hacía que req.body llegara vacío.
-// Esas líneas se han movido más abajo, después de los parsers.
 
 app.use(cors({
   origin(origin, cb) {
@@ -71,7 +66,6 @@ app.use((req, res, next) => {
     userAgent: req.headers['user-agent']
   };
   res.setHeader('x-request-id', rid);
-  // Traza de entrada
   logger.info('HTTP IN', { requestId: rid, component: 'http', event: `${req.method} ${req.originalUrl}` });
   res.on('finish', () => {
     logger.info('HTTP OUT', {
@@ -111,7 +105,7 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 const idempotency = require('./src/middleware/idempotency');
 app.use('/initialize', idempotency());
 
-/* ===== Rutas principales (sin cambiar paths ni orden) ===== */
+/* ===== Rutas principales ===== */
 let initializeRoutesExport;
 try {
   initializeRoutesExport = require('./src/routes/initializeRoutes');
@@ -126,11 +120,11 @@ const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/iframe-process', iframeRouter);
 
-// NUEVO: versiones con merchantId en la URL para el iframe
+// Versiones con merchantId en la URL para el iframe
 app.use('/:merchantId/iframe', iframeRouter);
 app.use('/:merchantId/iframe-process', iframeRouter);
 
-// Hosted Payment Page (HPP) para redirectUrl de HostedCheckout
+// Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 
 // APMs y Tokens
@@ -157,11 +151,12 @@ app.use('/api-keys', ensureRouter(require('./src/routes/apiKeyRoutes'), 'apiKeyR
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
-// 📌 Endpoints S2S + Hosted con merchantId COMO SEGMENTO DE URL
+// 📌 Endpoints con merchantId como segmento de URL
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
+app.use('/:merchantId/proxy-pci', proxyPciRoutes);
 
-// Payments (router agregador existente, lo dejamos tal cual)
+// Payments (router agregador existente)
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
 
 /* ===== Static ===== */
@@ -184,12 +179,10 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
-/* endurecer mongoose para no bloquear */
 mongoose.set('bufferCommands', false);
 mongoose.set('strictQuery', true);
 
 mongoose.connect(MONGO_URI, {
-  // opciones defensivas
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 7000,
