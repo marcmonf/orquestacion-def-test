@@ -19,7 +19,6 @@ const SERVER_URL = process.env.SERVER_URL || 'https://orquestacion-def-test.onre
 
 /**
  * Genera el header Authorization en formato Basic Auth.
- * Paylands requiere API_KEY como username, password vacío.
  */
 function buildAuthHeader(apiKey) {
   const encoded = Buffer.from(`${apiKey}:`).toString('base64');
@@ -42,8 +41,8 @@ function postJson(path, body, apiKey) {
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': String(payload.length),
-        'Authorization': buildAuthHeader(apiKey)
-      }
+        'Authorization': buildAuthHeader(apiKey),
+      },
     };
 
     const req = https.request(opts, (res) => {
@@ -66,14 +65,13 @@ function postJson(path, body, apiKey) {
 
 /**
  * Valida el hash de una notificación entrante de Paylands.
- * Hash = SHA256(JSON(order + client + extra_data) + signature)
  */
 function validateNotificationHash(notification, signatureKey) {
   try {
     const arr = {
       order:      notification.order,
       client:     notification.client,
-      extra_data: notification.extra_data || null
+      extra_data: notification.extra_data || null,
     };
     const data = JSON.stringify(arr);
     const expected = crypto.createHash('sha256')
@@ -86,106 +84,165 @@ function validateNotificationHash(notification, signatureKey) {
 }
 
 /**
- * Crea una orden de pago en Paylands.
+ * Crea una orden de pago Hosted Checkout en Paylands (flujo con redirección).
+ * Sigue siendo útil para merchants que usen el flujo hosted clásico.
  */
-async function authorize(paymentData) {
-  if (!API_KEY || !SIGNATURE || !SERVICE_UUID) {
-    logger.error('payNoPainConnector: faltan variables de entorno', {
-      component: 'connector',
-      event: 'PAYNOPAIN_CONFIG_ERROR'
-    });
-    return { success: false, responseCode: 'config_error', processorReference: null };
+async function createOrder(paymentData) {
+  const apiKey      = API_KEY;
+  const signature   = SIGNATURE;
+  const serviceUuid = SERVICE_UUID;
+
+  if (!apiKey || !signature || !serviceUuid) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
   }
 
-  const {
-    paymentId,
-    amount,
-    returnUrl,
-    merchantId,
-    merchantReference
-  } = paymentData;
-
-  // La signature se envía tal cual — es el valor literal de PAYNOPAIN_SIGNATURE
-  const body = {
-    signature:        SIGNATURE,
-    amount,
-    operative:        'AUTHORIZATION',
-    secure:           true,
-    service:          SERVICE_UUID,
-    customer_ext_id:  merchantId || 'monetiser-user',
-    description:      merchantReference || paymentId,
-    additional:       paymentId,
-    url_post:         `${SERVER_URL}/webhooks/paynopain`,
-    url_ok:           returnUrl || `${SERVER_URL}/payment/success`,
-    url_ko:           returnUrl || `${SERVER_URL}/payment/error`,
-    save_card:        false,
-    reference:        paymentId
+  const orderBody = {
+    operative:    'AUTHORIZATION',
+    service:      serviceUuid,
+    order_id:     paymentData.paymentId,
+    amount:       paymentData.amount,
+    description:  `Pago ${paymentData.merchantId}`,
+    signature:    signature,
+    secure:       false,
+    url_post:     `${SERVER_URL}/webhooks/paynopain`,
   };
 
-  logger.info('payNoPainConnector: creando orden', {
-    component: 'connector',
-    event: 'PAYNOPAIN_ORDER_CREATE',
-    data: { paymentId, amount, env: ENV }
-  });
-
-  let response;
   try {
-    response = await postJson('/payment', body, API_KEY);
-  } catch (err) {
-    logger.error('payNoPainConnector: error de red', {
-      component: 'connector',
-      event: 'PAYNOPAIN_NETWORK_ERROR',
-      data: { error: err.message }
-    });
-    return { success: false, responseCode: 'network_error', processorReference: null };
-  }
+    const res = await postJson('/payment', orderBody, apiKey);
 
-  logger.info('payNoPainConnector: respuesta Paylands', {
-    component: 'connector',
-    event: 'PAYNOPAIN_ORDER_RESPONSE',
-    data: { status: response.status, code: response.body?.code }
-  });
+    if (res.status !== 200 || !res.body?.order?.token) {
+      logger.error('PAYNOPAIN_CREATE_ORDER_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: res.status, body: res.body },
+      });
+      return { success: false, error: res.body?.message || 'Error creating order' };
+    }
 
-  if (response.status !== 200 || response.body?.code !== 200) {
-    logger.warn('payNoPainConnector: orden rechazada', {
-      component: 'connector',
-      event: 'PAYNOPAIN_ORDER_REJECTED',
-      data: { status: response.status, body: response.body }
-    });
+    const orderUuid = res.body.order.token;
+    const redirectUrl = `https://api.paylands.com/${ENV === 'production' ? '' : 'sandbox/'}payment/${orderUuid}`;
+
     return {
-      success: false,
-      responseCode: `paynopain_${response.status}`,
-      processorReference: null
+      success: true,
+      orderUuid,
+      processorReference: orderUuid,
+      redirectUrl,
     };
+  } catch (err) {
+    logger.error('PAYNOPAIN_CREATE_ORDER_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { error: err.message },
+    });
+    return { success: false, error: err.message };
   }
-
-  const order = response.body.order;
-  const redirectUrl = order?.urls?.payment_card;
-  const orderUuid   = order?.uuid;
-
-  logger.info('payNoPainConnector: orden creada OK', {
-    component: 'connector',
-    event: 'PAYNOPAIN_ORDER_CREATED',
-    data: { paymentId, orderUuid, env: ENV }
-  });
-
-  return {
-    success:            true,
-    status:             'pending_redirect',
-    redirectUrl,
-    orderUuid,
-    processorReference: orderUuid
-  };
 }
 
-function isSoftDecline() {
-  return false;
+/**
+ * Cobro S2S usando un token del Proxy PCI como source_uuid.
+ *
+ * Este es el flujo del Proxy PCI (iFrame de Monetiser):
+ * 1. El browser tokenizó el PAN via ProxyFields → Paylands tiene el PAN en bóveda
+ * 2. getTokenizationResults() nos devuelve el masked token
+ * 3. Aquí usamos ese token como source_uuid para crear la orden + ejecutar el cobro
+ *
+ * @param {Object} paymentData
+ *   - paymentId: string
+ *   - merchantId: string
+ *   - amount: number (en minor units, ej: 1000 = 10.00 EUR)
+ *   - currency: string
+ *   - cardToken: string  ← token obtenido de getTokenizationResults().token
+ *   - expiryMonth: string
+ *   - expiryYear: string
+ *   - cardHolder: string
+ *   - callbackUrl: string (opcional, para webhook de notificación)
+ */
+async function chargeWithToken(paymentData) {
+  const apiKey      = API_KEY;
+  const signature   = SIGNATURE;
+  const serviceUuid = SERVICE_UUID;
+
+  if (!apiKey || !signature || !serviceUuid) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
+  }
+
+  if (!paymentData.cardToken) {
+    return { success: false, error: 'cardToken es obligatorio para chargeWithToken' };
+  }
+
+  // Paso 1: Crear la orden en Paylands usando el token PCI como source_uuid
+  const orderBody = {
+    operative:    'AUTHORIZATION',
+    service:      serviceUuid,
+    order_id:     paymentData.paymentId,
+    amount:       paymentData.amount,
+    description:  `Pago ${paymentData.merchantId}`,
+    signature:    signature,
+    secure:       false,
+    source_uuid:  paymentData.cardToken,  // ← token del Proxy PCI
+    url_post:     `${SERVER_URL}/webhooks/paynopain`,
+  };
+
+  try {
+    const orderRes = await postJson('/payment', orderBody, apiKey);
+
+    if (orderRes.status !== 200 || !orderRes.body?.order?.token) {
+      logger.error('PAYNOPAIN_CHARGE_TOKEN_ORDER_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: orderRes.status, body: orderRes.body },
+      });
+      return {
+        success: false,
+        error: orderRes.body?.message || 'Error creating order with token',
+      };
+    }
+
+    const orderUuid = orderRes.body.order.token;
+
+    // Paso 2: Ejecutar el cobro S2S (webservice payment)
+    // Paylands webservice: POST /payment/{orderUuid}/webservice
+    const wsBody = {
+      operative:   'AUTHORIZATION',
+      expiry_month: String(paymentData.expiryMonth || '').padStart(2, '0'),
+      expiry_year:  String(paymentData.expiryYear || ''),
+      holder:       paymentData.cardHolder || 'Cardholder',
+    };
+
+    const wsRes = await postJson(`/payment/${orderUuid}/webservice`, wsBody, apiKey);
+
+    logger.info('PAYNOPAIN_CHARGE_TOKEN_RESULT', {
+      component: 'payNoPainConnector',
+      data: {
+        orderUuid,
+        wsStatus: wsRes.status,
+        operative: wsRes.body?.order?.operative,
+        status: wsRes.body?.order?.status,
+      },
+    });
+
+    // Status 300 = procesado (aprobado o denegado según operative)
+    // Status 200 también puede indicar OK según contexto
+    const wsBody2 = wsRes.body;
+    const orderStatus = wsBody2?.order?.status;
+    // Paylands status: 1=pending, 2=processing, 3=paid, 4=cancelled, 5=failed, 6=refunded
+    const approved = orderStatus === 3 || wsRes.status === 300;
+
+    return {
+      success: approved,
+      orderUuid,
+      processorReference: orderUuid,
+      paylandsStatus: orderStatus,
+      error: approved ? null : (wsBody2?.order?.message || `Declined (status ${orderStatus})`),
+    };
+  } catch (err) {
+    logger.error('PAYNOPAIN_CHARGE_TOKEN_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { error: err.message },
+    });
+    return { success: false, error: err.message };
+  }
 }
 
 module.exports = {
-  name: 'payNoPain',
-  authorize,
-  isSoftDecline,
+  createOrder,
+  chargeWithToken,
   validateNotificationHash,
-  SIGNATURE
 };
