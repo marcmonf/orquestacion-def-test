@@ -35,71 +35,108 @@ function mapGuardErrorToHttp(code) {
   }
 }
 
-// Estados permitidos para servir el iframe por PRIMERA vez
 const ALLOWED_INITIAL_STATUSES = ['initialized', 'hosted_pending'];
 
-// CSP solo para esta ruta
+// CSP actualizada:
+// - 'unsafe-inline' en script-src: necesario para el bloque <script> del iframe.html
+// - pci-proxy-api.paynopain.com en script-src: librería ProxyFields de Paylands
+// - pci-proxy-api.paynopain.com en connect-src: llamadas fetch() al Proxy PCI
+// - pci-proxy-sandbox.paynopain.com en frame-src: sub-iFrame del campo PAN
 const CSP_HEADER =
   "default-src 'self'; " +
   "img-src 'self' data:; " +
   "style-src 'self' 'unsafe-inline'; " +
-  "script-src 'self' https://pay.google.com https://*.google.com https://*.gstatic.com; " +
-  "connect-src 'self' https://pay.google.com https://*.google.com https://google.com; " +
-  "frame-src 'self' https://pay.google.com https://*.google.com; " +
+  "script-src 'self' 'unsafe-inline' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://*.gstatic.com; " +
+  "connect-src 'self' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://google.com; " +
+  "frame-src 'self' https://pci-proxy-api.paynopain.com https://pci-proxy-sandbox.paynopain.com https://pay.google.com https://*.google.com; " +
   "frame-ancestors 'none';";
 
-function safeCompare(a,b){
-  try{
+function safeCompare(a, b) {
+  try {
     const A = Buffer.from(String(a || ''), 'utf8');
     const B = Buffer.from(String(b || ''), 'utf8');
     if (A.length !== B.length) return false;
     return crypto.timingSafeEqual(A, B);
-  }catch{
+  } catch {
     return false;
   }
 }
 
-function generateSignature(payload,secret){
+function generateSignature(payload, secret) {
   return crypto
     .createHmac('sha256', String(secret))
     .update(JSON.stringify(payload))
     .digest('hex');
 }
 
-function readHtml(abs){
-  try{
+function readHtml(abs) {
+  try {
     return fs.readFileSync(abs, 'utf8');
-  }catch{
+  } catch {
     return null;
   }
 }
 
-function injectBranding(html, branding, runtime){
+/**
+ * Inyecta branding, placeholders legacy (__AMOUNT__, etc.)
+ * Y el objeto window.__MONETISER_RUNTIME__ que lee el nuevo iframe.html.
+ *
+ * Se inyecta justo antes de </head> para que esté disponible
+ * cuando arranque el <script> principal del body.
+ */
+function injectBranding(html, branding, runtime) {
   if (!html) return null;
+
   const {
-    logoUrl = '/Logo_Monetiser.png',
+    logoUrl    = '/Logo_Monetiser.png',
     brandColor = '#0070f3',
     accentColor = '#0053b3'
   } = branding || {};
 
   const rt = runtime || {};
 
+  // Placeholders legacy (por si el HTML antiguo aún los usa)
   let out = html
-    .replace(/__LOGO_SRC__/g, logoUrl)
-    .replace(/__BRAND_COLOR__/g, brandColor)
-    .replace(/__ACCENT_COLOR__/g, accentColor);
-
-  // Inyección de datos de la transacción SOLO para mostrar al usuario
-  out = out
-    .replace(/__AMOUNT__/g, (rt.amount !== undefined && rt.amount !== null) ? String(rt.amount) : '')
-    .replace(/__CURRENCY__/g, rt.currency || '')
+    .replace(/__LOGO_SRC__/g,     logoUrl)
+    .replace(/__BRAND_COLOR__/g,  brandColor)
+    .replace(/__ACCENT_COLOR__/g, accentColor)
+    .replace(/__AMOUNT__/g,    (rt.amount   !== undefined && rt.amount   !== null) ? String(rt.amount)   : '')
+    .replace(/__CURRENCY__/g,  rt.currency  || '')
     .replace(/__MERCHANT_ID__/g, rt.merchantId || '')
-    .replace(/__PAYMENT_ID__/g, rt.paymentId || '');
+    .replace(/__PAYMENT_ID__/g,  rt.paymentId  || '');
+
+  // Inyección del objeto RUNTIME para el nuevo iframe.html
+  // Se inserta como primer <script> dentro de <head> para garantizar
+  // que esté disponible antes de que arranque cualquier otro script.
+  const runtimeScript = `<script>
+window.__MONETISER_RUNTIME__ = {
+  paymentId:  ${JSON.stringify(rt.paymentId  || '')},
+  merchantId: ${JSON.stringify(rt.merchantId || '')},
+  amount:     ${JSON.stringify(rt.amount     !== undefined ? String(rt.amount) : '')},
+  currency:   ${JSON.stringify(rt.currency   || '')},
+  branding: {
+    logoUrl:     ${JSON.stringify(logoUrl)},
+    brandColor:  ${JSON.stringify(brandColor)},
+    accentColor: ${JSON.stringify(accentColor)},
+    merchantName: ${JSON.stringify(rt.merchantId || '')}
+  }
+};
+</script>`;
+
+  // Insertar justo después de <head> (o antes de </head> si no hay <head>)
+  if (out.includes('<head>')) {
+    out = out.replace('<head>', `<head>\n${runtimeScript}`);
+  } else if (out.includes('</head>')) {
+    out = out.replace('</head>', `${runtimeScript}\n</head>`);
+  } else {
+    // Fallback: insertar al principio del documento
+    out = runtimeScript + '\n' + out;
+  }
 
   return out;
 }
 
-function brandedError(res,code){
+function brandedError(res, code) {
   const map = {
     400: '400.html',
     403: '403.html',
@@ -114,7 +151,7 @@ function brandedError(res,code){
 }
 
 // GET /iframe  (y /:merchantId/iframe)
-router.get('/', async (req,res)=>{
+router.get('/', async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP_HEADER);
   const { paymentId, signature, exp, nonce } = req.query || {};
   const merchantIdFromUrl = req.params.merchantId || null;
@@ -124,22 +161,19 @@ router.get('/', async (req,res)=>{
     const abs = path.join(__dirname, '../../public/iframe.html');
     const base = readHtml(abs);
     if (!base) return res.status(500).send('Error cargando iframe');
-    // Sin runtime: solo branding genérico
     return res.send(injectBranding(base, {}, {}) || base);
   }
 
   if (!paymentId || !signature || !exp) return brandedError(res, 400);
 
-  // Aceptar exp como ISO o como epoch-ms
   const expStr = String(exp);
   const expMs  = /^\d+$/.test(expStr) ? Number(expStr) : Date.parse(expStr);
   if (Number.isNaN(expMs)) return brandedError(res, 400);
 
-  try{
+  try {
     const tx = await Transaction.findOne({ paymentId }).lean(false);
     if (!tx) return brandedError(res, 404);
 
-    // Coherencia merchantId URL vs transacción
     if (merchantIdFromUrl && merchantIdFromUrl !== tx.merchantId) {
       return brandedError(res, 403);
     }
@@ -164,7 +198,6 @@ router.get('/', async (req,res)=>{
       process.env.MERCHANT_SECRET ||
       'default_merchant_secret';
 
-    /* MONETISER PATCH: usar guard SOLO si hay nonce presente; si no, legado */
     const useGuard =
       FEATURE_IFRAME_GUARD &&
       iframeGuard &&
@@ -174,78 +207,67 @@ router.get('/', async (req,res)=>{
     if (useGuard) {
       const verdict = await iframeGuard.verifyAndConsume({
         merchantId: tx.merchantId,
-        paymentId: tx.paymentId,
-        amount: tx.amount,
-        currency: tx.currency,
+        paymentId:  tx.paymentId,
+        amount:     tx.amount,
+        currency:   tx.currency,
         nonce,
-        exp: expStr,
+        exp:        expStr,
         signature,
         secret
       });
       if (!verdict.ok) {
-        const code = mapGuardErrorToHttp(verdict.code);
-        return brandedError(res, code);
+        return brandedError(res, mapGuardErrorToHttp(verdict.code));
       }
     } else {
-      // Camino LEGADO: firma basada en JSON.stringify(payload)
       if (Date.now() > expMs) return brandedError(res, 410);
       const payload = {
-        paymentId: tx.paymentId,
+        paymentId:  tx.paymentId,
         merchantId: tx.merchantId,
-        amount: tx.amount,
-        currency: tx.currency,
-        method: tx.method,
-        iat: tx.createdAt?.toISOString?.() || new Date().toISOString(),
-        exp: expStr
+        amount:     tx.amount,
+        currency:   tx.currency,
+        method:     tx.method,
+        iat:        tx.createdAt?.toISOString?.() || new Date().toISOString(),
+        exp:        expStr
       };
       const expected = generateSignature(payload, secret);
       if (!safeCompare(expected, signature)) return brandedError(res, 403);
     }
 
-    // BLOQUEO SOLO POR ESTADO:
-    // - Si la transacción ya no está en un estado inicial (initialized / hosted_pending)
-    //   devolvemos 409.
-    // - iframeServedAt se usa SOLO para trazabilidad, no para bloquear.
     if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
       return brandedError(res, 409);
     }
 
-    // Marca trazabilidad iFrame (pero NO bloqueamos futuras cargas por esto)
     tx.iframeServedAt = new Date();
     try {
-      tx.iframeClientIp  =
-        (req.headers['x-forwarded-for'] || '').split(',')[0] ||
-        req.socket?.remoteAddress ||
-        null;
+      tx.iframeClientIp  = (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || null;
       tx.iframeUserAgent = req.headers['user-agent'] || null;
     } catch {}
     await tx.save();
 
-    // Branding dinámico + datos de la transacción (importe, moneda, merchant, paymentId)
     const branding = merchant
       ? {
-          logoUrl: merchant.logoUrl,
+          logoUrl:    merchant.logoUrl,
           brandColor: merchant.brandColor,
           accentColor: merchant.accentColor
         }
       : {};
 
-    // Conversión de minor units -> importe "humano" según la divisa
     const cfg         = getCurrencyConfig(tx.currency);
     const majorAmount = toMajorUnits(tx.amount, tx.currency);
 
     const runtime = {
-      amount: majorAmount.toFixed(cfg.minorUnits),
-      currency: tx.currency,
+      amount:     majorAmount.toFixed(cfg.minorUnits),
+      currency:   tx.currency,
       merchantId: tx.merchantId,
-      paymentId: tx.paymentId
+      paymentId:  tx.paymentId
     };
 
     const basePath = path.join(__dirname, '../../public/iframe.html');
     const baseHtml = readHtml(basePath);
     if (!baseHtml) return res.status(500).send('Error cargando iframe');
     return res.send(injectBranding(baseHtml, branding, runtime) || baseHtml);
-  }catch(err){
+
+  } catch (err) {
     console.error('Error en /iframe:', err);
     return brandedError(res, 500);
   }
@@ -277,16 +299,13 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Transacción no encontrada' });
     }
 
-    // No permitimos reprocesar pagos ya finalizados o en estado no inicial
     if (!ALLOWED_INITIAL_STATUSES.includes(tx.status)) {
       return res.status(409).json({ success: false, message: 'Transacción ya procesada o en estado no válido' });
     }
 
-    // Amount y currency SIEMPRE de Mongo, nunca del navegador
     const cfg         = getCurrencyConfig(tx.currency);
     const majorAmount = toMajorUnits(tx.amount, tx.currency);
 
-    // Construir paymentData para el rule engine
     const paymentData = {
       paymentId:  tx.paymentId,
       merchantId: tx.merchantId,
@@ -305,11 +324,9 @@ router.post('/', async (req, res) => {
       cardType:      null,
     };
 
-    // Llamar al conector a través del rule engine
     const { processCardPayment } = require('../services/paymentService');
     const result = await processCardPayment(paymentData);
 
-    // Actualizar transacción con el resultado real
     const finalStatus = result.status === 'approved' ? 'authorized' : 'declined';
     tx.status    = finalStatus;
     tx.processor = result.connectorUsed || null;
