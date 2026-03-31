@@ -5,6 +5,8 @@ const helmet = require('helmet');
 const mongoose = require('mongoose');
 const serverPaymentRoutes = require('./src/routes/serverPaymentRoutes');
 const hostedCheckoutRoutes = require('./src/routes/hostedCheckoutRoutes');
+const proxyPciRoutes = require('./src/routes/proxyPciRoutes');
+app.use('/:merchantId/proxy-pci', proxyPciRoutes);
 
 let morgan = null;
 try { morgan = require('morgan'); }
