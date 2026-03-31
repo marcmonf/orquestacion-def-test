@@ -105,15 +105,26 @@
     /* Contenedor del sub-iFrame de Paylands (Proxy PCI) */
     #pan-container {
       width: 100%;
-      padding: 10px 14px;
+      padding: 0 14px;
       border: 1.5px solid #ddd;
       border-radius: 8px;
-      min-height: 42px;
+      height: 44px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
       transition: border-color 0.2s;
     }
 
     #pan-container.ready { border-color: #ddd; }
     #pan-container.error { border-color: #e53e3e; }
+
+    /* El iFrame interno de Paylands hereda el ancho y se centra */
+    #pan-container iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
 
     .pci-badge {
       display: flex;
@@ -274,9 +285,7 @@
     <div class="secure-footer">🔒 Pago seguro · Monetiser</div>
   </div>
 
-  <!-- Librería Proxy PCI de Paylands (solo se carga en modo proxy) -->
   <script>
-    // ─── Datos inyectados por el servidor (ver src/routes/iframe.js) ──────────
     const RUNTIME = window.__MONETISER_RUNTIME__ || {};
     const paymentId  = RUNTIME.paymentId  || '';
     const merchantId = RUNTIME.merchantId || '';
@@ -284,12 +293,11 @@
     const currency   = RUNTIME.currency   || '';
     const branding   = RUNTIME.branding   || {};
 
-    // Detectar modo: 'proxy-pci' (default con PayNoPain) o 'legacy'
-    const urlParams  = new URLSearchParams(window.location.search);
-    const mode       = urlParams.get('mode') || 'proxy-pci';
-    const SERVER_BASE = '';  // misma origin
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode      = urlParams.get('mode') || 'proxy-pci';
+    const SERVER_BASE = '';
 
-    // ─── Aplicar branding ────────────────────────────────────────────────────
+    // Aplicar branding
     if (branding.brandColor) {
       document.documentElement.style.setProperty('--brand-color', branding.brandColor);
     }
@@ -301,10 +309,9 @@
     if (branding.merchantName) {
       document.getElementById('brand-name').textContent = branding.merchantName;
     }
-    document.getElementById('amount-value').textContent   = amount;
+    document.getElementById('amount-value').textContent    = amount;
     document.getElementById('amount-currency').textContent = currency;
 
-    // ─── Referencias DOM ─────────────────────────────────────────────────────
     const payBtn    = document.getElementById('pay-btn');
     const statusMsg = document.getElementById('status-msg');
 
@@ -314,7 +321,7 @@
     }
 
     function setLoading(loading) {
-      payBtn.disabled = loading;
+      payBtn.disabled  = loading;
       payBtn.innerHTML = loading
         ? '<span class="spinner"></span>Procesando...'
         : 'Pagar ahora';
@@ -327,40 +334,24 @@
       document.getElementById('proxy-pci-form').style.display = 'block';
       document.getElementById('legacy-form').style.display    = 'none';
 
-      // Determinar entorno para cargar la librería correcta
-      const pciEnv = (window.location.hostname === 'localhost' || window.location.hostname.includes('render.com'))
-        ? 'sandbox'
-        : 'sandbox'; // Cambiar a 'prod' cuando sea producción real
-
       const script = document.createElement('script');
-      script.src = pciEnv === 'sandbox'
-        ? 'https://pci-proxy-api.paynopain.com/sandbox/client.js'
-        : 'https://pci-proxy-api.paynopain.com/prod/client.js';
-
-      script.onload = function() {
-        initProxyPCI();
-      };
+      script.src   = 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
 
       script.onerror = function() {
         showStatus('error', 'Error al cargar el módulo de seguridad. Recarga la página.');
       };
 
+      script.onload = function() { initProxyPCI(); };
       document.head.appendChild(script);
 
-      let proxyFields = null;
+      let proxyFields  = null;
       let sessionToken = null;
 
       async function initProxyPCI() {
         try {
-          // 1. Pedir el token de sesión al servidor de Monetiser
           const sessionRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/session`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              // El auth header x-api-key lo inyecta el iFrame desde el parámetro de URL
-              // (el merchant lo configura en su integración)
-              // Para el iFrame directo, usamos el modo sin auth si INITIALIZE_REQUIRE_API_KEY=false
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paymentId }),
           });
 
@@ -371,39 +362,38 @@
           const sessionData = await sessionRes.json();
           sessionToken = sessionData.sessionToken;
 
-          // 2. Inicializar ProxyFields con el token de sesión
           proxyFields = new ProxyFields();
           proxyFields.init(sessionToken, { cardNumber: 'pan-container' });
 
           proxyFields.on('ready', () => {
-            // Estilizar el campo de PAN para que encaje con el diseño de Monetiser
             proxyFields.setStyle(
               'cardNumber',
-              'width: 100%; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
+              'width: 100%; height: 44px; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 0 14px;'
             );
             proxyFields.setStyle('cardNumber::placeholder', 'color: #aaa');
             proxyFields.setPlaceholder('cardNumber', '4111 1111 1111 1111');
 
             document.getElementById('pan-container').classList.add('ready');
-            payBtn.disabled = false;
+            payBtn.disabled    = false;
             payBtn.textContent = 'Pagar ahora';
           });
 
           proxyFields.on('validate', (data) => {
+            const pan = document.getElementById('pan-container');
             if (data && data.hasErrors) {
-              document.getElementById('pan-container').classList.add('error');
+              pan.classList.add('error');
               showStatus('error', 'El número de tarjeta no es válido.');
             } else {
-              document.getElementById('pan-container').classList.remove('error');
+              pan.classList.remove('error');
+              statusMsg.className = 'status-message';
             }
           });
 
           proxyFields.on('success', async () => {
-            // El PAN fue enviado a Paylands correctamente. Ahora ejecutamos el cobro.
             try {
-              const expiryMonth  = document.getElementById('expiry-month').value.trim();
-              const expiryYear   = document.getElementById('expiry-year').value.trim();
-              const cardHolder   = document.getElementById('card-holder').value.trim();
+              const expiryMonth = document.getElementById('expiry-month').value.trim();
+              const expiryYear  = document.getElementById('expiry-year').value.trim();
+              const cardHolder  = document.getElementById('card-holder').value.trim();
 
               const chargeRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/charge`, {
                 method: 'POST',
@@ -426,7 +416,7 @@
             }
           });
 
-          proxyFields.on('error', (err) => {
+          proxyFields.on('error', () => {
             showStatus('error', 'Error al procesar la tarjeta.');
             setLoading(false);
           });
@@ -437,7 +427,6 @@
         }
       }
 
-      // Botón de pago
       payBtn.addEventListener('click', function() {
         if (!proxyFields) return;
 
@@ -453,7 +442,6 @@
         setLoading(true);
         statusMsg.className = 'status-message';
 
-        // Submit a Paylands (el PAN va directo a su bóveda PCI)
         proxyFields.submit({
           expiryMonth,
           expiryYear: expiryYear.length === 2 ? '20' + expiryYear : expiryYear,
