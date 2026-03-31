@@ -2,206 +2,519 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>iFrame de Pago</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>:root{--brand-color:__BRAND_COLOR__;--accent-color:__ACCENT_COLOR__}</style>
+  <title>Monetiser Checkout</title>
   <style>
-    body{
-      font-family:'Inter',sans-serif;
-      background-color:#f5f5f5;
-      margin:0;
-      padding:20px
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .payment-container{
-      max-width:420px;
-      margin:0 auto;
-      background:#fff;
-      padding:25px;
-      border-radius:16px;
-      box-shadow:0 6px 20px rgba(0,0,0,.08);
-      position:relative;
-      transition:.3s
+
+    .checkout-card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 32px;
+      width: 100%;
+      max-width: 420px;
     }
-    .powered-by{
-      position:absolute;
-      top:10px;
-      right:15px;
-      font-size:10px;
-      color:#999;
-      display:flex;
-      align-items:center
+
+    .brand-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eee;
     }
-    .powered-by img{
-      height:48px;
-      margin-left:4px
+
+    .brand-logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      object-fit: contain;
+      display: none;
     }
-    h2{
-      text-align:center;
-      color:var(--brand-color)
+
+    .brand-logo.visible { display: block; }
+
+    .brand-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: #111;
     }
-    .method-header{
-      background:#eee;
-      padding:12px;
-      margin-bottom:5px;
-      border-radius:10px;
-      cursor:pointer;
-      font-weight:bold;
-      transition:.2s
+
+    .amount-display {
+      text-align: center;
+      margin-bottom: 28px;
     }
-    .method-header:hover{
-      background:#e0e0e0;
-      transform:scale(1.01)
+
+    .amount-display .label {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 4px;
     }
-    .method-header.active{
-      background:#ddd
+
+    .amount-display .value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #111;
     }
-    .method-form{
-      display:none;
-      animation:fadeSlide .3s
+
+    .amount-display .currency {
+      font-size: 16px;
+      color: #555;
+      margin-left: 4px;
     }
-    .method-form.show{
-      display:block
+
+    .form-group {
+      margin-bottom: 16px;
     }
-    @keyframes fadeSlide{
-      0%{opacity:0;transform:translateY(-8px)}
-      100%{opacity:1;transform:translateY(0)}
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #444;
+      margin-bottom: 6px;
     }
-    label{
-      display:block;
-      margin-top:10px;
-      font-size:14px
+
+    input[type="text"],
+    input[type="tel"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      font-size: 15px;
+      color: #111;
+      transition: border-color 0.2s;
+      outline: none;
     }
-    input{
-      width:100%;
-      padding:10px;
-      margin-top:5px;
-      border-radius:8px;
-      border:1px solid #ccc;
-      box-sizing:border-box;
-      transition:border .2s,box-shadow .2s
+
+    input:focus { border-color: var(--brand-color, #5046e4); }
+
+    .row { display: flex; gap: 12px; }
+    .row .form-group { flex: 1; }
+
+    /* Contenedor del sub-iFrame de Paylands (Proxy PCI) */
+    #pan-container {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      min-height: 42px;
+      transition: border-color 0.2s;
     }
-    input:focus{
-      outline:none;
-      border-color:var(--brand-color);
-      box-shadow:0 0 0 2px rgba(0,112,243,.2)
+
+    #pan-container.ready { border-color: #ddd; }
+    #pan-container.error { border-color: #e53e3e; }
+
+    .pci-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #888;
+      margin-top: 6px;
     }
-    button{
-      margin-top:15px;
-      padding:12px;
-      background:var(--brand-color);
-      color:#fff;
-      border:none;
-      border-radius:10px;
-      cursor:pointer;
-      width:100%;
-      font-weight:bold;
-      transition:.2s
+
+    .pci-badge::before {
+      content: '';
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #38a169;
     }
-    button:hover{
-      background:var(--accent-color);
-      transform:scale(1.01)
+
+    .submit-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--brand-color, #5046e4);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.1s;
     }
-    .wallet-button{
-      width:100%;
-      margin:16px 0
+
+    .submit-btn:hover { opacity: 0.92; }
+    .submit-btn:active { transform: scale(0.99); }
+    .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status-message {
+      text-align: center;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 16px;
+      font-size: 14px;
+      display: none;
     }
-    .wallet-button img{
-      width:100%;
-      border-radius:12px;
-      cursor:pointer;
-      transition:.2s
+
+    .status-message.success {
+      background: #f0fff4;
+      color: #276749;
+      border: 1px solid #9ae6b4;
+      display: block;
     }
-    .wallet-button img:hover{
-      transform:scale(1.02);
-      box-shadow:0 0 0 2px rgba(0,112,243,.15)
+
+    .status-message.error {
+      background: #fff5f5;
+      color: #c53030;
+      border: 1px solid #feb2b2;
+      display: block;
     }
-    #success-message{
-      display:none;
-      background:#e6ffed;
-      color:#256029;
-      padding:15px;
-      border:1px solid #b7eb8f;
-      border-radius:12px;
-      margin-bottom:20px;
-      animation:fadeSlide .3s
+
+    .status-message.loading {
+      background: #f7fafc;
+      color: #555;
+      border: 1px solid #e2e8f0;
+      display: block;
     }
-    #success-message strong{
-      display:block;
-      margin-bottom:6px;
-      font-size:16px
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 6px;
+      vertical-align: middle;
     }
-    #success-message button{
-      margin-top:12px;
-      padding:10px 16px;
-      background:var(--brand-color)
-    }
-    /* Campos de solo lectura (importe/moneda) con aspecto de input */
-    .readonly-input{
-      width:100%;
-      padding:10px;
-      margin-top:5px;
-      border-radius:8px;
-      border:1px solid #ccc;
-      box-sizing:border-box;
-      background:#f5f5f5;
-      color:#333;
-      font-size:14px
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .secure-footer {
+      text-align: center;
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 20px;
     }
   </style>
 </head>
 <body>
-  <div class="payment-container">
-    <div class="powered-by">
-      <img id="merchantLogo" src="__LOGO_SRC__" alt="Logo"/>
+  <div class="checkout-card">
+    <div class="brand-header">
+      <img id="brand-logo" class="brand-logo" src="" alt="">
+      <span id="brand-name" class="brand-name">Pago seguro</span>
     </div>
 
-    <div id="success-message"></div>
-
-    <h2>Método de Pago</h2>
-
-    <div id="method-card" class="method-header">Pago con tarjeta</div>
-    <div id="card-form" class="method-form">
-      <form id="card-payment-form">
-        <label for="cardholderName">Nombre en la tarjeta</label>
-        <input type="text" id="cardholderName" required>
-
-        <label for="cardNumber">Número de tarjeta</label>
-        <input type="text" id="cardNumber" required>
-
-        <label for="expiryMonth">Mes de expiración (MM)</label>
-        <input type="text" id="expiryMonth" required>
-
-        <label for="expiryYear">Año de expiración (YY)</label>
-        <input type="text" id="expiryYear" required>
-
-        <label for="cvv">CVV</label>
-        <input type="text" id="cvv" required>
-
-        <!-- IMPORTE – solo visual, no editable, no enviado al backend -->
-        <label>Importe</label>
-        <div id="amountDisplay" class="readonly-input">__AMOUNT__</div>
-
-        <!-- MONEDA – solo visual, no editable, no enviada al backend -->
-        <label>Moneda</label>
-        <div id="currencyDisplay" class="readonly-input">__CURRENCY__</div>
-
-        <!-- Metadatos necesarios para identificar la transacción en backend -->
-        <input type="hidden" id="merchantId" value="__MERCHANT_ID__">
-        <input type="hidden" id="paymentId" value="__PAYMENT_ID__">
-
-        <button type="submit">Pagar</button>
-      </form>
+    <div class="amount-display">
+      <div class="label">Total a pagar</div>
+      <div>
+        <span id="amount-value" class="value">—</span>
+        <span id="amount-currency" class="currency"></span>
+      </div>
     </div>
 
-    <div class="wallet-button">
-      <img src="/applepay-custom.png" alt="Apple Pay" onclick="startApplePaySession()"/>
+    <!-- MODO PROXY PCI: sub-iFrame de Paylands para el PAN -->
+    <div id="proxy-pci-form">
+      <div class="form-group">
+        <label>Número de tarjeta</label>
+        <div id="pan-container"></div>
+        <div class="pci-badge">Cifrado y protegido por PCI DSS</div>
+      </div>
+      <div class="row">
+        <div class="form-group">
+          <label for="expiry-month">Mes</label>
+          <input type="tel" id="expiry-month" placeholder="MM" maxlength="2" autocomplete="cc-exp-month">
+        </div>
+        <div class="form-group">
+          <label for="expiry-year">Año</label>
+          <input type="tel" id="expiry-year" placeholder="AA" maxlength="2" autocomplete="cc-exp-year">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="card-holder">Titular</label>
+        <input type="text" id="card-holder" placeholder="Nombre en la tarjeta" autocomplete="cc-name">
+      </div>
     </div>
-    <div class="wallet-button">
-      <img src="/googlepay-custom.png" alt="Google Pay" onclick="onGooglePayButtonClicked()"/>
+
+    <!-- MODO LEGACY: formulario propio (para dummyCard / fallback) -->
+    <div id="legacy-form" style="display:none;">
+      <div class="form-group">
+        <label for="card-number-legacy">Número de tarjeta</label>
+        <input type="tel" id="card-number-legacy" placeholder="4111 1111 1111 1111" maxlength="19" autocomplete="cc-number">
+      </div>
+      <div class="row">
+        <div class="form-group">
+          <label for="expiry-month-legacy">Mes</label>
+          <input type="tel" id="expiry-month-legacy" placeholder="MM" maxlength="2">
+        </div>
+        <div class="form-group">
+          <label for="expiry-year-legacy">Año</label>
+          <input type="tel" id="expiry-year-legacy" placeholder="AA" maxlength="2">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="cvv-legacy">CVV</label>
+        <input type="tel" id="cvv-legacy" placeholder="123" maxlength="4">
+      </div>
+      <div class="form-group">
+        <label for="holder-legacy">Titular</label>
+        <input type="text" id="holder-legacy" placeholder="Nombre en la tarjeta">
+      </div>
     </div>
+
+    <button class="submit-btn" id="pay-btn" disabled>Cargando...</button>
+
+    <div id="status-msg" class="status-message"></div>
+
+    <div class="secure-footer">🔒 Pago seguro · Monetiser</div>
   </div>
 
-  <script src="https://pay.google.com/gp/p/js/pay.js" async></script>
-  <script src="/inpage.js"></script>
+  <!-- Librería Proxy PCI de Paylands (solo se carga en modo proxy) -->
+  <script>
+    // ─── Datos inyectados por el servidor (ver src/routes/iframe.js) ──────────
+    const RUNTIME = window.__MONETISER_RUNTIME__ || {};
+    const paymentId  = RUNTIME.paymentId  || '';
+    const merchantId = RUNTIME.merchantId || '';
+    const amount     = RUNTIME.amount     || '';
+    const currency   = RUNTIME.currency   || '';
+    const branding   = RUNTIME.branding   || {};
+
+    // Detectar modo: 'proxy-pci' (default con PayNoPain) o 'legacy'
+    const urlParams  = new URLSearchParams(window.location.search);
+    const mode       = urlParams.get('mode') || 'proxy-pci';
+    const SERVER_BASE = '';  // misma origin
+
+    // ─── Aplicar branding ────────────────────────────────────────────────────
+    if (branding.brandColor) {
+      document.documentElement.style.setProperty('--brand-color', branding.brandColor);
+    }
+    if (branding.logoUrl) {
+      const logo = document.getElementById('brand-logo');
+      logo.src = branding.logoUrl;
+      logo.classList.add('visible');
+    }
+    if (branding.merchantName) {
+      document.getElementById('brand-name').textContent = branding.merchantName;
+    }
+    document.getElementById('amount-value').textContent   = amount;
+    document.getElementById('amount-currency').textContent = currency;
+
+    // ─── Referencias DOM ─────────────────────────────────────────────────────
+    const payBtn    = document.getElementById('pay-btn');
+    const statusMsg = document.getElementById('status-msg');
+
+    function showStatus(type, msg) {
+      statusMsg.className = `status-message ${type}`;
+      statusMsg.textContent = msg;
+    }
+
+    function setLoading(loading) {
+      payBtn.disabled = loading;
+      payBtn.innerHTML = loading
+        ? '<span class="spinner"></span>Procesando...'
+        : 'Pagar ahora';
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODO PROXY PCI
+    // ═══════════════════════════════════════════════════════════════════════
+    if (mode === 'proxy-pci') {
+      document.getElementById('proxy-pci-form').style.display = 'block';
+      document.getElementById('legacy-form').style.display    = 'none';
+
+      // Determinar entorno para cargar la librería correcta
+      const pciEnv = (window.location.hostname === 'localhost' || window.location.hostname.includes('render.com'))
+        ? 'sandbox'
+        : 'sandbox'; // Cambiar a 'prod' cuando sea producción real
+
+      const script = document.createElement('script');
+      script.src = pciEnv === 'sandbox'
+        ? 'https://pci-proxy-api.paynopain.com/sandbox/client.js'
+        : 'https://pci-proxy-api.paynopain.com/prod/client.js';
+
+      script.onload = function() {
+        initProxyPCI();
+      };
+
+      script.onerror = function() {
+        showStatus('error', 'Error al cargar el módulo de seguridad. Recarga la página.');
+      };
+
+      document.head.appendChild(script);
+
+      let proxyFields = null;
+      let sessionToken = null;
+
+      async function initProxyPCI() {
+        try {
+          // 1. Pedir el token de sesión al servidor de Monetiser
+          const sessionRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/session`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              // El auth header x-api-key lo inyecta el iFrame desde el parámetro de URL
+              // (el merchant lo configura en su integración)
+              // Para el iFrame directo, usamos el modo sin auth si INITIALIZE_REQUIRE_API_KEY=false
+            },
+            body: JSON.stringify({ paymentId }),
+          });
+
+          if (!sessionRes.ok) {
+            throw new Error(`Error al obtener sesión PCI (${sessionRes.status})`);
+          }
+
+          const sessionData = await sessionRes.json();
+          sessionToken = sessionData.sessionToken;
+
+          // 2. Inicializar ProxyFields con el token de sesión
+          proxyFields = new ProxyFields();
+          proxyFields.init(sessionToken, { cardNumber: 'pan-container' });
+
+          proxyFields.on('ready', () => {
+            // Estilizar el campo de PAN para que encaje con el diseño de Monetiser
+            proxyFields.setStyle(
+              'cardNumber',
+              'width: 100%; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
+            );
+            proxyFields.setStyle('cardNumber::placeholder', 'color: #aaa');
+            proxyFields.setPlaceholder('cardNumber', '4111 1111 1111 1111');
+
+            document.getElementById('pan-container').classList.add('ready');
+            payBtn.disabled = false;
+            payBtn.textContent = 'Pagar ahora';
+          });
+
+          proxyFields.on('validate', (data) => {
+            if (data && data.hasErrors) {
+              document.getElementById('pan-container').classList.add('error');
+              showStatus('error', 'El número de tarjeta no es válido.');
+            } else {
+              document.getElementById('pan-container').classList.remove('error');
+            }
+          });
+
+          proxyFields.on('success', async () => {
+            // El PAN fue enviado a Paylands correctamente. Ahora ejecutamos el cobro.
+            try {
+              const expiryMonth  = document.getElementById('expiry-month').value.trim();
+              const expiryYear   = document.getElementById('expiry-year').value.trim();
+              const cardHolder   = document.getElementById('card-holder').value.trim();
+
+              const chargeRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/charge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paymentId, expiryMonth, expiryYear, cardHolder }),
+              });
+
+              const chargeData = await chargeRes.json();
+
+              if (chargeData.success) {
+                showStatus('success', '¡Pago completado correctamente!');
+                payBtn.style.display = 'none';
+              } else {
+                showStatus('error', chargeData.error || 'El pago fue rechazado.');
+                setLoading(false);
+              }
+            } catch (chargeErr) {
+              showStatus('error', 'Error al procesar el pago. Inténtalo de nuevo.');
+              setLoading(false);
+            }
+          });
+
+          proxyFields.on('error', (err) => {
+            showStatus('error', 'Error al procesar la tarjeta.');
+            setLoading(false);
+          });
+
+        } catch (initErr) {
+          showStatus('error', 'Error al inicializar el pago seguro. Recarga la página.');
+          console.error('[Monetiser] initProxyPCI error:', initErr);
+        }
+      }
+
+      // Botón de pago
+      payBtn.addEventListener('click', function() {
+        if (!proxyFields) return;
+
+        const expiryMonth = document.getElementById('expiry-month').value.trim();
+        const expiryYear  = document.getElementById('expiry-year').value.trim();
+        const cardHolder  = document.getElementById('card-holder').value.trim();
+
+        if (!expiryMonth || !expiryYear || !cardHolder) {
+          showStatus('error', 'Completa todos los campos.');
+          return;
+        }
+
+        setLoading(true);
+        statusMsg.className = 'status-message';
+
+        // Submit a Paylands (el PAN va directo a su bóveda PCI)
+        proxyFields.submit({
+          expiryMonth,
+          expiryYear: expiryYear.length === 2 ? '20' + expiryYear : expiryYear,
+          cardHolder,
+        });
+      });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODO LEGACY (dummyCard / testing sin Proxy PCI)
+    // ═══════════════════════════════════════════════════════════════════════
+    } else {
+      document.getElementById('proxy-pci-form').style.display = 'none';
+      document.getElementById('legacy-form').style.display    = 'block';
+      payBtn.disabled    = false;
+      payBtn.textContent = 'Pagar ahora';
+
+      payBtn.addEventListener('click', async function() {
+        const cardNumber  = document.getElementById('card-number-legacy').value.trim().replace(/\s/g, '');
+        const expiryMonth = document.getElementById('expiry-month-legacy').value.trim();
+        const expiryYear  = document.getElementById('expiry-year-legacy').value.trim();
+        const cvv         = document.getElementById('cvv-legacy').value.trim();
+        const cardHolder  = document.getElementById('holder-legacy').value.trim();
+
+        if (!cardNumber || !expiryMonth || !expiryYear || !cvv || !cardHolder) {
+          showStatus('error', 'Completa todos los campos.');
+          return;
+        }
+
+        setLoading(true);
+        statusMsg.className = 'status-message';
+
+        try {
+          const processRes = await fetch(`/${merchantId}/iframe-process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              paymentId,
+              cardNumber,
+              expiryMonth,
+              expiryYear,
+              cvv,
+              cardholderName: cardHolder,
+              method: 'card',
+            }),
+          });
+
+          const processData = await processRes.json();
+
+          if (processData.success) {
+            showStatus('success', '¡Pago completado correctamente!');
+            payBtn.style.display = 'none';
+          } else {
+            showStatus('error', processData.message || 'El pago fue rechazado.');
+            setLoading(false);
+          }
+        } catch (err) {
+          showStatus('error', 'Error de conexión. Inténtalo de nuevo.');
+          setLoading(false);
+        }
+      });
+    }
+  </script>
 </body>
 </html>
