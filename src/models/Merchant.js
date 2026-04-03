@@ -23,8 +23,15 @@ const merchantSchema = new mongoose.Schema({
   hmacSecret:    String,
   secret:        String,
 
+  // 🔐 Backoffice login
+  email:        { type: String, sparse: true },
+  passwordHash: { type: String },
+
   createdAt:    { type: Date, default: Date.now }
 });
+
+// Índice único sparse en email: permite múltiples documentos sin email
+merchantSchema.index({ email: 1 }, { unique: true, sparse: true });
 
 module.exports =
   mongoose.models.Merchant ||
