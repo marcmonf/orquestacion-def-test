@@ -148,6 +148,12 @@ try {
 // API Keys management (admin)
 app.use('/api-keys', ensureRouter(require('./src/routes/apiKeyRoutes'), 'apiKeyRoutes'));
 
+// Backoffice — auth pública (login/logout/setup)
+app.use('/backoffice/auth', ensureRouter(require('./src/routes/backofficeAuthRoutes'), 'backofficeAuthRoutes'));
+
+// Backoffice — endpoints protegidos por JWT de sesión
+app.use('/backoffice', ensureRouter(require('./src/routes/backofficeRoutes'), 'backofficeRoutes'));
+
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
