@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Monetiser · Backoffice</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/admin/chart.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -16,8 +16,6 @@
   --radius:12px;--radius-sm:8px;
 }
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
-
-/* ── LOGIN ── */
 #loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
 .login-box{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:40px;width:380px;max-width:95vw}
 .login-logo{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:600;color:var(--purple2);margin-bottom:8px}
@@ -27,13 +25,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .login-field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
 .login-field input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
 .login-field input:focus{border-color:var(--purple)}
-.login-btn{width:100%;background:var(--purple3);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s;margin-top:8px}
+.login-btn{width:100%;background:var(--purple3);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;margin-top:8px}
 .login-btn:hover{background:var(--purple)}
 .login-btn:disabled{opacity:.5;cursor:not-allowed}
 .login-err{color:var(--red);font-size:12px;margin-top:10px;min-height:18px;text-align:center}
 .login-version{text-align:center;font-size:11px;color:var(--text3);margin-top:24px}
-
-/* ── NAV ── */
 nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .nav-logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;color:var(--purple2)}
 .nav-logo svg{width:28px;height:28px}
@@ -43,60 +39,47 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24
 .nav-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px}
 .nav-right{display:flex;align-items:center;gap:12px}
 .nav-merchant{background:var(--purple3);border:1px solid var(--purple);border-radius:6px;padding:5px 12px;color:#fff;font-size:12px;font-weight:500}
-.nav-logout{background:transparent;border:1px solid var(--border2);border-radius:6px;padding:5px 12px;color:var(--text3);font-size:12px;cursor:pointer;transition:all .15s}
+.nav-logout{background:transparent;border:1px solid var(--border2);border-radius:6px;padding:5px 12px;color:var(--text3);font-size:12px;cursor:pointer}
 .nav-logout:hover{border-color:var(--red);color:var(--red)}
 #statusDot{width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0}
 #statusDot.ok{background:var(--green)}
 #statusDot.err{background:var(--red)}
 #statusMsg{font-size:12px;color:var(--text3)}
-
-/* ── TOOLBAR ── */
 .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .toolbar label{font-size:12px;color:var(--text3)}
 .toolbar select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;outline:none}
-.toolbar select:focus{border-color:var(--purple)}
-.btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
+.btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500}
 .btn-primary{background:var(--purple3);color:#fff}
 .btn-primary:hover{background:var(--purple)}
 .btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--text2)}
 .btn-ghost:hover{border-color:var(--purple);color:var(--purple2)}
 .btn-danger{background:#3d1818;border:1px solid #6b2020;color:var(--red)}
-
-/* ── MAIN ── */
 main{padding:24px;max-width:1600px;margin:0 auto}
 .widget-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .widget-toolbar h2{font-size:15px;font-weight:500;color:var(--text2)}
-
-/* ── GRID ── */
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
 @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
-
-/* ── WIDGETS ── */
-.widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;transition:border-color .15s;cursor:grab}
+.widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;cursor:grab}
 .widget:active{cursor:grabbing}
 .widget.drag-over{border-color:var(--purple);background:var(--surface2)}
 .widget.dragging{opacity:.4}
 .widget-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
 .widget-title{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
-.widget-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:0;opacity:0;transition:opacity .15s}
+.widget-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:0;opacity:0}
 .widget:hover .widget-remove{opacity:1}
 .widget-remove:hover{color:var(--red)}
 .widget-lg{grid-column:span 2}
 .widget-chart{height:180px;position:relative}
-
-/* ── KPI ── */
 .kpi-value{font-size:32px;font-weight:600;color:var(--text);line-height:1;margin-bottom:6px}
 .kpi-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:20px;font-weight:500}
 .kpi-badge.up{background:rgba(62,207,142,.12);color:var(--green)}
 .kpi-badge.down{background:rgba(240,96,96,.12);color:var(--red)}
 .kpi-badge.neutral{background:rgba(124,111,224,.12);color:var(--purple2)}
-
-/* ── TABLE ── */
 .tx-table{width:100%;border-collapse:collapse;font-size:12px}
 .tx-table th{color:var(--text3);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
-.tx-table td{padding:8px 8px;border-bottom:1px solid rgba(124,111,224,.08);color:var(--text2)}
+.tx-table td{padding:8px;border-bottom:1px solid rgba(124,111,224,.08);color:var(--text2)}
 .tx-table tr:last-child td{border-bottom:none}
 .tx-table tr:hover td{background:var(--surface2)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500}
@@ -104,8 +87,6 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .badge-declined,.badge-error{background:rgba(240,96,96,.15);color:var(--red)}
 .badge-pending,.badge-processing,.badge-initialized,.badge-hosted_pending{background:rgba(91,156,246,.15);color:var(--blue)}
 .badge-cancelled,.badge-refunded{background:rgba(240,160,48,.15);color:var(--amber)}
-
-/* ── COUNTRY LIST ── */
 .country-row{display:flex;align-items:center;padding:5px 0;border-bottom:1px solid rgba(124,111,224,.08)}
 .country-row:last-child{border-bottom:none}
 .country-flag{font-size:16px;width:24px;flex-shrink:0}
@@ -113,35 +94,25 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .country-bar-wrap{width:80px;height:4px;background:var(--surface3);border-radius:2px;margin-right:8px;flex-shrink:0}
 .country-bar{height:4px;background:var(--purple);border-radius:2px}
 .country-pct{font-size:11px;color:var(--text3);min-width:36px;text-align:right}
-
-/* ── MODAL ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:24px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto}
 .modal h3{font-size:16px;font-weight:500;margin-bottom:16px;color:var(--text)}
 .modal-close{float:right;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;margin-top:-4px}
-
-/* ── WIDGET PICKER ── */
 #widgetEditor{display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px}
-.pick-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;transition:all .15s;margin:3px}
+.pick-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;margin:3px}
 .pick-btn:hover{border-color:var(--purple);color:var(--purple2)}
 .pick-btn.active{background:var(--purple3);border-color:var(--purple);color:#fff}
-
-/* ── DETAIL ── */
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}
 .detail-item label{color:var(--text3);display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
 .detail-item span{color:var(--text)}
-
-/* ── SPINNER ── */
 .spinner{width:20px;height:20px;border:2px solid var(--surface3);border-top-color:var(--purple);border-radius:50%;animation:spin .7s linear infinite;margin:20px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
-
 #appShell{display:none}
 </style>
 </head>
 <body>
 
-<!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-box">
     <div class="login-logo">
@@ -157,13 +128,12 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <label>Contraseña</label>
       <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"/>
     </div>
-    <button class="login-btn" id="loginBtn" onclick="doLogin()">Entrar</button>
+    <button class="login-btn" id="loginBtn">Entrar</button>
     <div class="login-err" id="loginErr"></div>
     <div class="login-version">Monetiser POP · v2.0</div>
   </div>
 </div>
 
-<!-- APP -->
 <div id="appShell">
   <nav>
     <div class="nav-logo">
@@ -178,7 +148,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <span id="statusDot"></span>
       <span id="statusMsg">–</span>
       <span class="nav-merchant" id="merchantBadge">–</span>
-      <button class="nav-logout" onclick="doLogout()">Salir</button>
+      <button class="nav-logout" id="logoutBtn">Salir</button>
     </div>
   </nav>
 
@@ -189,13 +159,13 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <option value="30" selected>30 días</option>
       <option value="90">90 días</option>
     </select>
-    <button class="btn btn-primary" onclick="loadAll()">↻ Actualizar</button>
-    <button class="btn btn-ghost" onclick="toggleWidgetEditor()">+ Widgets</button>
+    <button class="btn btn-primary" id="refreshBtn">↻ Actualizar</button>
+    <button class="btn btn-ghost" id="widgetToggleBtn">+ Widgets</button>
     <span style="font-size:12px;color:var(--text3)" id="lastUpdate"></span>
   </div>
 
   <div id="widgetEditor">
-    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra las cards para reordenar.</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra para reordenar.</div>
     <div id="widgetPicker"></div>
   </div>
 
@@ -207,437 +177,14 @@ main{padding:24px;max-width:1600px;margin:0 auto}
   </main>
 </div>
 
-<!-- TX DETAIL MODAL -->
 <div class="modal-overlay" id="txModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeTxModal()">×</button>
+    <button class="modal-close" id="txModalClose">×</button>
     <h3>Detalle de transacción</h3>
     <div id="txDetail"></div>
   </div>
 </div>
 
-<script>
-const BASE_URL = 'https://orquestacion-def-test.onrender.com';
-
-/* ── SESSION ── */
-let session = null;
-
-function loadSession() {
-  try {
-    const s = localStorage.getItem('m_session');
-    if (!s) return null;
-    const parsed = JSON.parse(s);
-    // Verificar expiración básica (exp está en segundos)
-    if (parsed.exp && Date.now() / 1000 > parsed.exp) {
-      localStorage.removeItem('m_session');
-      return null;
-    }
-    return parsed;
-  } catch { return null; }
-}
-
-function saveSession(token, merchant) {
-  // Decodificar payload del JWT para leer exp
-  let exp = null;
-  try { exp = JSON.parse(atob(token.split('.')[1])).exp; } catch {}
-  const s = { token, merchant, exp };
-  localStorage.setItem('m_session', JSON.stringify(s));
-  return s;
-}
-
-/* ── LOGIN ── */
-async function doLogin() {
-  const email = document.getElementById('loginEmail').value.trim();
-  const pass  = document.getElementById('loginPass').value;
-  const errEl = document.getElementById('loginErr');
-  const btn   = document.getElementById('loginBtn');
-
-  errEl.textContent = '';
-  if (!email || !pass) { errEl.textContent = 'Email y contraseña requeridos'; return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Entrando…';
-
-  try {
-    const r = await fetch(BASE_URL + '/backoffice/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: pass })
-    });
-    const j = await r.json();
-    if (!r.ok || !j.token) {
-      errEl.textContent = j.error === 'invalid_credentials' ? 'Credenciales incorrectas' : (j.error || 'Error de autenticación');
-      btn.disabled = false; btn.textContent = 'Entrar'; return;
-    }
-    session = saveSession(j.token, j.merchant);
-    showApp();
-  } catch(e) {
-    errEl.textContent = 'No se pudo conectar con el servidor';
-    btn.disabled = false; btn.textContent = 'Entrar';
-  }
-}
-
-function doLogout() {
-  localStorage.removeItem('m_session');
-  session = null;
-  document.getElementById('appShell').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginPass').value = '';
-  document.getElementById('loginBtn').disabled = false;
-  document.getElementById('loginBtn').textContent = 'Entrar';
-  document.getElementById('loginErr').textContent = '';
-}
-
-function showApp() {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('appShell').style.display = 'block';
-  const name = session.merchant?.merchantName || session.merchant?.merchantId || '–';
-  document.getElementById('merchantBadge').textContent = name;
-  document.getElementById('dashTitle').textContent = 'Dashboard · ' + name;
-  renderWidgetPicker();
-  renderGrid();
-  loadAll();
-}
-
-// Enter en el campo de password
-document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-
-/* ── API ── */
-async function api(path, opts = {}) {
-  if (!session?.token) throw new Error('no_session');
-  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.token };
-  const r = await fetch(BASE_URL + path, { headers: h, ...opts });
-  if (r.status === 401) { doLogout(); throw new Error('session_expired'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
-}
-
-/* ── WIDGET DEFS ── */
-const WIDGET_DEFS = [
-  {id:'kpi_volume',     label:'Volumen total',        size:'normal'},
-  {id:'kpi_count',      label:'Nº transacciones',     size:'normal'},
-  {id:'kpi_approval',   label:'Tasa aprobación',      size:'normal'},
-  {id:'kpi_avg',        label:'Ticket medio',         size:'normal'},
-  {id:'kpi_refund',     label:'Tasa refund',          size:'normal'},
-  {id:'kpi_fallback',   label:'Tasa fallback',        size:'normal'},
-  {id:'chart_timeline', label:'Evolución temporal',   size:'large'},
-  {id:'chart_methods',  label:'Métodos de pago',      size:'normal'},
-  {id:'list_countries', label:'Top países',           size:'normal'},
-  {id:'list_tx',        label:'Últimas transacciones',size:'large'},
-];
-
-let activeWidgets = JSON.parse(localStorage.getItem('m_widgets') || 'null')
-  || WIDGET_DEFS.map(w => w.id);
-
-let data = {};
-let dragSrc = null;
-let chartInstances = {};
-
-/* ── LOAD ── */
-async function loadAll() {
-  const days = parseInt(document.getElementById('cfgPeriod').value);
-  setStatus('loading');
-  try {
-    const [dash, timeline, countries, methods, txRes] = await Promise.allSettled([
-      api(`/backoffice/dashboard?days=${days}`),
-      api(`/backoffice/analytics/timeline?days=${days}`),
-      api(`/backoffice/analytics/countries?days=${days}`),
-      api(`/backoffice/analytics/methods?days=${days}`),
-      api(`/backoffice/transactions?limit=20&page=1`),
-    ]);
-
-    data.kpis      = dash.status === 'fulfilled'      ? dash.value?.kpis      : null;
-    data.timeline  = timeline.status === 'fulfilled'  ? timeline.value        : null;
-    data.countries = countries.status === 'fulfilled' ? countries.value?.countries : null;
-    data.methods   = methods.status === 'fulfilled'   ? methods.value?.methods    : null;
-    data.txList    = txRes.status === 'fulfilled'     ? (txRes.value?.transactions || []) : [];
-
-    populateWidgets();
-    setStatus('ok');
-    document.getElementById('lastUpdate').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-ES');
-  } catch(e) {
-    setStatus('error', e.message);
-  }
-}
-
-function setStatus(s, msg) {
-  const dot = document.getElementById('statusDot');
-  const lbl = document.getElementById('statusMsg');
-  if (s === 'ok')    { dot.className='ok';  lbl.textContent = 'Conectado'; }
-  else if (s==='error') { dot.className='err'; lbl.textContent = msg||'Error'; }
-  else               { dot.className='';    lbl.textContent = 'Cargando…'; }
-}
-
-/* ── WIDGET PICKER ── */
-function toggleWidgetEditor() {
-  const el = document.getElementById('widgetEditor');
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-function renderWidgetPicker() {
-  document.getElementById('widgetPicker').innerHTML =
-    WIDGET_DEFS.map(w =>
-      `<button class="pick-btn ${activeWidgets.includes(w.id)?'active':''}" onclick="toggleWidget('${w.id}',this)">${w.label}</button>`
-    ).join('');
-}
-function toggleWidget(id, btn) {
-  if (activeWidgets.includes(id)) {
-    if (activeWidgets.length <= 2) return;
-    activeWidgets = activeWidgets.filter(x => x !== id);
-    btn.classList.remove('active');
-  } else {
-    activeWidgets.push(id);
-    btn.classList.add('active');
-  }
-  localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
-  renderGrid();
-  if (Object.keys(data).length) populateWidgets();
-}
-
-/* ── GRID ── */
-function renderGrid() {
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
-  activeWidgets.forEach(id => {
-    const def = WIDGET_DEFS.find(w => w.id === id);
-    if (!def) return;
-    const div = document.createElement('div');
-    div.className = 'widget' + (def.size === 'large' ? ' widget-lg' : '');
-    div.dataset.id = id;
-    div.draggable = true;
-    div.innerHTML = `
-      <div class="widget-header">
-        <div class="widget-title">${def.label}</div>
-        <button class="widget-remove" onclick="removeWidget('${id}')">×</button>
-      </div>
-      <div id="wb_${id}"><div class="spinner"></div></div>`;
-    grid.appendChild(div);
-  });
-  bindDrag();
-}
-
-function removeWidget(id) {
-  if (activeWidgets.length <= 2) return;
-  activeWidgets = activeWidgets.filter(x => x !== id);
-  localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
-  document.querySelectorAll('.pick-btn').forEach(b => {
-    if (b.onclick?.toString().includes(`'${id}'`)) b.classList.remove('active');
-  });
-  renderGrid();
-  if (Object.keys(data).length) populateWidgets();
-}
-
-/* ── POPULATE ── */
-function populateWidgets() {
-  activeWidgets.forEach(id => {
-    const el = document.getElementById('wb_' + id);
-    if (!el) return;
-    try { renderWidget(id, el); }
-    catch(e) { el.innerHTML = `<div style="color:var(--text3);font-size:11px">Error: ${e.message}</div>`; }
-  });
-}
-
-function fmt(v) { return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v||0); }
-function pct(v) { return (Math.round((v||0)*10)/10).toFixed(1) + '%'; }
-function badge(type, txt) { return `<span class="kpi-badge ${type}">${txt}</span>`; }
-
-function renderWidget(id, el) {
-  const k = data.kpis || {};
-  switch(id) {
-    case 'kpi_volume':
-      el.innerHTML = `<div class="kpi-value">${fmt(k.volume)}</div>${badge('neutral','volumen '+((data.timeline?.days||30)+'d'))}`;
-      break;
-    case 'kpi_count':
-      el.innerHTML = `<div class="kpi-value">${(k.totalTransactions||0).toLocaleString('es-ES')}</div>${badge('neutral','transacciones')}`;
-      break;
-    case 'kpi_approval':
-      el.innerHTML = `<div class="kpi-value">${pct(k.approvalRate)}</div>${badge(k.approvalRate>=70?'up':'down', k.approvalRate>=70?'▲ en objetivo':'▼ bajo objetivo')}`;
-      break;
-    case 'kpi_avg':
-      el.innerHTML = `<div class="kpi-value">${fmt(k.avgTicket)}</div>${badge('neutral','ticket medio')}`;
-      break;
-    case 'kpi_refund':
-      el.innerHTML = `<div class="kpi-value">${pct(k.refundRate)}</div>${badge(k.refundRate<5?'up':'down', k.refundRate<5?'▲ normal':'▼ alto')}`;
-      break;
-    case 'kpi_fallback':
-      el.innerHTML = `<div class="kpi-value">${pct(k.fallbackRate)}</div>${badge(k.fallbackRate<10?'up':'down','fallback rate')}`;
-      break;
-    case 'chart_timeline': renderTimeline(el); break;
-    case 'chart_methods':  renderMethods(el);  break;
-    case 'list_countries': renderCountries(el); break;
-    case 'list_tx':        renderTxList(el);    break;
-  }
-}
-
-/* ── CHARTS ── */
-function renderTimeline(el) {
-  const tl = data.timeline?.timeline;
-  if (!tl?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:20px 0">Sin datos</div>'; return; }
-  el.innerHTML = '<div class="widget-chart"><canvas id="c_timeline"></canvas></div>';
-  if (chartInstances.timeline) chartInstances.timeline.destroy();
-  chartInstances.timeline = new Chart(document.getElementById('c_timeline').getContext('2d'), {
-    type:'bar',
-    data:{
-      labels: tl.map(d => d.date?.slice(5)),
-      datasets:[
-        {label:'Total',    data:tl.map(d=>d.count),    backgroundColor:'rgba(124,111,224,.6)',borderRadius:3},
-        {label:'Aprobadas',data:tl.map(d=>d.approved), backgroundColor:'rgba(62,207,142,.5)',borderRadius:3},
-        {label:'Rechazadas',data:tl.map(d=>d.declined),backgroundColor:'rgba(240,96,96,.4)',borderRadius:3},
-      ]
-    },
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#a89ec8',font:{size:10},boxWidth:8}}},
-      scales:{
-        x:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.06)'}},
-        y:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.06)'}}
-      }
-    }
-  });
-}
-
-const METHOD_COLORS = ['#7c6fe0','#3ecf8e','#5b9cf6','#f0a030','#f06060','#a594f9'];
-function renderMethods(el) {
-  const m = data.methods;
-  if (!m?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos</div>'; return; }
-  el.innerHTML = '<div class="widget-chart"><canvas id="c_methods"></canvas></div>';
-  if (chartInstances.methods) chartInstances.methods.destroy();
-  chartInstances.methods = new Chart(document.getElementById('c_methods').getContext('2d'), {
-    type:'doughnut',
-    data:{
-      labels: m.map(x => x.processor || x.method || '–'),
-      datasets:[{data:m.map(x=>x.count),backgroundColor:METHOD_COLORS,borderWidth:0,hoverOffset:4}]
-    },
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{
-        legend:{position:'right',labels:{color:'#a89ec8',font:{size:11},boxWidth:10}},
-        tooltip:{callbacks:{label:c=>`${c.label}: ${c.parsed} tx · ${m[c.dataIndex]?.approvalRate||0}% apr.`}}
-      }
-    }
-  });
-}
-
-const FLAGS = {ES:'🇪🇸',FR:'🇫🇷',DE:'🇩🇪',IT:'🇮🇹',GB:'🇬🇧',US:'🇺🇸',BR:'🇧🇷',MX:'🇲🇽',PT:'🇵🇹',NL:'🇳🇱',BE:'🇧🇪',PL:'🇵🇱',AR:'🇦🇷',CO:'🇨🇴'};
-function renderCountries(el) {
-  const cs = data.countries;
-  if (!cs?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos de países</div>'; return; }
-  const max = cs[0].count;
-  el.innerHTML = cs.map(c => `
-    <div class="country-row">
-      <span class="country-flag">${FLAGS[c.country]||'🌍'}</span>
-      <span class="country-name">${c.country}</span>
-      <div class="country-bar-wrap"><div class="country-bar" style="width:${Math.round(c.count/max*100)}%"></div></div>
-      <span class="country-pct">${c.count}</span>
-    </div>`).join('');
-}
-
-function statusBadge(s) { return `<span class="badge badge-${s||'–'}">${s||'–'}</span>`; }
-function renderTxList(el) {
-  const txs = (data.txList||[]).slice(0,10);
-  if (!txs.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin transacciones</div>'; return; }
-  el.innerHTML = `<table class="tx-table">
-    <thead><tr><th>Payment ID</th><th>Referencia</th><th>Importe</th><th>Estado</th><th>Conector</th><th>Fecha</th></tr></thead>
-    <tbody>${txs.map(t => `<tr style="cursor:pointer" onclick='showTxDetail(${JSON.stringify(t)})'>
-      <td style="font-family:monospace;font-size:11px">${(t.paymentId||'–').slice(0,14)}…</td>
-      <td>${t.merchantReference||'–'}</td>
-      <td>${fmt(t.amount)}</td>
-      <td>${statusBadge(t.status)}</td>
-      <td>${t.processor||'–'}</td>
-      <td>${(t.createdAt||'').slice(0,10)}</td>
-    </tr>`).join('')}</tbody>
-  </table>`;
-}
-
-/* ── TX DETAIL ── */
-async function showTxDetail(t) {
-  // Recargar detalle completo desde el endpoint de backoffice
-  let tx = t, ops = [];
-  try {
-    const r = await api(`/backoffice/transactions/${t.paymentId}`);
-    if (r.success) { tx = r.transaction; ops = r.operations || []; }
-  } catch {}
-
-  const fields = [
-    ['Payment ID',tx.paymentId],['Merchant Ref',tx.merchantReference],
-    ['Importe',fmt(tx.amount)],['Moneda',tx.currency],
-    ['Estado',tx.status],['Conector',tx.processor],
-    ['Método',tx.method],['BIN',tx.bin],
-    ['Marca',tx.cardBrand],['Tipo',tx.cardType],
-    ['País emisor',tx.issuerCountry],['Fallback',tx.fallbackUsed?'Sí':'No'],
-    ['Auth Code',tx.authCode],['Creado',tx.createdAt?.slice(0,19)?.replace('T',' ')],
-    ['Actualizado',tx.updatedAt?.slice(0,19)?.replace('T',' ')],
-  ];
-
-  const cancellable = ['initialized','hosted_pending','processing','authorized','approved','pending'].includes(tx.status);
-
-  document.getElementById('txDetail').innerHTML = `
-    <div style="margin-bottom:12px">${statusBadge(tx.status)}</div>
-    <div class="detail-grid">${fields.map(([l,v])=>`<div class="detail-item"><label>${l}</label><span>${v||'–'}</span></div>`).join('')}</div>
-    ${ops.length ? `<div style="margin-top:16px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Operaciones</div>
-      ${ops.map(o=>`<div style="font-size:12px;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border)">${o.type} · ${o.status} · ${o.createdAt?.slice(0,10)}</div>`).join('')}` : ''}
-    <div style="margin-top:16px;display:flex;gap:8px">
-      ${cancellable ? `<button class="btn btn-danger" onclick="cancelTx('${tx.paymentId}')">Cancelar transacción</button>` : ''}
-    </div>`;
-
-  document.getElementById('txModal').classList.add('open');
-}
-
-function closeTxModal() { document.getElementById('txModal').classList.remove('open'); }
-
-async function cancelTx(paymentId) {
-  if (!confirm('¿Cancelar esta transacción? Esta acción queda registrada.')) return;
-  try {
-    await api(`/backoffice/transactions/${paymentId}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({ reason: 'backoffice_manual_cancel' })
-    });
-    closeTxModal();
-    loadAll();
-  } catch(e) { alert('Error al cancelar: ' + e.message); }
-}
-
-/* ── SEARCH ── */
-document.getElementById('txSearch').addEventListener('input', function() {
-  const q = this.value.toLowerCase();
-  if (!q) { renderWidget('list_tx', document.getElementById('wb_list_tx')); return; }
-  const el = document.getElementById('wb_list_tx');
-  if (!el) return;
-  const orig = data.txList;
-  data.txList = (orig||[]).filter(t =>
-    (t.paymentId||'').toLowerCase().includes(q) ||
-    (t.merchantReference||'').toLowerCase().includes(q) ||
-    (t.status||'').includes(q) ||
-    (t.processor||'').includes(q)
-  );
-  renderWidget('list_tx', el);
-  data.txList = orig;
-});
-
-/* ── DRAG & DROP ── */
-function bindDrag() {
-  document.querySelectorAll('.widget').forEach(el => {
-    el.addEventListener('dragstart', e => { dragSrc = el; el.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
-    el.addEventListener('dragend',   () => { el.classList.remove('dragging'); document.querySelectorAll('.widget').forEach(w=>w.classList.remove('drag-over')); });
-    el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
-    el.addEventListener('drop', e => {
-      e.preventDefault(); el.classList.remove('drag-over');
-      if (dragSrc && dragSrc !== el) {
-        const g = document.getElementById('grid');
-        const els = [...g.children];
-        g.insertBefore(dragSrc, els.indexOf(el) < els.indexOf(dragSrc) ? el : el.nextSibling);
-        activeWidgets = [...g.children].map(e=>e.dataset.id).filter(Boolean);
-        localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
-      }
-    });
-  });
-}
-
-/* ── BOOT ── */
-session = loadSession();
-if (session) {
-  showApp();
-} else {
-  document.getElementById('loginScreen').style.display = 'flex';
-}
-</script>
+<script src="/admin/dashboard.js"></script>
 </body>
 </html>
