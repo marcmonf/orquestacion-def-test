@@ -17,183 +17,195 @@
 }
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
 
-/* NAV */
+/* ── LOGIN ── */
+#loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
+.login-box{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:40px;width:380px;max-width:95vw}
+.login-logo{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:600;color:var(--purple2);margin-bottom:8px}
+.login-logo svg{width:36px;height:36px}
+.login-sub{font-size:13px;color:var(--text3);margin-bottom:32px}
+.login-field{margin-bottom:16px}
+.login-field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.login-field input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+.login-field input:focus{border-color:var(--purple)}
+.login-btn{width:100%;background:var(--purple3);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s;margin-top:8px}
+.login-btn:hover{background:var(--purple)}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-err{color:var(--red);font-size:12px;margin-top:10px;min-height:18px;text-align:center}
+.login-version{text-align:center;font-size:11px;color:var(--text3);margin-top:24px}
+
+/* ── NAV ── */
 nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .nav-logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;color:var(--purple2)}
 .nav-logo svg{width:28px;height:28px}
 .nav-search{flex:1;max-width:420px;margin:0 32px;position:relative}
 .nav-search input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:7px 14px 7px 36px;color:var(--text);font-size:13px;outline:none}
 .nav-search input:focus{border-color:var(--purple)}
-.nav-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text3)}
+.nav-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px}
 .nav-right{display:flex;align-items:center;gap:12px}
-.nav-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 14px;color:var(--text2);font-size:12px;cursor:pointer;transition:all .15s}
-.nav-btn:hover{border-color:var(--purple);color:var(--purple2)}
-.nav-btn.active{background:var(--purple3);border-color:var(--purple);color:#fff}
-.nav-merchant{background:var(--purple3);border:1px solid var(--purple);border-radius:6px;padding:6px 12px;color:#fff;font-size:12px;font-weight:500}
+.nav-merchant{background:var(--purple3);border:1px solid var(--purple);border-radius:6px;padding:5px 12px;color:#fff;font-size:12px;font-weight:500}
+.nav-logout{background:transparent;border:1px solid var(--border2);border-radius:6px;padding:5px 12px;color:var(--text3);font-size:12px;cursor:pointer;transition:all .15s}
+.nav-logout:hover{border-color:var(--red);color:var(--red)}
+#statusDot{width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0}
+#statusDot.ok{background:var(--green)}
+#statusDot.err{background:var(--red)}
+#statusMsg{font-size:12px;color:var(--text3)}
 
-/* TOOLBAR */
+/* ── TOOLBAR ── */
 .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .toolbar label{font-size:12px;color:var(--text3)}
-.toolbar input,.toolbar select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;outline:none}
-.toolbar input:focus,.toolbar select:focus{border-color:var(--purple)}
+.toolbar select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;outline:none}
+.toolbar select:focus{border-color:var(--purple)}
 .btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
 .btn-primary{background:var(--purple3);color:#fff}
 .btn-primary:hover{background:var(--purple)}
 .btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--text2)}
 .btn-ghost:hover{border-color:var(--purple);color:var(--purple2)}
 .btn-danger{background:#3d1818;border:1px solid #6b2020;color:var(--red)}
-#statusDot{width:8px;height:8px;border-radius:50%;background:var(--text3);display:inline-block}
-#statusDot.ok{background:var(--green)}
-#statusDot.err{background:var(--red)}
-#statusMsg{font-size:12px;color:var(--text3)}
 
-/* MAIN */
+/* ── MAIN ── */
 main{padding:24px;max-width:1600px;margin:0 auto}
-
-/* WIDGET GRID */
 .widget-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .widget-toolbar h2{font-size:15px;font-weight:500;color:var(--text2)}
-.widget-add-bar{display:flex;gap:8px;flex-wrap:wrap}
 
+/* ── GRID ── */
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
 @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
 
-/* WIDGETS */
+/* ── WIDGETS ── */
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;transition:border-color .15s;cursor:grab}
 .widget:active{cursor:grabbing}
 .widget.drag-over{border-color:var(--purple);background:var(--surface2)}
 .widget.dragging{opacity:.4}
 .widget-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
 .widget-title{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
-.widget-subtitle{font-size:11px;color:var(--text3);margin-top:2px}
 .widget-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:0;opacity:0;transition:opacity .15s}
 .widget:hover .widget-remove{opacity:1}
 .widget-remove:hover{color:var(--red)}
+.widget-lg{grid-column:span 2}
+.widget-chart{height:180px;position:relative}
 
-/* KPI */
+/* ── KPI ── */
 .kpi-value{font-size:32px;font-weight:600;color:var(--text);line-height:1;margin-bottom:6px}
 .kpi-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:20px;font-weight:500}
 .kpi-badge.up{background:rgba(62,207,142,.12);color:var(--green)}
 .kpi-badge.down{background:rgba(240,96,96,.12);color:var(--red)}
 .kpi-badge.neutral{background:rgba(124,111,224,.12);color:var(--purple2)}
 
-/* CHART WIDGETS */
-.widget-lg{grid-column:span 2}
-.widget-chart{height:180px;position:relative}
-
-/* TABLE */
+/* ── TABLE ── */
 .tx-table{width:100%;border-collapse:collapse;font-size:12px}
 .tx-table th{color:var(--text3);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
 .tx-table td{padding:8px 8px;border-bottom:1px solid rgba(124,111,224,.08);color:var(--text2)}
 .tx-table tr:last-child td{border-bottom:none}
 .tx-table tr:hover td{background:var(--surface2)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500}
-.badge-approved{background:rgba(62,207,142,.15);color:var(--green)}
+.badge-approved,.badge-authorized{background:rgba(62,207,142,.15);color:var(--green)}
 .badge-declined,.badge-error{background:rgba(240,96,96,.15);color:var(--red)}
 .badge-pending,.badge-processing,.badge-initialized,.badge-hosted_pending{background:rgba(91,156,246,.15);color:var(--blue)}
 .badge-cancelled,.badge-refunded{background:rgba(240,160,48,.15);color:var(--amber)}
-.badge-authorized{background:rgba(165,148,249,.15);color:var(--purple2)}
 
-/* COUNTRY LIST */
-.country-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(124,111,224,.08)}
+/* ── COUNTRY LIST ── */
+.country-row{display:flex;align-items:center;padding:5px 0;border-bottom:1px solid rgba(124,111,224,.08)}
 .country-row:last-child{border-bottom:none}
-.country-flag{font-size:16px;width:24px}
+.country-flag{font-size:16px;width:24px;flex-shrink:0}
 .country-name{flex:1;margin-left:8px;color:var(--text2);font-size:12px}
-.country-bar-wrap{width:80px;height:4px;background:var(--surface3);border-radius:2px;margin-right:8px}
+.country-bar-wrap{width:80px;height:4px;background:var(--surface3);border-radius:2px;margin-right:8px;flex-shrink:0}
 .country-bar{height:4px;background:var(--purple);border-radius:2px}
 .country-pct{font-size:11px;color:var(--text3);min-width:36px;text-align:right}
 
-/* METHODS */
-.method-row{display:flex;align-items:center;gap:8px;padding:5px 0}
-.method-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.method-name{flex:1;color:var(--text2);font-size:12px}
-.method-pct{font-size:11px;color:var(--text3);min-width:32px;text-align:right}
-
-/* MAP PLACEHOLDER */
-.map-placeholder{height:160px;background:var(--surface2);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px;border:1px dashed var(--border)}
-
-/* MODAL */
+/* ── MODAL ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:24px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto}
 .modal h3{font-size:16px;font-weight:500;margin-bottom:16px;color:var(--text)}
 .modal-close{float:right;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;margin-top:-4px}
-.field-group{margin-bottom:14px}
-.field-group label{display:block;font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
-.field-group input,.field-group select,.field-group textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none}
-.field-group input:focus,.field-group select:focus{border-color:var(--purple)}
 
-/* LOADER */
-.spinner{width:20px;height:20px;border:2px solid var(--surface3);border-top-color:var(--purple);border-radius:50%;animation:spin .7s linear infinite;margin:20px auto}
-@keyframes spin{to{transform:rotate(360deg)}}
-.loading-overlay{position:absolute;inset:0;background:rgba(15,14,26,.7);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;z-index:5}
-
-/* WIDGET PICKER */
-.widget-picker{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.pick-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;transition:all .15s}
+/* ── WIDGET PICKER ── */
+#widgetEditor{display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px}
+.pick-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;transition:all .15s;margin:3px}
 .pick-btn:hover{border-color:var(--purple);color:var(--purple2)}
 .pick-btn.active{background:var(--purple3);border-color:var(--purple);color:#fff}
 
-/* TX DETAIL */
+/* ── DETAIL ── */
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}
 .detail-item label{color:var(--text3);display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
 .detail-item span{color:var(--text)}
+
+/* ── SPINNER ── */
+.spinner{width:20px;height:20px;border:2px solid var(--surface3);border-top-color:var(--purple);border-radius:50%;animation:spin .7s linear infinite;margin:20px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#appShell{display:none}
 </style>
 </head>
 <body>
 
-<!-- NAV -->
-<nav>
-  <div class="nav-logo">
-    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#5b4fcf"/><path d="M7 14h14M14 7l7 7-7 7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    Monetiser
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <svg viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="10" fill="#5b4fcf"/><path d="M9 18h18M18 9l9 9-9 9" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Monetiser
+    </div>
+    <div class="login-sub">Payment Orchestration Platform · Backoffice</div>
+    <div class="login-field">
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="admin@merchant.com" autocomplete="email"/>
+    </div>
+    <div class="login-field">
+      <label>Contraseña</label>
+      <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"/>
+    </div>
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">Entrar</button>
+    <div class="login-err" id="loginErr"></div>
+    <div class="login-version">Monetiser POP · v2.0</div>
   </div>
-  <div class="nav-search">
-    <span class="nav-search-icon">⌕</span>
-    <input id="txSearch" placeholder="Buscar paymentId, referencia…" />
-  </div>
-  <div class="nav-right">
-    <span id="statusDot"></span>
-    <span id="statusMsg">–</span>
-    <button class="nav-btn" onclick="openSettings()">⚙ Config</button>
-    <span class="nav-merchant" id="merchantBadge">–</span>
-  </div>
-</nav>
-
-<!-- TOOLBAR -->
-<div class="toolbar">
-  <label>Merchant</label>
-  <input id="cfgMerchant" placeholder="demo-merchant" style="width:150px"/>
-  <label>API Key</label>
-  <input id="cfgApiKey" type="password" placeholder="mk_…" style="width:220px"/>
-  <label>Admin Token</label>
-  <input id="cfgAdminToken" type="password" placeholder="ADMIN_TOKEN" style="width:160px"/>
-  <label>Período</label>
-  <select id="cfgPeriod">
-    <option value="7">7 días</option>
-    <option value="30" selected>30 días</option>
-    <option value="90">90 días</option>
-  </select>
-  <button class="btn btn-primary" onclick="loadAll()">↻ Actualizar</button>
-  <button class="btn btn-ghost" onclick="toggleWidgetEditor()">+ Widgets</button>
 </div>
 
-<!-- WIDGET EDITOR (hidden by default) -->
-<div id="widgetEditor" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px">
-  <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra las cards para reordenar.</div>
-  <div class="widget-picker" id="widgetPicker"></div>
-</div>
+<!-- APP -->
+<div id="appShell">
+  <nav>
+    <div class="nav-logo">
+      <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#5b4fcf"/><path d="M7 14h14M14 7l7 7-7 7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Monetiser
+    </div>
+    <div class="nav-search">
+      <span class="nav-search-icon">⌕</span>
+      <input id="txSearch" placeholder="Buscar paymentId, referencia…"/>
+    </div>
+    <div class="nav-right">
+      <span id="statusDot"></span>
+      <span id="statusMsg">–</span>
+      <span class="nav-merchant" id="merchantBadge">–</span>
+      <button class="nav-logout" onclick="doLogout()">Salir</button>
+    </div>
+  </nav>
 
-<!-- MAIN -->
-<main>
-  <div class="widget-toolbar">
-    <h2 id="dashTitle">Dashboard · Cargando…</h2>
-    <div style="font-size:12px;color:var(--text3)" id="lastUpdate"></div>
+  <div class="toolbar">
+    <label>Período</label>
+    <select id="cfgPeriod">
+      <option value="7">7 días</option>
+      <option value="30" selected>30 días</option>
+      <option value="90">90 días</option>
+    </select>
+    <button class="btn btn-primary" onclick="loadAll()">↻ Actualizar</button>
+    <button class="btn btn-ghost" onclick="toggleWidgetEditor()">+ Widgets</button>
+    <span style="font-size:12px;color:var(--text3)" id="lastUpdate"></span>
   </div>
-  <div class="grid" id="grid"></div>
-</main>
+
+  <div id="widgetEditor">
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra las cards para reordenar.</div>
+    <div id="widgetPicker"></div>
+  </div>
+
+  <main>
+    <div class="widget-toolbar">
+      <h2 id="dashTitle">Dashboard</h2>
+    </div>
+    <div class="grid" id="grid"></div>
+  </main>
+</div>
 
 <!-- TX DETAIL MODAL -->
 <div class="modal-overlay" id="txModal">
@@ -204,54 +216,114 @@ main{padding:24px;max-width:1600px;margin:0 auto}
   </div>
 </div>
 
-<!-- SETTINGS MODAL -->
-<div class="modal-overlay" id="settingsModal">
-  <div class="modal">
-    <button class="modal-close" onclick="document.getElementById('settingsModal').classList.remove('open')">×</button>
-    <h3>Configuración</h3>
-    <div class="field-group">
-      <label>Merchant ID</label>
-      <input id="sMerchant" placeholder="demo-merchant"/>
-    </div>
-    <div class="field-group">
-      <label>API Key (x-api-key)</label>
-      <input id="sApiKey" type="password" placeholder="mk_…"/>
-    </div>
-    <div class="field-group">
-      <label>Admin Token (X-Admin-Token)</label>
-      <input id="sAdminToken" type="password" placeholder="ADMIN_TOKEN"/>
-    </div>
-    <div class="field-group">
-      <label>URL Base</label>
-      <input id="sBaseUrl" placeholder="https://orquestacion-def-test.onrender.com"/>
-    </div>
-    <button class="btn btn-primary" style="width:100%" onclick="saveSettings()">Guardar</button>
-  </div>
-</div>
-
 <script>
 const BASE_URL = 'https://orquestacion-def-test.onrender.com';
 
-/* ── STATE ── */
-let cfg = {
-  merchant: localStorage.getItem('m_merchant') || 'demo-merchant',
-  apiKey: localStorage.getItem('m_apiKey') || '',
-  adminToken: localStorage.getItem('m_adminToken') || '',
-  baseUrl: localStorage.getItem('m_baseUrl') || BASE_URL,
-  period: 30
-};
+/* ── SESSION ── */
+let session = null;
 
+function loadSession() {
+  try {
+    const s = localStorage.getItem('m_session');
+    if (!s) return null;
+    const parsed = JSON.parse(s);
+    // Verificar expiración básica (exp está en segundos)
+    if (parsed.exp && Date.now() / 1000 > parsed.exp) {
+      localStorage.removeItem('m_session');
+      return null;
+    }
+    return parsed;
+  } catch { return null; }
+}
+
+function saveSession(token, merchant) {
+  // Decodificar payload del JWT para leer exp
+  let exp = null;
+  try { exp = JSON.parse(atob(token.split('.')[1])).exp; } catch {}
+  const s = { token, merchant, exp };
+  localStorage.setItem('m_session', JSON.stringify(s));
+  return s;
+}
+
+/* ── LOGIN ── */
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass  = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginErr');
+  const btn   = document.getElementById('loginBtn');
+
+  errEl.textContent = '';
+  if (!email || !pass) { errEl.textContent = 'Email y contraseña requeridos'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Entrando…';
+
+  try {
+    const r = await fetch(BASE_URL + '/backoffice/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const j = await r.json();
+    if (!r.ok || !j.token) {
+      errEl.textContent = j.error === 'invalid_credentials' ? 'Credenciales incorrectas' : (j.error || 'Error de autenticación');
+      btn.disabled = false; btn.textContent = 'Entrar'; return;
+    }
+    session = saveSession(j.token, j.merchant);
+    showApp();
+  } catch(e) {
+    errEl.textContent = 'No se pudo conectar con el servidor';
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('m_session');
+  session = null;
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginPass').value = '';
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginBtn').textContent = 'Entrar';
+  document.getElementById('loginErr').textContent = '';
+}
+
+function showApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appShell').style.display = 'block';
+  const name = session.merchant?.merchantName || session.merchant?.merchantId || '–';
+  document.getElementById('merchantBadge').textContent = name;
+  document.getElementById('dashTitle').textContent = 'Dashboard · ' + name;
+  renderWidgetPicker();
+  renderGrid();
+  loadAll();
+}
+
+// Enter en el campo de password
+document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+/* ── API ── */
+async function api(path, opts = {}) {
+  if (!session?.token) throw new Error('no_session');
+  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.token };
+  const r = await fetch(BASE_URL + path, { headers: h, ...opts });
+  if (r.status === 401) { doLogout(); throw new Error('session_expired'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+/* ── WIDGET DEFS ── */
 const WIDGET_DEFS = [
-  {id:'kpi_volume',    label:'Volumen total',     size:'normal'},
-  {id:'kpi_count',     label:'Nº transacciones',  size:'normal'},
-  {id:'kpi_approval',  label:'Tasa aprobación',   size:'normal'},
-  {id:'kpi_avg',       label:'Ticket medio',       size:'normal'},
-  {id:'kpi_refund',    label:'Tasa refund',         size:'normal'},
-  {id:'kpi_fallback',  label:'Tasa fallback',       size:'normal'},
-  {id:'chart_timeline',label:'Evolución temporal', size:'large'},
-  {id:'chart_methods', label:'Métodos de pago',    size:'normal'},
-  {id:'list_countries',label:'Top países',         size:'normal'},
-  {id:'list_tx',       label:'Últimas transacciones', size:'large'},
+  {id:'kpi_volume',     label:'Volumen total',        size:'normal'},
+  {id:'kpi_count',      label:'Nº transacciones',     size:'normal'},
+  {id:'kpi_approval',   label:'Tasa aprobación',      size:'normal'},
+  {id:'kpi_avg',        label:'Ticket medio',         size:'normal'},
+  {id:'kpi_refund',     label:'Tasa refund',          size:'normal'},
+  {id:'kpi_fallback',   label:'Tasa fallback',        size:'normal'},
+  {id:'chart_timeline', label:'Evolución temporal',   size:'large'},
+  {id:'chart_methods',  label:'Métodos de pago',      size:'normal'},
+  {id:'list_countries', label:'Top países',           size:'normal'},
+  {id:'list_tx',        label:'Últimas transacciones',size:'large'},
 ];
 
 let activeWidgets = JSON.parse(localStorage.getItem('m_widgets') || 'null')
@@ -259,80 +331,28 @@ let activeWidgets = JSON.parse(localStorage.getItem('m_widgets') || 'null')
 
 let data = {};
 let dragSrc = null;
+let chartInstances = {};
 
-/* ── INIT ── */
-function init() {
-  document.getElementById('cfgMerchant').value = cfg.merchant;
-  document.getElementById('cfgApiKey').value = cfg.apiKey;
-  document.getElementById('cfgAdminToken').value = cfg.adminToken;
-  document.getElementById('merchantBadge').textContent = cfg.merchant;
-  renderWidgetPicker();
-  renderGrid();
-  if (cfg.apiKey) loadAll();
-}
-
-/* ── SETTINGS ── */
-function openSettings() {
-  document.getElementById('sMerchant').value = cfg.merchant;
-  document.getElementById('sApiKey').value = cfg.apiKey;
-  document.getElementById('sAdminToken').value = cfg.adminToken;
-  document.getElementById('sBaseUrl').value = cfg.baseUrl;
-  document.getElementById('settingsModal').classList.add('open');
-}
-function saveSettings() {
-  cfg.merchant = document.getElementById('sMerchant').value.trim() || cfg.merchant;
-  cfg.apiKey = document.getElementById('sApiKey').value.trim();
-  cfg.adminToken = document.getElementById('sAdminToken').value.trim();
-  cfg.baseUrl = document.getElementById('sBaseUrl').value.trim() || BASE_URL;
-  localStorage.setItem('m_merchant', cfg.merchant);
-  localStorage.setItem('m_apiKey', cfg.apiKey);
-  localStorage.setItem('m_adminToken', cfg.adminToken);
-  localStorage.setItem('m_baseUrl', cfg.baseUrl);
-  document.getElementById('merchantBadge').textContent = cfg.merchant;
-  document.getElementById('settingsModal').classList.remove('open');
-  loadAll();
-}
-
-/* ── API HELPERS ── */
-async function apiFetch(path, opts = {}) {
-  const h = {'Content-Type':'application/json'};
-  if (cfg.apiKey) h['x-api-key'] = cfg.apiKey;
-  if (cfg.adminToken) h['X-Admin-Token'] = cfg.adminToken;
-  const r = await fetch(cfg.baseUrl + path, {headers: h, ...opts});
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-}
-
-/* ── LOAD ALL ── */
+/* ── LOAD ── */
 async function loadAll() {
-  cfg.merchant = document.getElementById('cfgMerchant').value.trim() || cfg.merchant;
-  cfg.apiKey = document.getElementById('cfgApiKey').value.trim() || cfg.apiKey;
-  cfg.adminToken = document.getElementById('cfgAdminToken').value.trim() || cfg.adminToken;
-  cfg.period = parseInt(document.getElementById('cfgPeriod').value);
-  localStorage.setItem('m_merchant', cfg.merchant);
-  localStorage.setItem('m_apiKey', cfg.apiKey);
-  localStorage.setItem('m_adminToken', cfg.adminToken);
-  document.getElementById('merchantBadge').textContent = cfg.merchant;
-  document.getElementById('dashTitle').textContent = `Dashboard · ${cfg.merchant}`;
+  const days = parseInt(document.getElementById('cfgPeriod').value);
   setStatus('loading');
-
   try {
-    const [txRes, summaryRes, volRes, approvalRes] = await Promise.allSettled([
-      apiFetch('/transactions?limit=50'),
-      apiFetch('/transactions/analytics/summary'),
-      apiFetch('/transactions/analytics/volume'),
-      apiFetch('/transactions/analytics/approval-rate'),
+    const [dash, timeline, countries, methods, txRes] = await Promise.allSettled([
+      api(`/backoffice/dashboard?days=${days}`),
+      api(`/backoffice/analytics/timeline?days=${days}`),
+      api(`/backoffice/analytics/countries?days=${days}`),
+      api(`/backoffice/analytics/methods?days=${days}`),
+      api(`/backoffice/transactions?limit=20&page=1`),
     ]);
 
-    data.txList = txRes.status === 'fulfilled' ? (txRes.value?.transactions || txRes.value?.data || txRes.value || []) : [];
-    if (!Array.isArray(data.txList)) data.txList = [];
+    data.kpis      = dash.status === 'fulfilled'      ? dash.value?.kpis      : null;
+    data.timeline  = timeline.status === 'fulfilled'  ? timeline.value        : null;
+    data.countries = countries.status === 'fulfilled' ? countries.value?.countries : null;
+    data.methods   = methods.status === 'fulfilled'   ? methods.value?.methods    : null;
+    data.txList    = txRes.status === 'fulfilled'     ? (txRes.value?.transactions || []) : [];
 
-    data.summary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
-    data.volume = volRes.status === 'fulfilled' ? volRes.value : null;
-    data.approval = approvalRes.status === 'fulfilled' ? approvalRes.value : null;
-
-    processData();
-    renderGrid();
+    populateWidgets();
     setStatus('ok');
     document.getElementById('lastUpdate').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-ES');
   } catch(e) {
@@ -343,62 +363,9 @@ async function loadAll() {
 function setStatus(s, msg) {
   const dot = document.getElementById('statusDot');
   const lbl = document.getElementById('statusMsg');
-  if (s === 'ok')      { dot.className='ok'; lbl.textContent='Conectado'; }
-  else if (s === 'error') { dot.className='err'; lbl.textContent = msg || 'Error'; }
-  else                    { dot.className=''; lbl.textContent='Cargando…'; }
-}
-
-function processData() {
-  const txs = data.txList;
-  data.kpis = {};
-
-  const total = txs.length;
-  const approved = txs.filter(t => ['approved','authorized'].includes(t.status)).length;
-  const refunded = txs.filter(t => t.status === 'refunded').length;
-  const fallback = txs.filter(t => t.fallbackUsed).length;
-  const vol = txs.reduce((s, t) => s + (t.amount || 0), 0);
-  const avg = total ? vol / total : 0;
-
-  data.kpis = {
-    volume: vol,
-    count: total,
-    approval: total ? (approved/total*100) : 0,
-    avg,
-    refund: total ? (refunded/total*100) : 0,
-    fallback: total ? (fallback/total*100) : 0,
-  };
-
-  // Timeline: group by day
-  const byDay = {};
-  txs.forEach(t => {
-    const d = (t.createdAt||'').slice(0,10);
-    if (!d) return;
-    if (!byDay[d]) byDay[d] = {count:0,vol:0};
-    byDay[d].count++;
-    byDay[d].vol += (t.amount||0);
-  });
-  const days = Object.keys(byDay).sort().slice(-30);
-  data.timeline = { labels: days.map(d => d.slice(5)), counts: days.map(d => byDay[d].count), vols: days.map(d => byDay[d].vol) };
-
-  // Methods
-  const methods = {};
-  txs.forEach(t => {
-    const m = t.processor || t.method || 'unknown';
-    methods[m] = (methods[m]||0) + 1;
-  });
-  data.methods = Object.entries(methods).sort((a,b)=>b[1]-a[1]).slice(0,6);
-
-  // Countries
-  const countries = {};
-  txs.forEach(t => { const c = t.issuerCountry; if (c) countries[c] = (countries[c]||0) + 1; });
-  data.countries = Object.entries(countries).sort((a,b)=>b[1]-a[1]).slice(0,8);
-
-  // Summary override from API if available
-  if (data.summary) {
-    if (data.summary.total !== undefined) data.kpis.count = data.summary.total;
-    if (data.summary.approvalRate) data.kpis.approval = parseFloat(data.summary.approvalRate);
-    if (data.summary.totalVolume !== undefined) data.kpis.volume = data.summary.totalVolume;
-  }
+  if (s === 'ok')    { dot.className='ok';  lbl.textContent = 'Conectado'; }
+  else if (s==='error') { dot.className='err'; lbl.textContent = msg||'Error'; }
+  else               { dot.className='';    lbl.textContent = 'Cargando…'; }
 }
 
 /* ── WIDGET PICKER ── */
@@ -407,10 +374,10 @@ function toggleWidgetEditor() {
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 function renderWidgetPicker() {
-  const el = document.getElementById('widgetPicker');
-  el.innerHTML = WIDGET_DEFS.map(w =>
-    `<button class="pick-btn ${activeWidgets.includes(w.id)?'active':''}" onclick="toggleWidget('${w.id}',this)">${w.label}</button>`
-  ).join('');
+  document.getElementById('widgetPicker').innerHTML =
+    WIDGET_DEFS.map(w =>
+      `<button class="pick-btn ${activeWidgets.includes(w.id)?'active':''}" onclick="toggleWidget('${w.id}',this)">${w.label}</button>`
+    ).join('');
 }
 function toggleWidget(id, btn) {
   if (activeWidgets.includes(id)) {
@@ -423,6 +390,7 @@ function toggleWidget(id, btn) {
   }
   localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
   renderGrid();
+  if (Object.keys(data).length) populateWidgets();
 }
 
 /* ── GRID ── */
@@ -432,25 +400,30 @@ function renderGrid() {
   activeWidgets.forEach(id => {
     const def = WIDGET_DEFS.find(w => w.id === id);
     if (!def) return;
-    const el = buildWidget(id, def);
-    grid.appendChild(el);
+    const div = document.createElement('div');
+    div.className = 'widget' + (def.size === 'large' ? ' widget-lg' : '');
+    div.dataset.id = id;
+    div.draggable = true;
+    div.innerHTML = `
+      <div class="widget-header">
+        <div class="widget-title">${def.label}</div>
+        <button class="widget-remove" onclick="removeWidget('${id}')">×</button>
+      </div>
+      <div id="wb_${id}"><div class="spinner"></div></div>`;
+    grid.appendChild(div);
   });
   bindDrag();
-  if (Object.keys(data).length) populateWidgets();
 }
 
-function buildWidget(id, def) {
-  const div = document.createElement('div');
-  div.className = 'widget' + (def.size === 'large' ? ' widget-lg' : '');
-  div.dataset.id = id;
-  div.draggable = true;
-  div.innerHTML = `
-    <div class="widget-header">
-      <div><div class="widget-title">${def.label}</div></div>
-      <button class="widget-remove" onclick="toggleWidget('${id}',document.querySelector('.pick-btn[onclick*=\\'${id}\\']'))">×</button>
-    </div>
-    <div class="widget-body" id="wb_${id}"><div class="spinner"></div></div>`;
-  return div;
+function removeWidget(id) {
+  if (activeWidgets.length <= 2) return;
+  activeWidgets = activeWidgets.filter(x => x !== id);
+  localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
+  document.querySelectorAll('.pick-btn').forEach(b => {
+    if (b.onclick?.toString().includes(`'${id}'`)) b.classList.remove('active');
+  });
+  renderGrid();
+  if (Object.keys(data).length) populateWidgets();
 }
 
 /* ── POPULATE ── */
@@ -458,56 +431,64 @@ function populateWidgets() {
   activeWidgets.forEach(id => {
     const el = document.getElementById('wb_' + id);
     if (!el) return;
-    try { renderWidgetContent(id, el); } catch(e) { el.innerHTML = `<div style="color:var(--text3);font-size:11px">Error: ${e.message}</div>`; }
+    try { renderWidget(id, el); }
+    catch(e) { el.innerHTML = `<div style="color:var(--text3);font-size:11px">Error: ${e.message}</div>`; }
   });
 }
 
-function renderWidgetContent(id, el) {
+function fmt(v) { return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v||0); }
+function pct(v) { return (Math.round((v||0)*10)/10).toFixed(1) + '%'; }
+function badge(type, txt) { return `<span class="kpi-badge ${type}">${txt}</span>`; }
+
+function renderWidget(id, el) {
   const k = data.kpis || {};
   switch(id) {
-    case 'kpi_volume':   el.innerHTML = kpiCard(fmt(k.volume||0,'eur'), trend(k.volume, 'EUR')); break;
-    case 'kpi_count':    el.innerHTML = kpiCard((k.count||0).toLocaleString('es-ES'), badge('neutral','transacciones')); break;
-    case 'kpi_approval': el.innerHTML = kpiCard(pct(k.approval||0), badge(k.approval>=70?'up':'down', k.approval>=70?'▲ target':'▼ bajo')); break;
-    case 'kpi_avg':      el.innerHTML = kpiCard(fmt(k.avg||0,'eur'), badge('neutral','avg ticket')); break;
-    case 'kpi_refund':   el.innerHTML = kpiCard(pct(k.refund||0), badge(k.refund<5?'up':'down', k.refund<5?'▲ normal':'▼ alto')); break;
-    case 'kpi_fallback': el.innerHTML = kpiCard(pct(k.fallback||0), badge(k.fallback<10?'up':'down', 'fallback rate')); break;
+    case 'kpi_volume':
+      el.innerHTML = `<div class="kpi-value">${fmt(k.volume)}</div>${badge('neutral','volumen '+((data.timeline?.days||30)+'d'))}`;
+      break;
+    case 'kpi_count':
+      el.innerHTML = `<div class="kpi-value">${(k.totalTransactions||0).toLocaleString('es-ES')}</div>${badge('neutral','transacciones')}`;
+      break;
+    case 'kpi_approval':
+      el.innerHTML = `<div class="kpi-value">${pct(k.approvalRate)}</div>${badge(k.approvalRate>=70?'up':'down', k.approvalRate>=70?'▲ en objetivo':'▼ bajo objetivo')}`;
+      break;
+    case 'kpi_avg':
+      el.innerHTML = `<div class="kpi-value">${fmt(k.avgTicket)}</div>${badge('neutral','ticket medio')}`;
+      break;
+    case 'kpi_refund':
+      el.innerHTML = `<div class="kpi-value">${pct(k.refundRate)}</div>${badge(k.refundRate<5?'up':'down', k.refundRate<5?'▲ normal':'▼ alto')}`;
+      break;
+    case 'kpi_fallback':
+      el.innerHTML = `<div class="kpi-value">${pct(k.fallbackRate)}</div>${badge(k.fallbackRate<10?'up':'down','fallback rate')}`;
+      break;
     case 'chart_timeline': renderTimeline(el); break;
-    case 'chart_methods':  renderMethods(el); break;
+    case 'chart_methods':  renderMethods(el);  break;
     case 'list_countries': renderCountries(el); break;
-    case 'list_tx':        renderTxList(el); break;
+    case 'list_tx':        renderTxList(el);    break;
   }
 }
 
-function kpiCard(val, sub) { return `<div class="kpi-value">${val}</div>${sub}`; }
-function badge(type, txt) { return `<span class="kpi-badge ${type==='up'?'up':type==='down'?'down':'neutral'}">${txt}</span>`; }
-function trend(v, label) { return `<span class="kpi-badge up">▲ ${label}</span>`; }
-function pct(v) { return (Math.round(v*10)/10).toFixed(1) + '%'; }
-function fmt(v, type) {
-  if (type === 'eur') return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v);
-  return v.toLocaleString('es-ES');
-}
-
-let chartInstances = {};
+/* ── CHARTS ── */
 function renderTimeline(el) {
-  if (!data.timeline?.labels?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:20px 0">Sin datos de evolución temporal</div>'; return; }
+  const tl = data.timeline?.timeline;
+  if (!tl?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:20px 0">Sin datos</div>'; return; }
   el.innerHTML = '<div class="widget-chart"><canvas id="c_timeline"></canvas></div>';
-  if (chartInstances.timeline) { chartInstances.timeline.destroy(); }
-  const ctx = document.getElementById('c_timeline').getContext('2d');
-  chartInstances.timeline = new Chart(ctx, {
+  if (chartInstances.timeline) chartInstances.timeline.destroy();
+  chartInstances.timeline = new Chart(document.getElementById('c_timeline').getContext('2d'), {
     type:'bar',
     data:{
-      labels: data.timeline.labels,
+      labels: tl.map(d => d.date?.slice(5)),
       datasets:[
-        {label:'Transacciones',data:data.timeline.counts,backgroundColor:'rgba(124,111,224,.7)',borderRadius:4},
-        {label:'Aprobadas',data:data.timeline.counts.map(v=>Math.round(v*(data.kpis.approval||70)/100)),backgroundColor:'rgba(62,207,142,.5)',borderRadius:4}
+        {label:'Total',    data:tl.map(d=>d.count),    backgroundColor:'rgba(124,111,224,.6)',borderRadius:3},
+        {label:'Aprobadas',data:tl.map(d=>d.approved), backgroundColor:'rgba(62,207,142,.5)',borderRadius:3},
+        {label:'Rechazadas',data:tl.map(d=>d.declined),backgroundColor:'rgba(240,96,96,.4)',borderRadius:3},
       ]
     },
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#a89ec8',font:{size:11}}}},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#a89ec8',font:{size:10},boxWidth:8}}},
       scales:{
-        x:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.07)'}},
-        y:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.07)'}}
+        x:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.06)'}},
+        y:{ticks:{color:'#6b6390',font:{size:10}},grid:{color:'rgba(124,111,224,.06)'}}
       }
     }
   });
@@ -515,53 +496,50 @@ function renderTimeline(el) {
 
 const METHOD_COLORS = ['#7c6fe0','#3ecf8e','#5b9cf6','#f0a030','#f06060','#a594f9'];
 function renderMethods(el) {
-  if (!data.methods?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos</div>'; return; }
-  const total = data.methods.reduce((s,[,v])=>s+v,0);
+  const m = data.methods;
+  if (!m?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos</div>'; return; }
   el.innerHTML = '<div class="widget-chart"><canvas id="c_methods"></canvas></div>';
   if (chartInstances.methods) chartInstances.methods.destroy();
-  const ctx = document.getElementById('c_methods').getContext('2d');
-  chartInstances.methods = new Chart(ctx, {
+  chartInstances.methods = new Chart(document.getElementById('c_methods').getContext('2d'), {
     type:'doughnut',
     data:{
-      labels: data.methods.map(([k])=>k),
-      datasets:[{data:data.methods.map(([,v])=>v),backgroundColor:METHOD_COLORS,borderWidth:0,hoverOffset:4}]
+      labels: m.map(x => x.processor || x.method || '–'),
+      datasets:[{data:m.map(x=>x.count),backgroundColor:METHOD_COLORS,borderWidth:0,hoverOffset:4}]
     },
-    options:{
-      responsive:true,maintainAspectRatio:false,
+    options:{responsive:true,maintainAspectRatio:false,
       plugins:{
         legend:{position:'right',labels:{color:'#a89ec8',font:{size:11},boxWidth:10}},
-        tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Math.round(ctx.parsed/total*100)}%`}}
+        tooltip:{callbacks:{label:c=>`${c.label}: ${c.parsed} tx · ${m[c.dataIndex]?.approvalRate||0}% apr.`}}
       }
     }
   });
 }
 
-const FLAGS = {ES:'🇪🇸',FR:'🇫🇷',DE:'🇩🇪',IT:'🇮🇹',GB:'🇬🇧',US:'🇺🇸',BR:'🇧🇷',MX:'🇲🇽',PT:'🇵🇹',NL:'🇳🇱',BE:'🇧🇪',PL:'🇵🇱'};
+const FLAGS = {ES:'🇪🇸',FR:'🇫🇷',DE:'🇩🇪',IT:'🇮🇹',GB:'🇬🇧',US:'🇺🇸',BR:'🇧🇷',MX:'🇲🇽',PT:'🇵🇹',NL:'🇳🇱',BE:'🇧🇪',PL:'🇵🇱',AR:'🇦🇷',CO:'🇨🇴'};
 function renderCountries(el) {
-  if (!data.countries?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos de países</div>'; return; }
-  const max = data.countries[0][1];
-  el.innerHTML = data.countries.map(([c,v]) => {
-    const pctV = Math.round(v/max*100);
-    return `<div class="country-row">
-      <span class="country-flag">${FLAGS[c]||'🌍'}</span>
-      <span class="country-name">${c}</span>
-      <div class="country-bar-wrap"><div class="country-bar" style="width:${pctV}%"></div></div>
-      <span class="country-pct">${v}</span>
-    </div>`;
-  }).join('');
+  const cs = data.countries;
+  if (!cs?.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos de países</div>'; return; }
+  const max = cs[0].count;
+  el.innerHTML = cs.map(c => `
+    <div class="country-row">
+      <span class="country-flag">${FLAGS[c.country]||'🌍'}</span>
+      <span class="country-name">${c.country}</span>
+      <div class="country-bar-wrap"><div class="country-bar" style="width:${Math.round(c.count/max*100)}%"></div></div>
+      <span class="country-pct">${c.count}</span>
+    </div>`).join('');
 }
 
-function statusBadge(s) { return `<span class="badge badge-${s}">${s}</span>`; }
+function statusBadge(s) { return `<span class="badge badge-${s||'–'}">${s||'–'}</span>`; }
 function renderTxList(el) {
   const txs = (data.txList||[]).slice(0,10);
   if (!txs.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin transacciones</div>'; return; }
   el.innerHTML = `<table class="tx-table">
-    <thead><tr><th>Payment ID</th><th>Ref</th><th>Importe</th><th>Estado</th><th>Conector</th><th>Fecha</th></tr></thead>
-    <tbody>${txs.map(t=>`<tr style="cursor:pointer" onclick="showTxDetail(${JSON.stringify(t).replace(/"/g,'&quot;')})">
-      <td style="font-family:monospace;font-size:11px">${(t.paymentId||'–').slice(0,12)}…</td>
+    <thead><tr><th>Payment ID</th><th>Referencia</th><th>Importe</th><th>Estado</th><th>Conector</th><th>Fecha</th></tr></thead>
+    <tbody>${txs.map(t => `<tr style="cursor:pointer" onclick='showTxDetail(${JSON.stringify(t)})'>
+      <td style="font-family:monospace;font-size:11px">${(t.paymentId||'–').slice(0,14)}…</td>
       <td>${t.merchantReference||'–'}</td>
-      <td>${fmt(t.amount||0,'eur')}</td>
-      <td>${statusBadge(t.status||'–')}</td>
+      <td>${fmt(t.amount)}</td>
+      <td>${statusBadge(t.status)}</td>
       <td>${t.processor||'–'}</td>
       <td>${(t.createdAt||'').slice(0,10)}</td>
     </tr>`).join('')}</tbody>
@@ -569,69 +547,84 @@ function renderTxList(el) {
 }
 
 /* ── TX DETAIL ── */
-function showTxDetail(t) {
+async function showTxDetail(t) {
+  // Recargar detalle completo desde el endpoint de backoffice
+  let tx = t, ops = [];
+  try {
+    const r = await api(`/backoffice/transactions/${t.paymentId}`);
+    if (r.success) { tx = r.transaction; ops = r.operations || []; }
+  } catch {}
+
   const fields = [
-    ['Payment ID', t.paymentId],['Merchant Ref', t.merchantReference],
-    ['Importe', fmt(t.amount||0,'eur')],['Moneda', t.currency],
-    ['Estado', t.status],['Conector', t.processor],
-    ['Método', t.method],['BIN', t.bin],
-    ['Marca', t.cardBrand],['Tipo', t.cardType],
-    ['Emisor País', t.issuerCountry],['Fallback', t.fallbackUsed?'Sí':'No'],
-    ['Auth Code', t.authCode],['3DS', t.threeDsStatus||'–'],
-    ['Creado', t.createdAt],['Actualizado', t.updatedAt],
+    ['Payment ID',tx.paymentId],['Merchant Ref',tx.merchantReference],
+    ['Importe',fmt(tx.amount)],['Moneda',tx.currency],
+    ['Estado',tx.status],['Conector',tx.processor],
+    ['Método',tx.method],['BIN',tx.bin],
+    ['Marca',tx.cardBrand],['Tipo',tx.cardType],
+    ['País emisor',tx.issuerCountry],['Fallback',tx.fallbackUsed?'Sí':'No'],
+    ['Auth Code',tx.authCode],['Creado',tx.createdAt?.slice(0,19)?.replace('T',' ')],
+    ['Actualizado',tx.updatedAt?.slice(0,19)?.replace('T',' ')],
   ];
+
+  const cancellable = ['initialized','hosted_pending','processing','authorized','approved','pending'].includes(tx.status);
+
   document.getElementById('txDetail').innerHTML = `
-    <div style="margin-bottom:12px">${statusBadge(t.status||'–')}</div>
+    <div style="margin-bottom:12px">${statusBadge(tx.status)}</div>
     <div class="detail-grid">${fields.map(([l,v])=>`<div class="detail-item"><label>${l}</label><span>${v||'–'}</span></div>`).join('')}</div>
+    ${ops.length ? `<div style="margin-top:16px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Operaciones</div>
+      ${ops.map(o=>`<div style="font-size:12px;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border)">${o.type} · ${o.status} · ${o.createdAt?.slice(0,10)}</div>`).join('')}` : ''}
     <div style="margin-top:16px;display:flex;gap:8px">
-      ${['approved','authorized'].includes(t.status)?`<button class="btn btn-danger" onclick="cancelTx('${t.paymentId}')">Cancelar</button>`:''}
+      ${cancellable ? `<button class="btn btn-danger" onclick="cancelTx('${tx.paymentId}')">Cancelar transacción</button>` : ''}
     </div>`;
+
   document.getElementById('txModal').classList.add('open');
 }
+
 function closeTxModal() { document.getElementById('txModal').classList.remove('open'); }
 
 async function cancelTx(paymentId) {
-  if (!confirm('¿Cancelar esta transacción?')) return;
+  if (!confirm('¿Cancelar esta transacción? Esta acción queda registrada.')) return;
   try {
-    await apiFetch(`/transactions/${paymentId}`, {method:'PUT', body: JSON.stringify({status:'cancelled'})});
+    await api(`/backoffice/transactions/${paymentId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'backoffice_manual_cancel' })
+    });
     closeTxModal();
     loadAll();
-  } catch(e) { alert('Error: ' + e.message); }
+  } catch(e) { alert('Error al cancelar: ' + e.message); }
 }
 
 /* ── SEARCH ── */
 document.getElementById('txSearch').addEventListener('input', function() {
   const q = this.value.toLowerCase();
+  if (!q) { renderWidget('list_tx', document.getElementById('wb_list_tx')); return; }
   const el = document.getElementById('wb_list_tx');
   if (!el) return;
-  const txs = (data.txList||[]).filter(t =>
+  const orig = data.txList;
+  data.txList = (orig||[]).filter(t =>
     (t.paymentId||'').toLowerCase().includes(q) ||
     (t.merchantReference||'').toLowerCase().includes(q) ||
-    (t.status||'').includes(q)
-  ).slice(0,10);
-  const orig = data.txList;
-  data.txList = txs;
-  renderWidgetContent('list_tx', el);
+    (t.status||'').includes(q) ||
+    (t.processor||'').includes(q)
+  );
+  renderWidget('list_tx', el);
   data.txList = orig;
 });
 
 /* ── DRAG & DROP ── */
 function bindDrag() {
   document.querySelectorAll('.widget').forEach(el => {
-    el.addEventListener('dragstart', e => { dragSrc = el; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
-    el.addEventListener('dragend', () => { el.classList.remove('dragging'); document.querySelectorAll('.widget').forEach(w=>w.classList.remove('drag-over')); });
-    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragstart', e => { dragSrc = el; el.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    el.addEventListener('dragend',   () => { el.classList.remove('dragging'); document.querySelectorAll('.widget').forEach(w=>w.classList.remove('drag-over')); });
+    el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
     el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
     el.addEventListener('drop', e => {
       e.preventDefault(); el.classList.remove('drag-over');
       if (dragSrc && dragSrc !== el) {
-        const grid = document.getElementById('grid');
-        const els = [...grid.children];
-        const i = els.indexOf(el);
-        const j = els.indexOf(dragSrc);
-        if (i < j) grid.insertBefore(dragSrc, el);
-        else grid.insertBefore(dragSrc, el.nextSibling);
-        activeWidgets = [...grid.children].map(e => e.dataset.id).filter(Boolean);
+        const g = document.getElementById('grid');
+        const els = [...g.children];
+        g.insertBefore(dragSrc, els.indexOf(el) < els.indexOf(dragSrc) ? el : el.nextSibling);
+        activeWidgets = [...g.children].map(e=>e.dataset.id).filter(Boolean);
         localStorage.setItem('m_widgets', JSON.stringify(activeWidgets));
       }
     });
@@ -639,7 +632,12 @@ function bindDrag() {
 }
 
 /* ── BOOT ── */
-init();
+session = loadSession();
+if (session) {
+  showApp();
+} else {
+  document.getElementById('loginScreen').style.display = 'flex';
+}
 </script>
 </body>
 </html>
