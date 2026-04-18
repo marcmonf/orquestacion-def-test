@@ -321,6 +321,6 @@ module.exports = {
   createOrder,
   chargeWithToken,
   validateNotificationHash,
-  refund,               // ← añadir esta línea
+  refund,
 };
 
