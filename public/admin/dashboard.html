@@ -13,9 +13,11 @@
   --text:#f0eeff;--text2:#a89ec8;--text3:#6b6390;
   --green:#3ecf8e;--red:#f06060;--amber:#f0a030;--blue:#5b9cf6;
   --border:rgba(124,111,224,0.18);--border2:rgba(124,111,224,0.35);
-  --radius:12px;--radius-sm:8px;
+  --radius:12px;
 }
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
+
+/* LOGIN */
 #loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
 .login-box{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:40px;width:380px;max-width:95vw}
 .login-logo{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:600;color:var(--purple2);margin-bottom:8px}
@@ -23,13 +25,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .login-sub{font-size:13px;color:var(--text3);margin-bottom:32px}
 .login-field{margin-bottom:16px}
 .login-field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.login-field input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
-.login-field input:focus{border-color:var(--purple)}
+.pass-wrap{position:relative}
+.pass-wrap input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 40px 10px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+.pass-wrap input:focus{border-color:var(--purple)}
+.pass-wrap .eye-btn{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text3);padding:0;line-height:1}
+.login-field input:not(.pass-wrap input){width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+.login-field input:not(.pass-wrap input):focus{border-color:var(--purple)}
 .login-btn{width:100%;background:var(--purple3);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;margin-top:8px}
 .login-btn:hover{background:var(--purple)}
 .login-btn:disabled{opacity:.5;cursor:not-allowed}
 .login-err{color:var(--red);font-size:12px;margin-top:10px;min-height:18px;text-align:center}
 .login-version{text-align:center;font-size:11px;color:var(--text3);margin-top:24px}
+
+/* NAV */
 nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .nav-logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;color:var(--purple2)}
 .nav-logo svg{width:28px;height:28px}
@@ -45,15 +53,27 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24
 #statusDot.ok{background:var(--green)}
 #statusDot.err{background:var(--red)}
 #statusMsg{font-size:12px;color:var(--text3)}
+
+/* TABS */
+.tabs{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;gap:4px}
+.tab-btn{background:none;border:none;border-bottom:2px solid transparent;padding:12px 16px;color:var(--text3);font-size:13px;cursor:pointer;transition:all .15s}
+.tab-btn:hover{color:var(--text2)}
+.tab-btn.active{border-bottom-color:var(--purple);color:var(--purple2)}
+
+/* TOOLBAR */
 .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .toolbar label{font-size:12px;color:var(--text3)}
 .toolbar select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;outline:none}
-.btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500}
-.btn-primary{background:var(--purple3);color:#fff}
-.btn-primary:hover{background:var(--purple)}
-.btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--text2)}
-.btn-ghost:hover{border-color:var(--purple);color:var(--purple2)}
+.btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
+.btn-primary{background:var(--purple3);color:#fff}.btn-primary:hover{background:var(--purple)}
+.btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--text2)}.btn-ghost:hover{border-color:var(--purple);color:var(--purple2)}
 .btn-danger{background:#3d1818;border:1px solid #6b2020;color:var(--red)}
+.btn-sm{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text2);font-size:11px;cursor:pointer}
+.btn-sm:hover{border-color:var(--purple);color:var(--purple2)}
+.btn-sm-danger{border-color:#6b2020;color:var(--red)}
+.btn-sm-danger:hover{background:#3d1818}
+
+/* MAIN */
 main{padding:24px;max-width:1600px;margin:0 auto}
 .widget-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .widget-toolbar h2{font-size:15px;font-weight:500;color:var(--text2)}
@@ -61,6 +81,8 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
+
+/* WIDGETS */
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;cursor:grab}
 .widget:active{cursor:grabbing}
 .widget.drag-over{border-color:var(--purple);background:var(--surface2)}
@@ -77,6 +99,8 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .kpi-badge.up{background:rgba(62,207,142,.12);color:var(--green)}
 .kpi-badge.down{background:rgba(240,96,96,.12);color:var(--red)}
 .kpi-badge.neutral{background:rgba(124,111,224,.12);color:var(--purple2)}
+
+/* TABLE */
 .tx-table{width:100%;border-collapse:collapse;font-size:12px}
 .tx-table th{color:var(--text3);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
 .tx-table td{padding:8px;border-bottom:1px solid rgba(124,111,224,.08);color:var(--text2)}
@@ -86,7 +110,13 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .badge-approved,.badge-authorized{background:rgba(62,207,142,.15);color:var(--green)}
 .badge-declined,.badge-error{background:rgba(240,96,96,.15);color:var(--red)}
 .badge-pending,.badge-processing,.badge-initialized,.badge-hosted_pending{background:rgba(91,156,246,.15);color:var(--blue)}
-.badge-cancelled,.badge-refunded{background:rgba(240,160,48,.15);color:var(--amber)}
+.badge-cancelled,.badge-refunded,.badge-partially_refunded{background:rgba(240,160,48,.15);color:var(--amber)}
+.badge-role-superadmin{background:rgba(165,148,249,.2);color:var(--purple2)}
+.badge-role-admin{background:rgba(91,156,246,.15);color:var(--blue)}
+.badge-role-operator{background:rgba(62,207,142,.15);color:var(--green)}
+.badge-role-viewer{background:rgba(107,99,144,.2);color:var(--text3)}
+
+/* COUNTRY */
 .country-row{display:flex;align-items:center;padding:5px 0;border-bottom:1px solid rgba(124,111,224,.08)}
 .country-row:last-child{border-bottom:none}
 .country-flag{font-size:16px;width:24px;flex-shrink:0}
@@ -94,18 +124,38 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .country-bar-wrap{width:80px;height:4px;background:var(--surface3);border-radius:2px;margin-right:8px;flex-shrink:0}
 .country-bar{height:4px;background:var(--purple);border-radius:2px}
 .country-pct{font-size:11px;color:var(--text3);min-width:36px;text-align:right}
+
+/* MODALS */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:24px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.modal-sm{width:420px}
 .modal h3{font-size:16px;font-weight:500;margin-bottom:16px;color:var(--text)}
 .modal-close{float:right;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;margin-top:-4px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}
+.detail-item label{color:var(--text3);display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
+.detail-item span{color:var(--text)}
+.form-field{margin-bottom:14px}
+.form-field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.form-field input,.form-field select,.form-field textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none}
+.form-field input:focus,.form-field select:focus{border-color:var(--purple)}
+.refund-preview{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;display:flex;align-items:baseline;gap:8px}
+.refund-preview .amount{font-size:28px;font-weight:600;color:var(--amber)}
+.refund-preview .pct{font-size:13px;color:var(--text3)}
+.modal-err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
+.modal-actions{display:flex;gap:8px;margin-top:16px}
+
+/* USERS */
+.users-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.users-table{width:100%;border-collapse:collapse;font-size:13px}
+.users-table th{color:var(--text3);font-weight:500;padding:8px;border-bottom:1px solid var(--border);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+.users-table td{padding:10px 8px;border-bottom:1px solid rgba(124,111,224,.08);color:var(--text2);vertical-align:middle}
+
+/* WIDGET PICKER */
 #widgetEditor{display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px}
 .pick-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;margin:3px}
 .pick-btn:hover{border-color:var(--purple);color:var(--purple2)}
 .pick-btn.active{background:var(--purple3);border-color:var(--purple);color:#fff}
-.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}
-.detail-item label{color:var(--text3);display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
-.detail-item span{color:var(--text)}
 .spinner{width:20px;height:20px;border:2px solid var(--surface3);border-top-color:var(--purple);border-radius:50%;animation:spin .7s linear infinite;margin:20px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 #appShell{display:none}
@@ -113,6 +163,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 </head>
 <body>
 
+<!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-box">
     <div class="login-logo">
@@ -126,7 +177,10 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     </div>
     <div class="login-field">
       <label>Contraseña</label>
-      <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"/>
+      <div class="pass-wrap">
+        <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"/>
+        <button class="eye-btn" id="toggleLoginPass" type="button">👁</button>
+      </div>
     </div>
     <button class="login-btn" id="loginBtn">Entrar</button>
     <div class="login-err" id="loginErr"></div>
@@ -134,6 +188,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
   </div>
 </div>
 
+<!-- APP -->
 <div id="appShell">
   <nav>
     <div class="nav-logo">
@@ -152,36 +207,144 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     </div>
   </nav>
 
-  <div class="toolbar">
-    <label>Período</label>
-    <select id="cfgPeriod">
-      <option value="7">7 días</option>
-      <option value="30" selected>30 días</option>
-      <option value="90">90 días</option>
-    </select>
-    <button class="btn btn-primary" id="refreshBtn">↻ Actualizar</button>
-    <button class="btn btn-ghost" id="widgetToggleBtn">+ Widgets</button>
-    <span style="font-size:12px;color:var(--text3)" id="lastUpdate"></span>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabBtnDashboard">Dashboard</button>
+    <button class="tab-btn" id="tabBtnUsers" id="usersTab" style="display:none">Usuarios</button>
   </div>
 
-  <div id="widgetEditor">
-    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra para reordenar.</div>
-    <div id="widgetPicker"></div>
-  </div>
-
-  <main>
-    <div class="widget-toolbar">
-      <h2 id="dashTitle">Dashboard</h2>
+  <!-- DASHBOARD TAB -->
+  <div id="tabDashboard">
+    <div class="toolbar">
+      <label>Período</label>
+      <select id="cfgPeriod">
+        <option value="7">7 días</option>
+        <option value="30" selected>30 días</option>
+        <option value="90">90 días</option>
+      </select>
+      <button class="btn btn-primary" id="refreshBtn">↻ Actualizar</button>
+      <button class="btn btn-ghost" id="widgetToggleBtn">+ Widgets</button>
+      <span style="font-size:12px;color:var(--text3)" id="lastUpdate"></span>
     </div>
-    <div class="grid" id="grid"></div>
-  </main>
+    <div id="widgetEditor">
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Activa/desactiva widgets. Arrastra para reordenar.</div>
+      <div id="widgetPicker"></div>
+    </div>
+    <main>
+      <div class="widget-toolbar"><h2 id="dashTitle">Dashboard</h2></div>
+      <div class="grid" id="grid"></div>
+    </main>
+  </div>
+
+  <!-- USERS TAB -->
+  <div id="tabUsers" style="display:none;padding:24px;max-width:1200px;margin:0 auto">
+    <div class="users-header">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Gestión de usuarios</h2>
+      <button class="btn btn-primary" id="createUserBtn">+ Nuevo usuario</button>
+    </div>
+    <table class="users-table">
+      <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Scope merchants</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody id="usersTableBody"><tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
+<!-- TX DETAIL MODAL -->
 <div class="modal-overlay" id="txModal">
   <div class="modal">
     <button class="modal-close" id="txModalClose">×</button>
     <h3>Detalle de transacción</h3>
     <div id="txDetail"></div>
+    <div id="txActions" style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap"></div>
+  </div>
+</div>
+
+<!-- REFUND MODAL -->
+<div class="modal-overlay" id="refundModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="refundModalClose">×</button>
+    <h3>Reembolsar transacción</h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
+      ID: <span style="font-family:monospace;color:var(--text2)" id="refundPaymentId"></span><br>
+      Máximo reembolsable: <span style="color:var(--green)" id="refundMax"></span>
+    </div>
+    <div class="refund-preview">
+      <span class="amount" id="refundPreview">–</span>
+      <span class="pct" id="refundPct"></span>
+    </div>
+    <div class="form-field">
+      <label>Importe a reembolsar (€)</label>
+      <input type="number" id="refundAmount" step="0.01" min="0.01" placeholder="0.00"/>
+    </div>
+    <div class="form-field">
+      <label>Motivo (opcional)</label>
+      <input type="text" id="refundReason" placeholder="ej. solicitud cliente, error en pedido…"/>
+    </div>
+    <div class="modal-err" id="refundErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="refundBtn">Confirmar reembolso</button>
+      <button class="btn btn-ghost" id="refundModalClose2">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT USER MODAL -->
+<div class="modal-overlay" id="editUserModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="editUserModalClose">×</button>
+    <h3>Editar usuario</h3>
+    <input type="hidden" id="editUserId"/>
+    <div class="form-field"><label>Nombre</label><input type="text" id="editUserName"/></div>
+    <div class="form-field">
+      <label>Rol</label>
+      <select id="editUserRole">
+        <option value="superadmin">superadmin</option>
+        <option value="admin">admin</option>
+        <option value="operator">operator</option>
+        <option value="viewer">viewer</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>Scope merchants (separados por coma, o "all")</label>
+      <input type="text" id="editUserScope" placeholder="all o demo-merchant, inditex-es"/>
+    </div>
+    <div class="modal-err" id="editUserErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveEditUserBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE USER MODAL -->
+<div class="modal-overlay" id="createUserModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="createUserModalClose">×</button>
+    <h3>Nuevo usuario</h3>
+    <div class="form-field"><label>Nombre</label><input type="text" id="newUserName" placeholder="Nombre completo"/></div>
+    <div class="form-field"><label>Email</label><input type="email" id="newUserEmail" placeholder="email@empresa.com"/></div>
+    <div class="form-field">
+      <label>Contraseña</label>
+      <div class="pass-wrap">
+        <input type="password" id="newUserPassword" placeholder="Mínimo 8 caracteres"/>
+        <button class="eye-btn" id="toggleNewUserPass" type="button">👁</button>
+      </div>
+    </div>
+    <div class="form-field">
+      <label>Rol</label>
+      <select id="newUserRole">
+        <option value="viewer">viewer</option>
+        <option value="operator">operator</option>
+        <option value="admin">admin</option>
+        <option value="superadmin">superadmin</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>Scope merchants (separados por coma, o "all")</label>
+      <input type="text" id="newUserScope" placeholder="all"/>
+    </div>
+    <div class="modal-err" id="newUserErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveNewUserBtn">Crear usuario</button>
+    </div>
   </div>
 </div>
 
