@@ -241,8 +241,86 @@ async function chargeWithToken(paymentData) {
   }
 }
 
+// AÑADIR esta función al final de payNoPainConnector.js,
+// justo antes de module.exports, y exportarla.
+
+/**
+ * Ejecuta un reembolso contra la API de Paylands.
+ *
+ * Paylands endpoint: POST /payment/{orderUuid}/refund
+ * Docs: https://docs.paylands.com/api#refund
+ *
+ * @param {Object} refundData
+ *   - processorReference {string}  orderUuid de Paylands (campo en Transaction)
+ *   - amount             {number}  importe en minor units (ej: 1000 = 10.00 EUR)
+ *   - reason             {string}  motivo del refund (opcional)
+ */
+async function refund(refundData) {
+  const apiKey = API_KEY;
+
+  if (!apiKey) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
+  }
+
+  const { processorReference, amount, reason } = refundData;
+
+  if (!processorReference) {
+    return { success: false, error: 'processorReference (orderUuid) es obligatorio para el refund' };
+  }
+  if (!amount || amount <= 0) {
+    return { success: false, error: 'amount debe ser mayor que 0' };
+  }
+
+  const body = {
+    amount,
+    ...(reason && { description: reason }),
+  };
+
+  try {
+    const res = await postJson(`/payment/${processorReference}/refund`, body, apiKey);
+
+    logger.info('PAYNOPAIN_REFUND_RESULT', {
+      component: 'payNoPainConnector',
+      data: {
+        processorReference,
+        amount,
+        status: res.status,
+        body: res.body,
+      },
+    });
+
+    // Paylands devuelve 200 + order.status === 'REFUNDED' en caso de éxito
+    const orderStatus = res.body?.order?.status;
+    const success = res.status === 200 && (orderStatus === 'REFUNDED' || orderStatus === 6);
+
+    if (!success) {
+      return {
+        success: false,
+        error: res.body?.message || `Refund failed (status ${res.status}, orderStatus ${orderStatus})`,
+        raw: res.body,
+      };
+    }
+
+    return {
+      success: true,
+      processorReference,
+      refundedAmount: amount,
+      orderStatus,
+      raw: res.body,
+    };
+  } catch (err) {
+    logger.error('PAYNOPAIN_REFUND_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { error: err.message },
+    });
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   createOrder,
   chargeWithToken,
   validateNotificationHash,
+  refund,               // ← añadir esta línea
 };
+
