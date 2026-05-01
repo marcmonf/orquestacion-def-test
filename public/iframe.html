@@ -408,23 +408,35 @@
 
           proxyFields.on('success', async () => {
             try {
-              const expiryMonth = document.getElementById('expiry-month').value.trim();
-              const expiryYear  = document.getElementById('expiry-year').value.trim();
-              const cardHolder  = document.getElementById('card-holder').value.trim();
-
               const chargeRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/charge`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paymentId, expiryMonth, expiryYear, cardHolder }),
+                body: JSON.stringify({ paymentId }),
               });
 
               const chargeData = await chargeRes.json();
 
-              if (chargeData.success) {
-                showStatus('success', '¡Pago completado correctamente!');
-                payBtn.style.display = 'none';
+              if (chargeData.success && chargeData.checkoutUrl) {
+                // Ocultar el formulario y mostrar el checkout 3DS de Paylands en iFrame
+                document.getElementById('proxy-pci-form').style.display = 'none';
+                document.getElementById('pay-btn').style.display         = 'none';
+                statusMsg.className = 'status-message';
+
+                const checkoutFrame = document.createElement('iframe');
+                checkoutFrame.src             = chargeData.checkoutUrl;
+                checkoutFrame.style.width     = '100%';
+                checkoutFrame.style.height    = '520px';
+                checkoutFrame.style.border    = 'none';
+                checkoutFrame.style.borderRadius = '8px';
+                checkoutFrame.allow           = 'payment';
+                checkoutFrame.id              = 'paylands-3ds-frame';
+
+                // Insertar el iFrame de Paylands dentro del checkout-card
+                document.querySelector('.checkout-card').appendChild(checkoutFrame);
+
+                showStatus('info', 'Completa el pago en la ventana de tu banco.');
               } else {
-                showStatus('error', chargeData.error || 'El pago fue rechazado.');
+                showStatus('error', chargeData.message || 'No se pudo iniciar el pago.');
                 setLoading(false);
               }
             } catch (chargeErr) {
