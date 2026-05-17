@@ -203,6 +203,11 @@ async function hmacAuth(req, res, next) {
   const expectedSignature = computeSignature(doc.secretHash, stringToHash);
 
   // ── 6. Comparar firmas en tiempo constante ────────────────────────────────
+console.log('[hmacAuth DEBUG]', {
+  secretHashUsed: doc.secretHash?.slice(0, 16) + '...',
+  expectedSignature,
+  signatureInHeader,
+});
   if (!timingSafeCompare(expectedSignature, signatureInHeader)) {
     console.warn('[hmacAuth] Firma inválida', {
       merchantId,
