@@ -75,10 +75,9 @@ function buildCanonicalHeaders(headers) {
  *   pathname + querystring (tal como firmó el cliente)
  */
 function buildCanonicalResource(req) {
-  const qs = req.originalUrl.includes('?')
-    ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
-    : '';
-  return req.path + qs;
+  const full = req.originalUrl || req.url || '/';
+  const qIdx = full.indexOf('?');
+  return qIdx === -1 ? full : full.slice(0, qIdx) + full.slice(qIdx);
 }
 
 /**
