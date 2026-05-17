@@ -1,101 +1,156 @@
 // src/services/apiKeyService.js
 'use strict';
 
-const crypto        = require('crypto');
+const crypto         = require('crypto');
 const MerchantApiKey = require('../models/MerchantApiKey');
-const logger        = require('../utils/logger');
+const logger         = require('../utils/logger');
+
+// ─── Generación ───────────────────────────────────────────────────────────────
 
 /**
- * Genera una API key criptográficamente segura.
- * Formato: mk_<32 bytes en hex> = 64 chars hex + prefijo
- * Ejemplo: mk_a3f2b1c94d8e7f6a...
+ * Genera un par keyId + secret criptográficamente seguros.
  *
- * Devuelve { raw, hash, prefix }:
- *   raw    — el valor completo, se muestra UNA SOLA VEZ al merchant
- *   hash   — SHA-256 del raw, lo que se guarda en BBDD
- *   prefix — primeros 8 chars del raw para identificación visual
+ * keyId   → identificador público, viaja en Authorization header
+ *           Formato: "mk_<16 bytes hex>" (~35 chars)
+ * secret  → usado por el merchant para firmar requests con HMAC-SHA256
+ *           Formato: "ms_<32 bytes hex>" (~67 chars)
+ *
+ * Devuelve: { keyId, keyIdHash, keyIdPrefix, secret, secretHash, secretPrefix }
  */
-function generateApiKey() {
-  const raw    = 'mk_' + crypto.randomBytes(32).toString('hex'); // 67 chars total
-  const hash   = crypto.createHash('sha256').update(raw).digest('hex');
-  const prefix = raw.slice(0, 11); // "mk_" + 8 chars
-  return { raw, hash, prefix };
+function generateCredentials() {
+  const keyIdRaw    = 'mk_' + crypto.randomBytes(16).toString('hex');
+  const secretRaw   = 'ms_' + crypto.randomBytes(32).toString('hex');
+
+  return {
+    keyId:        keyIdRaw,
+    keyIdHash:    crypto.createHash('sha256').update(keyIdRaw).digest('hex'),
+    keyIdPrefix:  keyIdRaw.slice(0, 11),
+    secret:       secretRaw,
+    secretHash:   crypto.createHash('sha256').update(secretRaw).digest('hex'),
+    secretPrefix: secretRaw.slice(0, 11),
+  };
 }
 
-/**
- * Hashea un valor recibido (para comparar contra lo guardado en BBDD).
- */
 function hashKey(raw) {
   return crypto.createHash('sha256').update(String(raw)).digest('hex');
 }
 
+// ─── CRUD ────────────────────────────────────────────────────────────────────
+
 /**
- * Crea una nueva API key para un merchant y la persiste en MongoDB.
- * Devuelve el objeto guardado + el valor raw (solo esta vez).
+ * Crea un nuevo par de credenciales HMAC para un merchant.
+ * Devuelve keyId y secret en claro UNA SOLA VEZ — no recuperables después.
  */
 async function createApiKey(merchantId, label = '') {
-  const { raw, hash, prefix } = generateApiKey();
+  const creds = generateCredentials();
 
   const doc = await MerchantApiKey.create({
     merchantId,
-    keyPrefix: prefix,
-    keyHash:   hash,
+    keyId:        creds.keyId,
+    keyPrefix:    creds.keyIdPrefix,
+    keyHash:      creds.keyIdHash,   // campo legacy requerido por el esquema
+    secretHash:   creds.secretHash,
+    secretPrefix: creds.secretPrefix,
     label,
-    active:    true
+    active: true,
   });
 
-  logger.info('apiKeyService: key creada', {
+  logger.info('apiKeyService: credenciales creadas', {
     component: 'security',
     event: 'API_KEY_CREATED',
-    data: { merchantId, keyPrefix: prefix, keyId: doc._id }
+    data: { merchantId, keyId: creds.keyId, keyPrefix: creds.keyIdPrefix }
   });
 
-  // raw se devuelve UNA SOLA VEZ — no se puede recuperar después
-  return { keyId: doc._id, merchantId, keyPrefix: prefix, label, raw };
+  return {
+    keyId:        doc.keyId,
+    merchantId:   doc.merchantId,
+    keyPrefix:    doc.keyPrefix,
+    secretPrefix: doc.secretPrefix,
+    label:        doc.label,
+    // En claro solo aquí:
+    rawKeyId:     creds.keyId,
+    rawSecret:    creds.secret,
+  };
 }
 
 /**
- * Valida una API key entrante contra MongoDB.
- * Actualiza lastUsedAt y lastUsedIp si es válida.
- * Devuelve el merchantId si es válida, null si no.
+ * Busca un documento activo por keyId y devuelve el secretHash.
+ * Usado por hmacAuth para verificar la firma sin necesidad de exponer el secret.
+ *
+ * Devuelve el doc completo (sin secretHash en log) o null si no existe / inactivo.
  */
-async function validateApiKey(rawKey, merchantId, ip = null) {
-  if (!rawKey || !merchantId) return null;
-
-  const hash = hashKey(rawKey);
+async function findActiveByKeyId(keyId, merchantId) {
+  if (!keyId || !merchantId) return null;
 
   const doc = await MerchantApiKey.findOne({
+    keyId,
     merchantId,
-    keyHash: hash,
-    active:  true
+    active: true,
   }).lean();
 
   if (!doc) return null;
 
-  // Comprobar expiración
   if (doc.expiresAt && new Date() > new Date(doc.expiresAt)) {
-    logger.warn('apiKeyService: key expirada', {
+    logger.warn('apiKeyService: credencial expirada', {
       component: 'security',
       event: 'API_KEY_EXPIRED',
-      data: { merchantId, keyPrefix: doc.keyPrefix }
+      data: { merchantId, keyId }
     });
     return null;
   }
 
-  // Actualizar lastUsedAt en background — no bloqueamos la request
-  MerchantApiKey.updateOne(
-    { _id: doc._id },
-    { $set: { lastUsedAt: new Date(), lastUsedIp: ip } }
-  ).catch(() => {});
+  return doc;
+}
 
+/**
+ * Actualiza lastUsedAt e IP en background (no bloquea la request).
+ */
+function touchLastUsed(docId, ip) {
+  MerchantApiKey.updateOne(
+    { _id: docId },
+    { $set: { lastUsedAt: new Date(), lastUsedIp: ip || null } }
+  ).catch(() => {});
+}
+
+/**
+ * Valida una API key simple (legacy, compat con flujo anterior sin HMAC).
+ * Se mantiene para no romper nada durante la migración.
+ */
+async function validateApiKey(rawKey, merchantId, ip = null) {
+  if (!rawKey || !merchantId) return null;
+
+  // Con el nuevo modelo, el keyId ES la "rawKey" en el flujo legacy.
+  const doc = await MerchantApiKey.findOne({
+    merchantId,
+    keyId: rawKey,
+    active: true,
+  }).lean();
+
+  if (!doc) {
+    // Fallback: buscar por hash legacy (para keys creadas antes de la migración)
+    const hash = hashKey(rawKey);
+    const legacyDoc = await MerchantApiKey.findOne({
+      merchantId,
+      keyHash: hash,
+      active: true,
+    }).lean();
+
+    if (!legacyDoc) return null;
+    if (legacyDoc.expiresAt && new Date() > new Date(legacyDoc.expiresAt)) return null;
+    touchLastUsed(legacyDoc._id, ip);
+    return merchantId;
+  }
+
+  if (doc.expiresAt && new Date() > new Date(doc.expiresAt)) return null;
+  touchLastUsed(doc._id, ip);
   return merchantId;
 }
 
 /**
- * Revoca una key por su ID.
- * La key queda inactiva inmediatamente — no se puede usar más.
+ * Revoca una key por su ID de documento MongoDB.
  */
 async function revokeApiKey(keyId) {
+  // keyId aquí es el _id de MongoDB, no el campo keyId del schema
   const doc = await MerchantApiKey.findByIdAndUpdate(
     keyId,
     { $set: { active: false, revokedAt: new Date() } },
@@ -104,22 +159,22 @@ async function revokeApiKey(keyId) {
 
   if (!doc) return null;
 
-  logger.warn('apiKeyService: key revocada', {
+  logger.warn('apiKeyService: credencial revocada', {
     component: 'security',
     event: 'API_KEY_REVOKED',
-    data: { merchantId: doc.merchantId, keyPrefix: doc.keyPrefix, keyId }
+    data: { merchantId: doc.merchantId, keyId: doc.keyId }
   });
 
   return doc;
 }
 
 /**
- * Lista todas las keys de un merchant (sin exponer el hash).
+ * Lista todas las keys de un merchant (sin exponer hashes).
  */
 async function listApiKeys(merchantId) {
   const docs = await MerchantApiKey.find(
     { merchantId },
-    { keyHash: 0 } // nunca devolver el hash
+    { keyHash: 0, secretHash: 0 }   // nunca devolver hashes
   ).sort({ createdAt: -1 }).lean();
 
   return docs;
@@ -128,7 +183,9 @@ async function listApiKeys(merchantId) {
 module.exports = {
   createApiKey,
   validateApiKey,
+  findActiveByKeyId,
+  touchLastUsed,
   revokeApiKey,
   listApiKeys,
-  hashKey
+  hashKey,
 };
