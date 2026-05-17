@@ -26,14 +26,15 @@ router.post('/:merchantId', adminAuth, async (req, res) => {
   try {
     const result = await createApiKey(merchantId, label);
     return res.status(201).json({
-      success: true,
-      message: 'API key creada. Guarda el valor "apiKey" — no se podrá recuperar después.',
-      keyId:      result.keyId,
-      merchantId: result.merchantId,
-      keyPrefix:  result.keyPrefix,
-      label:      result.label,
-      apiKey:     result.raw   // único momento en que se devuelve en claro
-    });
+  success: true,
+  message: 'API key creada. Guarda rawKeyId y rawSecret — no se podrán recuperar después.',
+  merchantId:   result.merchantId,
+  keyPrefix:    result.keyPrefix,
+  secretPrefix: result.secretPrefix,
+  label:        result.label,
+  rawKeyId:     result.rawKeyId,
+  rawSecret:    result.rawSecret
+});
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
