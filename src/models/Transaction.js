@@ -63,6 +63,7 @@ transactionSchema.index({ bin: 1 });
 transactionSchema.index({ issuerCountry: 1 });
 transactionSchema.index({ merchantReference: 1 });
 transactionSchema.index({ processorReference: 1 }); // ← para búsqueda rápida por webhook
+transactionSchema.index({ hostedCheckoutId: 1 });
 
 module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);
