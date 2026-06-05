@@ -49,6 +49,7 @@ const transactionSchema = new mongoose.Schema({
   iframeUserAgent:    String,
 
   // Campos adicionales para hosted checkout
+  hostedCheckoutId:      String,
   hostedTokenizationId:  String,
   hostedFieldsSessionId: String,
 
