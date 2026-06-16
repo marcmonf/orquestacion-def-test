@@ -1,0 +1,27 @@
+{
+  "testEnvironment": "node",
+  "testMatch": [
+    "**/tests/**/*.test.js"
+  ],
+  "testPathIgnorePatterns": [
+    "/node_modules/"
+  ],
+  "collectCoverageFrom": [
+    "src/**/*.js",
+    "!src/scripts/**",
+    "!src/i18n/**"
+  ],
+  "coverageThreshold": {
+    "global": {
+      "branches": 50,
+      "functions": 50,
+      "lines": 50,
+      "statements": 50
+    }
+  },
+  "coverageReporters": ["text", "lcov"],
+  "testTimeout": 10000,
+  "verbose": true,
+  "clearMocks": true,
+  "restoreMocks": true
+}
