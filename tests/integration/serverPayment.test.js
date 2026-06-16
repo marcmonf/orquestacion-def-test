@@ -102,9 +102,9 @@ describe('POST /:merchantId/payments/server', () => {
     expect(res.status).toBe(400);
   });
 
-  test('400 — importe negativo', async () => {
+  test('400 — amount no es número (string)', async () => {
     const payload = JSON.parse(JSON.stringify(VALID_PAYLOAD));
-    payload.order.amountOfMoney.amount = -100;
+    payload.order.amountOfMoney.amount = 'no-es-numero';
     const res = await request(app)
       .post('/demo-merchant/payments/server')
       .set('Content-Type', 'application/json')

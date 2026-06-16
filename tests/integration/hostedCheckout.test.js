@@ -21,7 +21,7 @@ jest.mock('../../src/models/Transaction', () => {
     Object.assign(mockTxData, data);
   }
   MockTransaction.prototype.save = mockSave;
-  MockTransaction.findOne = jest.fn().mockResolvedValue(null);
+  MockTransaction.findOne = jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
   return MockTransaction;
 });
 
@@ -134,7 +134,7 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
 
   test('404 — hostedCheckoutId no existe', async () => {
     const Transaction = require('../../src/models/Transaction');
-    Transaction.findOne.mockResolvedValueOnce(null);
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
     const res = await request(app)
       .get('/demo-merchant/payments/hosted/nonexistent-id/status');
     expect(res.status).toBe(404);
@@ -142,7 +142,7 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
 
   test('200 — devuelve estado de transacción existente', async () => {
     const Transaction = require('../../src/models/Transaction');
-    Transaction.findOne.mockResolvedValueOnce({
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({
       hostedCheckoutId: 'test-hc-id',
       paymentId: 'test-pay-id',
       merchantId: 'demo-merchant',
@@ -150,7 +150,7 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
       status: 'hosted_pending',
       sessionExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
       createdAt: new Date(), updatedAt: new Date(),
-    });
+    }) });
     const res = await request(app)
       .get('/demo-merchant/payments/hosted/test-hc-id/status');
     expect(res.status).toBe(200);
@@ -161,13 +161,13 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
 
   test('expired:true cuando sessionExpiresAt ha pasado', async () => {
     const Transaction = require('../../src/models/Transaction');
-    Transaction.findOne.mockResolvedValueOnce({
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({
       hostedCheckoutId: 'exp-hc-id', paymentId: 'exp-pay-id',
       merchantId: 'demo-merchant', amount: 100, currency: 'EUR',
       status: 'hosted_pending',
       sessionExpiresAt: new Date(Date.now() - 1000),
       createdAt: new Date(), updatedAt: new Date(),
-    });
+    }) });
     const res = await request(app)
       .get('/demo-merchant/payments/hosted/exp-hc-id/status');
     expect(res.status).toBe(200);
@@ -176,13 +176,13 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
 
   test('completed:true cuando status es authorized', async () => {
     const Transaction = require('../../src/models/Transaction');
-    Transaction.findOne.mockResolvedValueOnce({
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({
       hostedCheckoutId: 'done-hc-id', paymentId: 'done-pay-id',
       merchantId: 'demo-merchant', amount: 500, currency: 'EUR',
       status: 'authorized',
       sessionExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
       createdAt: new Date(), updatedAt: new Date(),
-    });
+    }) });
     const res = await request(app)
       .get('/demo-merchant/payments/hosted/done-hc-id/status');
     expect(res.status).toBe(200);
