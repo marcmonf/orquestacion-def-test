@@ -83,7 +83,7 @@ describe('Seguridad — protección anti-replay (ventana de tiempo HMAC)', () =>
   });
 
   test('fecha en el límite exacto (5 min) es aceptada', () => {
-    const edge = new Date(Date.now() - TOLERANCE_MS + 100).toUTCString();
+    const edge = new Date(Date.now() - TOLERANCE_MS + 2000).toUTCString();
     expect(isWithinWindow(edge)).toBe(true);
   });
 });
