@@ -1,58 +1,62 @@
 // tests/integration/apiKeys.test.js
 'use strict';
 
-/**
- * Tests de integración de la gestión de API keys.
- */
-
 const express = require('express');
 const request = require('supertest');
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
-
-beforeAll(() => {
-  process.env.ADMIN_TOKEN = ADMIN_TOKEN;
-});
+beforeAll(() => { process.env.ADMIN_TOKEN = ADMIN_TOKEN; });
 
 jest.mock('../../src/models/TraceLog', () => ({ TraceLog: null, isEnabled: false }));
+jest.mock('../../src/utils/logger', () => ({
+  info: jest.fn(), warn: jest.fn(), error: jest.fn(),
+}));
+
+const mockCreate = jest.fn();
+const mockFind = jest.fn();
+const mockFindByIdAndUpdate = jest.fn();
 
 jest.mock('../../src/models/MerchantApiKey', () => {
-  const docs = [];
-  function MockKey(data) {
-    Object.assign(this, data);
-    this._id = 'mock-key-id-' + Math.random().toString(36).slice(2);
-  }
-  MockKey.prototype.save = jest.fn().mockResolvedValue(true);
-  MockKey.create = jest.fn().mockImplementation((data) => {
-    const doc = { ...data, _id: 'mock-id-' + Math.random().toString(36).slice(2) };
-    docs.push(doc);
-    return Promise.resolve(doc);
-  });
-  MockKey.find = jest.fn().mockReturnValue({
-    sort: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockResolvedValue([]),
-  });
-  MockKey.findByIdAndUpdate = jest.fn().mockResolvedValue({
-    merchantId: 'demo-merchant',
-    keyId: 'mk_testkey',
-    keyPrefix: 'mk_testkey',
-    revokedAt: new Date(),
-  });
-  MockKey.findOne = jest.fn().mockResolvedValue(null);
-  return MockKey;
+  const mock = {
+    create: mockCreate,
+    find: mockFind,
+    findByIdAndUpdate: mockFindByIdAndUpdate,
+    findOne: jest.fn().mockResolvedValue(null),
+  };
+  return mock;
+});
+
+// Mock de apiKeyService para controlar exactamente qué devuelve
+jest.mock('../../src/services/apiKeyService', () => {
+  const crypto = require('crypto');
+  return {
+    createApiKey: jest.fn().mockResolvedValue({
+      keyId: 'mk_testkey1234567890abcdef',
+      merchantId: 'demo-merchant',
+      keyPrefix: 'mk_testkey1',
+      secretPrefix: 'ms_testsec',
+      label: 'test',
+      rawKeyId: 'mk_' + crypto.randomBytes(16).toString('hex'),
+      rawSecret: 'ms_' + crypto.randomBytes(32).toString('hex'),
+    }),
+    listApiKeys: jest.fn().mockResolvedValue([]),
+    revokeApiKey: jest.fn().mockResolvedValue({
+      merchantId: 'demo-merchant',
+      keyId: 'mk_testkey',
+      revokedAt: new Date(),
+    }),
+  };
 });
 
 function buildApp() {
   const app = express();
   app.use(express.json());
-  const apiKeyRoutes = require('../../src/routes/apiKeyRoutes');
-  app.use('/api-keys', apiKeyRoutes);
+  app.use('/api-keys', require('../../src/routes/apiKeyRoutes'));
   return app;
 }
 
-describe('POST /api-keys/:merchantId — crear key', () => {
+describe('POST /api-keys/:merchantId', () => {
   let app;
-
   beforeAll(() => { app = buildApp(); });
   afterEach(() => { jest.clearAllMocks(); });
 
@@ -62,7 +66,6 @@ describe('POST /api-keys/:merchantId — crear key', () => {
       .set('X-Admin-Token', ADMIN_TOKEN)
       .set('Content-Type', 'application/json')
       .send({ label: 'test-key' });
-
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.rawKeyId).toBeDefined();
@@ -73,9 +76,7 @@ describe('POST /api-keys/:merchantId — crear key', () => {
     const res = await request(app)
       .post('/api-keys/demo-merchant')
       .set('X-Admin-Token', ADMIN_TOKEN)
-      .set('Content-Type', 'application/json')
       .send({ label: 'test' });
-
     expect(res.body.rawKeyId).toMatch(/^mk_/);
   });
 
@@ -83,18 +84,14 @@ describe('POST /api-keys/:merchantId — crear key', () => {
     const res = await request(app)
       .post('/api-keys/demo-merchant')
       .set('X-Admin-Token', ADMIN_TOKEN)
-      .set('Content-Type', 'application/json')
       .send({ label: 'test' });
-
     expect(res.body.rawSecret).toMatch(/^ms_/);
   });
 
   test('401 — sin admin token', async () => {
     const res = await request(app)
       .post('/api-keys/demo-merchant')
-      .set('Content-Type', 'application/json')
       .send({ label: 'test' });
-
     expect(res.status).toBe(401);
   });
 
@@ -102,9 +99,7 @@ describe('POST /api-keys/:merchantId — crear key', () => {
     const res = await request(app)
       .post('/api-keys/demo-merchant')
       .set('X-Admin-Token', 'token-incorrecto')
-      .set('Content-Type', 'application/json')
       .send({ label: 'test' });
-
     expect(res.status).toBe(401);
   });
 
@@ -112,25 +107,20 @@ describe('POST /api-keys/:merchantId — crear key', () => {
     const res = await request(app)
       .post('/api-keys/demo-merchant')
       .set('X-Admin-Token', ADMIN_TOKEN)
-      .set('Content-Type', 'application/json')
       .send({ label: 'test' });
-
     expect(res.body.secretHash).toBeUndefined();
     expect(res.body.keyHash).toBeUndefined();
   });
 });
 
-describe('GET /api-keys/:merchantId — listar keys', () => {
+describe('GET /api-keys/:merchantId', () => {
   let app;
-
   beforeAll(() => { app = buildApp(); });
-  afterEach(() => { jest.clearAllMocks(); });
 
   test('200 — lista keys con admin token', async () => {
     const res = await request(app)
       .get('/api-keys/demo-merchant')
       .set('X-Admin-Token', ADMIN_TOKEN);
-
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.keys)).toBe(true);
@@ -142,9 +132,8 @@ describe('GET /api-keys/:merchantId — listar keys', () => {
   });
 });
 
-describe('DELETE /api-keys/:merchantId/:keyId — revocar key', () => {
+describe('DELETE /api-keys/:merchantId/:keyId', () => {
   let app;
-
   beforeAll(() => { app = buildApp(); });
   afterEach(() => { jest.clearAllMocks(); });
 
@@ -152,26 +141,22 @@ describe('DELETE /api-keys/:merchantId/:keyId — revocar key', () => {
     const res = await request(app)
       .delete('/api-keys/demo-merchant/mock-key-id-123')
       .set('X-Admin-Token', ADMIN_TOKEN);
-
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
   test('404 — key no encontrada', async () => {
-    const MerchantApiKey = require('../../src/models/MerchantApiKey');
-    MerchantApiKey.findByIdAndUpdate.mockResolvedValueOnce(null);
-
+    const { revokeApiKey } = require('../../src/services/apiKeyService');
+    revokeApiKey.mockResolvedValueOnce(null);
     const res = await request(app)
       .delete('/api-keys/demo-merchant/nonexistent-id')
       .set('X-Admin-Token', ADMIN_TOKEN);
-
     expect(res.status).toBe(404);
   });
 
   test('401 — sin admin token', async () => {
     const res = await request(app)
       .delete('/api-keys/demo-merchant/some-id');
-
     expect(res.status).toBe(401);
   });
 });
