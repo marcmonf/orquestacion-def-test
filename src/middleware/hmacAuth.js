@@ -11,7 +11,7 @@
  *   Content-Type: application/json
  *
  * Modo simple (dev/Postman):
- *   x-api-key: <rawKeyId>   (el mk_... devuelto al crear la key)
+ *   x-api-key: <rawKeyId>
  *   x-merchant-id: <merchantId>
  *
  * El modo simple solo está activo si API_KEY_SIMPLE_FALLBACK=true en ENV.
@@ -46,8 +46,7 @@ function buildCanonicalHeaders(headers) {
     .map(([k, v]) => [k.toLowerCase(), String(v).trim()])
     .sort(([a], [b]) => a.localeCompare(b));
   if (!entries.length) return '';
-  return entries.map(([k, v]) => `${k}:${v}`).join('
-');
+  return entries.map(([k, v]) => k + ':' + v).join('\n');
 }
 
 function buildCanonicalResource(req) {
@@ -62,8 +61,7 @@ function buildStringToHash(req) {
   const date          = req.headers['date'] || '';
   const canonHeaders  = buildCanonicalHeaders(req.headers);
   const canonResource = buildCanonicalResource(req);
-  return [method, contentType, date, canonHeaders, canonResource].join('
-');
+  return [method, contentType, date, canonHeaders, canonResource].join('\n');
 }
 
 function computeSignature(secretHash, stringToHash) {
@@ -96,8 +94,8 @@ async function hmacAuth(req, res, next) {
 
   const authHeader = req.header('authorization') || req.header('Authorization') || '';
 
-  // ── MODO SIMPLE FALLBACK (x-api-key) ─────────────────────────────────────
-  // Activo solo si API_KEY_SIMPLE_FALLBACK=true en ENV (nunca en producción real)
+  // MODO SIMPLE FALLBACK (x-api-key)
+  // Activo solo si API_KEY_SIMPLE_FALLBACK=true en ENV
   if (SIMPLE_FALLBACK && !authHeader.startsWith(AUTH_PREFIX)) {
     const rawKey = req.header('x-api-key') || '';
     if (!rawKey) return unauthorized(res, lang, 'missing_or_invalid_authorization_header');
@@ -111,7 +109,7 @@ async function hmacAuth(req, res, next) {
     return next();
   }
 
-  // ── MODO HMAC ─────────────────────────────────────────────────────────────
+  // MODO HMAC
   if (!authHeader.startsWith(AUTH_PREFIX)) {
     return unauthorized(res, lang, 'missing_or_invalid_authorization_header');
   }
@@ -144,7 +142,7 @@ async function hmacAuth(req, res, next) {
   const expectedSignature = computeSignature(doc.secretHash, stringToHash);
 
   if (!timingSafeCompare(expectedSignature, signatureInHeader)) {
-    console.warn('[hmacAuth] Firma inválida', { merchantId, keyId, stringToHash });
+    console.warn('[hmacAuth] Firma invalida', { merchantId, keyId, stringToHash });
     return unauthorized(res, lang, 'invalid_signature');
   }
 
