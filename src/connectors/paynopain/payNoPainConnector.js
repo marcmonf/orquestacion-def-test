@@ -105,6 +105,7 @@ async function createOrder(paymentData) {
     signature:    signature,
     secure:       false,
     url_post:     `${SERVER_URL}/webhooks/paynopain`,
+    additional:   paymentData.paymentId,
   };
 
   try {
@@ -200,6 +201,7 @@ async function createOrder3DS(paymentData) {
     secure:          true,                   // ← 3DS obligatorio
     customer_ext_id: DEMO_CUSTOMER_EXT_ID,   // ← identificador del usuario
     url_post:        `${SERVER_URL}/webhooks/paynopain`,
+    additional:      paymentData.paymentId,
     extra_data:      DEMO_EXTRA_DATA,
   };
 
@@ -296,6 +298,7 @@ async function chargeWithToken(paymentData) {
     secure:       false,
     source_uuid:  paymentData.cardToken,  // ← token del Proxy PCI
     url_post:     `${SERVER_URL}/webhooks/paynopain`,
+    additional:   paymentData.paymentId,
   };
 
   try {
