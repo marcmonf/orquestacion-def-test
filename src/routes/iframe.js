@@ -48,7 +48,7 @@ const CSP_HEADER =
   "style-src 'self' 'unsafe-inline'; " +
   "script-src 'self' 'unsafe-inline' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://*.gstatic.com; " +
   "connect-src 'self' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://google.com; " +
-  "frame-src 'self' https://pci-proxy-api.paynopain.com https://pci-proxy-sandbox.paynopain.com https://pay.google.com https://*.google.com; " +
+  "frame-src 'self' https://pci-proxy-api.paynopain.com https://pci-proxy-sandbox.paynopain.com https://api.paylands.com https://pay.google.com https://*.google.com; " +
   "frame-ancestors 'none';";
 
 function safeCompare(a, b) {
