@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monetiser — Test Checkout</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    h1 { font-size: 18px; color: #333; margin-bottom: 8px; }
+    p  { font-size: 13px; color: #888; margin-bottom: 24px; }
+    #iframe-wrapper {
+      width: 100%;
+      max-width: 480px;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.12);
+    }
+    iframe {
+      width: 100%;
+      height: 620px;
+      border: none;
+      display: block;
+    }
+    #url-bar {
+      width: 100%;
+      max-width: 480px;
+      margin-bottom: 16px;
+      display: flex;
+      gap: 8px;
+    }
+    #url-input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    #load-btn {
+      padding: 10px 18px;
+      background: #1a1a1a;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #load-btn:hover { background: #333; }
+  </style>
+</head>
+<body>
+  <h1>Monetiser — Test Checkout</h1>
+  <p>Pega la redirectUrl del POST y pulsa Cargar</p>
+
+  <div id="url-bar">
+    <input id="url-input" type="text" placeholder="https://orquestacion-def-test.onrender.com/hpp/..." />
+    <button id="load-btn" onclick="loadIframe()">Cargar</button>
+  </div>
+
+  <div id="iframe-wrapper">
+    <iframe id="checkout-frame" src="about:blank" allow="payment *"></iframe>
+  </div>
+
+  <script>
+    function loadIframe() {
+      const url = document.getElementById('url-input').value.trim();
+      if (!url) return;
+      document.getElementById('checkout-frame').src = url;
+    }
+    // Permitir cargar con Enter
+    document.getElementById('url-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') loadIframe();
+    });
+  </script>
+</body>
+</html>
