@@ -253,6 +253,13 @@ reactivación en la cabecera de `src/models/MerchantHierarchy.js`.
   MERCHANT: usa `Merchant.signingSecret` (o hmacSecret/secret) y hace fallback a la
   variable global `WEBHOOK_SECRET`. Si el merchant tiene secreto propio, el webhook se
   envía aunque no exista el global. Solo marca `no_secret_config` si no hay ninguno.
+- **Fase D** — `src/models/MerchantHierarchy.js` marcado EN STANDBY con nota de
+  reactivación en cabecera (el esquema no se tocó). DEV-LOG actualizado a la realidad
+  del repo.
+- **Fase E** — Vulnerabilidad `uuid` cerrada: subido de `9.0.0` a `11.1.1`
+  (GHSA-w5hq-g745-h8pq). `npm audit` → `found 0 vulnerabilities`. Sin regresión: todos
+  los usos del código son `v4()` con import nombrado, que no cambió entre v9 y v11.
+  Verificado corriendo la suite completa (mismos 119/128 que antes del cambio).
 
 **Alineación con Paylands:** `serviceUuid` → campo `service` de POST /payment;
 `templateUuid` → `template_uuid` (plantilla de la carta de pago). Ambos opcionales con
@@ -442,7 +449,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 11 julio 2026 — M2 completado (modelo Merchant unificado, rutas /merchants, dispatcher por-merchant). M1 verificado end-to-end. Próximo: M3 (panel admin) y cierre de la vulnerabilidad uuid.*
+*Última revisión: 11 julio 2026 — M2 completado end-to-end (Fases A-E: modelo Merchant unificado, rutas /merchants, dispatcher por-merchant, MerchantHierarchy en standby, vulnerabilidad uuid cerrada). M1 verificado. Próximo: M3 (panel de administración en /admin).*
 
 ---
 
