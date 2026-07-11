@@ -170,6 +170,11 @@ app.use('/:merchantId/proxy-pci', proxyPciRoutes);
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
 
 /* ===== Static ===== */
+// /admin (exacto) sirve el dashboard de backoffice como página principal.
+// El editor de reglas antiguo sigue accesible en /admin/index.html.
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/admin/dashboard.html'));
+});
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.use(express.static(path.join(__dirname, 'public')));
 
