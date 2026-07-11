@@ -417,24 +417,13 @@
               const chargeData = await chargeRes.json();
 
               if (chargeData.success && chargeData.checkoutUrl) {
-                // Ocultar el formulario y mostrar el checkout 3DS de Paylands en iFrame
-                document.getElementById('proxy-pci-form').style.display = 'none';
-                document.getElementById('pay-btn').style.display         = 'none';
-                statusMsg.className = 'status-message';
-
-                const checkoutFrame = document.createElement('iframe');
-                checkoutFrame.src             = chargeData.checkoutUrl;
-                checkoutFrame.style.width     = '100%';
-                checkoutFrame.style.height    = '520px';
-                checkoutFrame.style.border    = 'none';
-                checkoutFrame.style.borderRadius = '8px';
-                checkoutFrame.allow           = 'payment';
-                checkoutFrame.id              = 'paylands-3ds-frame';
-
-                // Insertar el iFrame de Paylands dentro del checkout-card
-                document.querySelector('.checkout-card').appendChild(checkoutFrame);
-
-                showStatus('info', 'Completa el pago en la ventana de tu banco.');
+                // El challenge 3DS del banco se carga en este mismo iframe
+                // sustituyendo el formulario — sin crear un segundo iframe de Paylands
+                window.location.href = chargeData.checkoutUrl;
+              } else if (chargeData.success && !chargeData.checkoutUrl) {
+                // Pago completado sin 3DS
+                showStatus('success', '¡Pago completado correctamente!');
+                document.getElementById('pay-btn').style.display = 'none';
               } else {
                 showStatus('error', chargeData.message || 'No se pudo iniciar el pago.');
                 setLoading(false);
