@@ -287,68 +287,74 @@ async function chargeWithToken(paymentData) {
     return { success: false, error: 'cardToken es obligatorio para chargeWithToken' };
   }
 
-  // Paso 1: Crear la orden en Paylands usando el token PCI como source_uuid
-  const orderBody = {
-    operative:    'AUTHORIZATION',
-    service:      serviceUuid,
-    order_id:     paymentData.paymentId,
-    amount:       paymentData.amount,
-    description:  `Pago ${paymentData.merchantId}`,
-    signature:    signature,
-    secure:       false,
-    source_uuid:  paymentData.cardToken,  // ← token del Proxy PCI
-    url_post:     `${SERVER_URL}/webhooks/paynopain`,
-    additional:   paymentData.paymentId,
+  // Usar POST /charge — "Pago en un solo paso" para clientes PCI.
+  // Acepta source_uuid con el token del Proxy PCI directamente.
+  // Con secure:true devuelve 303 + URL de 3DS tokenizado si el banco lo requiere.
+  const chargeBody = {
+    signature:        signature,
+    amount:           paymentData.amount,
+    operative:        'AUTHORIZATION',
+    secure:           true,
+    customer_ext_id:  paymentData.paymentId,
+    service:          serviceUuid,
+    description:      `Pago ${paymentData.merchantId}`,
+    additional:       paymentData.paymentId,
+    url_post:         `${SERVER_URL}/webhooks/paynopain`,
+    source_uuid:      paymentData.cardToken,
+    card_holder:      paymentData.cardHolder || 'Cardholder',
+    card_expiry_month: String(paymentData.expiryMonth || '').padStart(2, '0'),
+    card_expiry_year:  String(paymentData.expiryYear || ''),
   };
 
   try {
-    const orderRes = await postJson('/payment', orderBody, apiKey);
+    const chargeRes = await postJson('/charge', chargeBody, apiKey);
 
-    if (orderRes.status !== 200 || !orderRes.body?.order?.token) {
-      logger.error('PAYNOPAIN_CHARGE_TOKEN_ORDER_ERROR', {
-        component: 'payNoPainConnector',
-        data: { status: orderRes.status, body: orderRes.body },
-      });
-      return {
-        success: false,
-        error: orderRes.body?.message || 'Error creating order with token',
-      };
-    }
-
-    const orderUuid = orderRes.body.order.token;
-
-    // Paso 2: Ejecutar el cobro S2S (webservice payment)
-    const wsBody = {
-      operative:    'AUTHORIZATION',
-      expiry_month: String(paymentData.expiryMonth || '').padStart(2, '0'),
-      expiry_year:  String(paymentData.expiryYear || ''),
-      holder:       paymentData.cardHolder || 'Cardholder',
-    };
-
-    const wsRes = await postJson(`/payment/${orderUuid}/webservice`, wsBody, apiKey);
-
-    logger.info('PAYNOPAIN_CHARGE_TOKEN_RESULT', {
+    logger.info('PAYNOPAIN_CHARGE_RESULT', {
       component: 'payNoPainConnector',
       data: {
-        orderUuid,
-        wsStatus:  wsRes.status,
-        operative: wsRes.body?.order?.operative,
-        status:    wsRes.body?.order?.status,
+        status:    chargeRes.status,
+        orderStatus: chargeRes.body?.order?.status,
+        paid:      chargeRes.body?.order?.paid,
       },
     });
 
-    const wsBody2     = wsRes.body;
-    const orderStatus = wsBody2?.order?.status;
-    // Paylands status: 1=pending, 2=processing, 3=paid, 4=cancelled, 5=failed, 6=refunded
-    const approved = orderStatus === 3 || wsRes.status === 300;
+    // 200 = cobro completado directamente
+    if (chargeRes.status === 200) {
+      const order   = chargeRes.body?.order;
+      const paid    = order?.paid === true || order?.status === 'SUCCESS';
+      const orderUuid = order?.uuid || order?.token;
+      return {
+        success:            paid,
+        orderUuid,
+        processorReference: orderUuid,
+        error: paid ? null : (order?.status || 'Declined'),
+      };
+    }
 
+    // 303 = banco requiere 3DS — devolver URL para que el frontend la cargue
+    if (chargeRes.status === 303) {
+      const threeDsUrl = chargeRes.body?.redirect_url || chargeRes.body?.url;
+      const orderUuid  = chargeRes.body?.order?.uuid || chargeRes.body?.order?.token;
+      return {
+        success:            false,
+        requires3DS:        true,
+        threeDsUrl,
+        orderUuid,
+        processorReference: orderUuid,
+        error: null,
+      };
+    }
+
+    // Cualquier otro código = error
+    logger.error('PAYNOPAIN_CHARGE_TOKEN_ERROR', {
+      component: 'payNoPainConnector',
+      data: { status: chargeRes.status, body: chargeRes.body },
+    });
     return {
-      success:            approved,
-      orderUuid,
-      processorReference: orderUuid,
-      paylandsStatus:     orderStatus,
-      error: approved ? null : (wsBody2?.order?.message || `Declined (status ${orderStatus})`),
+      success: false,
+      error: chargeRes.body?.message || `Error en cobro (status ${chargeRes.status})`,
     };
+
   } catch (err) {
     logger.error('PAYNOPAIN_CHARGE_TOKEN_EXCEPTION', {
       component: 'payNoPainConnector',

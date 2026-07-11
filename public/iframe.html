@@ -416,12 +416,11 @@
 
               const chargeData = await chargeRes.json();
 
-              if (chargeData.success && chargeData.checkoutUrl) {
-                // El challenge 3DS del banco se carga en este mismo iframe
-                // sustituyendo el formulario — sin crear un segundo iframe de Paylands
-                window.location.href = chargeData.checkoutUrl;
-              } else if (chargeData.success && !chargeData.checkoutUrl) {
-                // Pago completado sin 3DS
+              if (chargeData.success && chargeData.requires3DS && chargeData.threeDsUrl) {
+                // Banco requiere 3DS — cargar el challenge en este mismo iframe
+                window.location.href = chargeData.threeDsUrl;
+              } else if (chargeData.success && !chargeData.requires3DS) {
+                // Pago aprobado directamente sin 3DS
                 showStatus('success', '¡Pago completado correctamente!');
                 document.getElementById('pay-btn').style.display = 'none';
               } else {

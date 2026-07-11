@@ -152,6 +152,22 @@ router.post('/charge', rateLimiter, async (req, res) => {
       data: { paymentId, merchantId, success: chargeResult.success, status: tx.status },
     });
 
+    // 3DS requerido por el banco — devolver URL al frontend
+    if (chargeResult.requires3DS && chargeResult.threeDsUrl) {
+      tx.status             = 'pending_3ds';
+      tx.processorReference = chargeResult.processorReference || null;
+      tx.processor          = 'payNoPain';
+      tx.updatedAt          = new Date();
+      await tx.save();
+
+      return res.status(200).json({
+        success:     true,
+        requires3DS: true,
+        threeDsUrl:  chargeResult.threeDsUrl,
+        paymentId,
+      });
+    }
+
     if (!chargeResult.success) {
       return res.status(200).json({
         success: false,
