@@ -211,7 +211,9 @@
     });
   }
 
-  function fmt(v) { return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format(v||0); }
+  // Los importes se almacenan en la unidad mínima de la moneda (céntimos), igual que
+  // en Paylands (amount:100 = 1,00 €). fmt() recibe CÉNTIMOS y los muestra en euros.
+  function fmt(cents) { return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format((Number(cents)||0)/100); }
   function pct(v) { return (Math.round((v||0)*10)/10).toFixed(1)+'%'; }
   function badge(type,txt) { return '<span class="kpi-badge '+type+'">'+txt+'</span>'; }
   function statusBadge(s) { return '<span class="badge badge-'+(s||'')+'">'+( s||'–')+'</span>'; }
@@ -362,46 +364,50 @@
     }
   }
 
-  /* ── REFUND MODAL ── */
+  /* ── REFUND MODAL ──
+     maxRefundable llega del servidor en CÉNTIMOS. El input se maneja en EUROS
+     de cara al usuario; la conversión a céntimos se hace al enviar (doRefund). */
   function openRefundModal(tx, maxRefundable) {
     document.getElementById('txModal').classList.remove('open');
-    var max = Math.round((maxRefundable||0)*100)/100;
+    var maxEur = Math.round((Number(maxRefundable)||0)) / 100; // céntimos → euros
     document.getElementById('refundPaymentId').textContent = tx.paymentId;
-    document.getElementById('refundMax').textContent = fmt(max);
-    document.getElementById('refundAmount').value = max;
-    document.getElementById('refundAmount').max = max;
+    document.getElementById('refundMax').textContent = fmt(maxRefundable); // fmt espera céntimos
+    document.getElementById('refundAmount').value = maxEur;
+    document.getElementById('refundAmount').max = maxEur;
+    document.getElementById('refundAmount').step = '0.01';
     document.getElementById('refundReason').value = '';
     document.getElementById('refundErr').textContent = '';
     document.getElementById('refundBtn').disabled = false;
     document.getElementById('refundBtn').textContent = 'Confirmar reembolso';
     document.getElementById('refundModal').classList.add('open');
-    // Actualizar preview al cambiar importe
+    // Actualizar preview al cambiar importe (input en euros → fmt espera céntimos)
     document.getElementById('refundAmount').oninput = function(){
-      var v=parseFloat(this.value)||0;
-      document.getElementById('refundPreview').textContent = fmt(v);
-      var pctV = max>0?Math.round(v/max*1000)/10:0;
+      var vEur=parseFloat(this.value)||0;
+      document.getElementById('refundPreview').textContent = fmt(vEur*100);
+      var pctV = maxEur>0?Math.round(vEur/maxEur*1000)/10:0;
       document.getElementById('refundPct').textContent = pctV+'%';
     };
-    document.getElementById('refundPreview').textContent = fmt(max);
+    document.getElementById('refundPreview').textContent = fmt(maxRefundable);
     document.getElementById('refundPct').textContent = '100%';
   }
 
   function doRefund() {
     var paymentId = document.getElementById('refundPaymentId').textContent;
-    var amount = parseFloat(document.getElementById('refundAmount').value);
+    var amountEur = parseFloat(document.getElementById('refundAmount').value); // euros
     var reason = document.getElementById('refundReason').value.trim() || 'backoffice_refund';
-    var max = parseFloat(document.getElementById('refundAmount').max);
+    var maxEur = parseFloat(document.getElementById('refundAmount').max);       // euros
     var errEl = document.getElementById('refundErr');
     var btn = document.getElementById('refundBtn');
 
     errEl.textContent = '';
-    if(isNaN(amount)||amount<=0){errEl.textContent='Importe inválido';return;}
-    if(amount>max){errEl.textContent='Supera el importe reembolsable ('+fmt(max)+')';return;}
-    if(!confirm('¿Confirmar reembolso de '+fmt(amount)+'?')) return;
+    if(isNaN(amountEur)||amountEur<=0){errEl.textContent='Importe inválido';return;}
+    if(amountEur>maxEur){errEl.textContent='Supera el importe reembolsable ('+fmt(maxEur*100)+')';return;}
+    if(!confirm('¿Confirmar reembolso de '+fmt(amountEur*100)+'?')) return;
 
+    var amountCents = Math.round(amountEur*100); // euros → céntimos para el servidor
     btn.disabled=true; btn.textContent='Procesando…';
     api('/backoffice/transactions/'+paymentId+'/refund',{
-      method:'POST', body:JSON.stringify({amount:amount,reason:reason})
+      method:'POST', body:JSON.stringify({amount:amountCents,reason:reason})
     }).then(function(r){
       document.getElementById('refundModal').classList.remove('open');
       alert('✅ Reembolso procesado: '+fmt(r.refundAmount)+'\nNuevo estado: '+r.newStatus);
