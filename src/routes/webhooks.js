@@ -96,8 +96,8 @@ router.post('/paynopain', async (req, res) => {
   //   order_uuid    — UUID de la orden (es nuestro processorReference)
   //   status        — estado del pago en Paylands (TBD, ver mapa abajo)
   //   extra_data    — objeto con datos extra que nosotros enviamos al crear la orden
-  const orderUuid  = body.order_uuid  || body.orderUuid  || null;
-  const paylStatus = body.status      || body.order_status || null;
+  const orderUuid  = body.order?.uuid || body.order_uuid || body.orderUuid || null;
+  const paylStatus = body.order?.status || body.status || body.order_status || null;
 
   logger.info('WEBHOOK_PAYNOPAIN_RECEIVED', {
     component: 'webhooks',
@@ -112,12 +112,18 @@ router.post('/paynopain', async (req, res) => {
   // ── 3. Mapear status Paylands → status Monetiser ────────────────────────────
   // Paylands usa: TBD (confirmar con docs), por ahora mapeamos los conocidos
   const STATUS_MAP = {
-    'paid':      'authorized',
-    'confirmed': 'authorized',
-    'error':     'declined',
-    'expired':   'declined',
-    'pending':   'pending',
-    'refunded':  'refunded',
+    'success':        'authorized',
+    'paid':           'authorized',
+    'confirmed':      'authorized',
+    'refused':        'declined',
+    'error':          'declined',
+    'expired':        'declined',
+    'fraud':          'declined',
+    'blacklisted':    'declined',
+    'cancelled':      'cancelled',
+    'user_cancelled': 'cancelled',
+    'pending':        'pending',
+    'refunded':       'refunded',
   };
   const monetiserStatus = STATUS_MAP[String(paylStatus).toLowerCase()] || 'pending';
 
