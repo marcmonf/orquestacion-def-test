@@ -29,7 +29,7 @@ const router     = express.Router({ mergeParams: true });
 const rateLimiter = require('../middleware/rateLimiterPayments');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
-const { createOrder3DS } = require('../connectors/paynopain/payNoPainConnector');
+const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
 const logger      = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['initialized', 'hosted_pending'];
@@ -89,7 +89,7 @@ router.post('/session', rateLimiter, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/charge', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
-  const { paymentId }  = req.body || {};
+  const { paymentId, expiryMonth, expiryYear, cardHolder } = req.body || {};
 
   if (!paymentId) {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
@@ -109,50 +109,61 @@ router.post('/charge', rateLimiter, async (req, res) => {
       });
     }
 
-    // Crear orden en Paylands con 3DS activo
-    const orderResult = await createOrder3DS({
+    // Paso 1: Obtener el token PCI generado por ProxyFields tras el submit del browser
+    const tokenResult = await pciProxy.getTokenizationResults(paymentId);
+
+    if (!tokenResult || !tokenResult.token) {
+      logger.error('PROXY_PCI_CHARGE_NO_TOKEN', {
+        component: 'proxyPciRoutes',
+        data: { paymentId, merchantId },
+      });
+      return res.status(422).json({
+        success: false,
+        message: 'No se encontró token PCI para esta transacción. El usuario no ha completado el formulario.',
+      });
+    }
+
+    logger.info('PROXY_PCI_TOKEN_RETRIEVED', {
+      component: 'proxyPciRoutes',
+      data: { paymentId, merchantId, pan: tokenResult.pan },
+    });
+
+    // Paso 2: Cobrar directamente en Paylands con el token PCI
+    const chargeResult = await chargeWithToken({
       paymentId:   tx.paymentId,
       merchantId:  tx.merchantId,
       amount:      tx.amount,
       currency:    tx.currency,
-      callbackUrl: tx.callbackUrl,
+      cardToken:   tokenResult.token,
+      expiryMonth: expiryMonth || tokenResult.expiryMonth,
+      expiryYear:  expiryYear  || tokenResult.expiryYear,
+      cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
 
-    if (!orderResult.success) {
-      logger.error('PROXY_PCI_CHARGE_ORDER_ERROR', {
-        component: 'proxyPciRoutes',
-        data: { paymentId, merchantId, error: orderResult.error },
-      });
-      return res.status(502).json({
-        success: false,
-        message: orderResult.error || 'Error al crear orden en Paylands',
-      });
-    }
-
-    // Marcar la transacción como pending_3ds mientras el usuario completa 3DS
-    tx.status             = 'hosted_pending';
-    tx.processorReference = orderResult.orderToken;
+    // Paso 3: Actualizar la transacción en MongoDB
+    tx.status             = chargeResult.success ? 'approved' : 'declined';
+    tx.processorReference = chargeResult.processorReference || null;
     tx.processor          = 'payNoPain';
     tx.updatedAt          = new Date();
     await tx.save();
 
-    logger.info('PROXY_PCI_CHARGE_3DS_INITIATED', {
+    logger.info('PROXY_PCI_CHARGE_RESULT', {
       component: 'proxyPciRoutes',
-      data: {
-        paymentId,
-        merchantId,
-        orderToken:  orderResult.orderToken,
-        checkoutUrl: orderResult.checkoutUrl,
-      },
+      data: { paymentId, merchantId, success: chargeResult.success, status: tx.status },
     });
 
-    // Devolver la URL del checkout de Paylands al browser.
-    // El browser la cargará en un iFrame para que el usuario complete el pago.
+    if (!chargeResult.success) {
+      return res.status(200).json({
+        success: false,
+        message: chargeResult.error || 'Pago rechazado por el banco.',
+        paymentId,
+      });
+    }
+
     return res.status(200).json({
-      success:     true,
-      checkoutUrl: orderResult.checkoutUrl,
-      paymentId:   tx.paymentId,
-      orderToken:  orderResult.orderToken,
+      success:   true,
+      paymentId: tx.paymentId,
+      status:    'approved',
     });
 
   } catch (err) {
