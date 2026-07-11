@@ -49,7 +49,7 @@ const CSP_HEADER =
   "script-src 'self' 'unsafe-inline' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://*.gstatic.com; " +
   "connect-src 'self' https://pci-proxy-api.paynopain.com https://pay.google.com https://*.google.com https://google.com; " +
   "frame-src 'self' https://pci-proxy-api.paynopain.com https://pci-proxy-sandbox.paynopain.com https://api.paylands.com https://pay.google.com https://*.google.com; " +
-  "frame-ancestors 'none';";
+  "frame-ancestors *;";
 
 function safeCompare(a, b) {
   try {
@@ -153,6 +153,7 @@ function brandedError(res, code) {
 // GET /iframe  (y /:merchantId/iframe)
 router.get('/', async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP_HEADER);
+  res.removeHeader('X-Frame-Options');
   const { paymentId, signature, exp, nonce } = req.query || {};
   const merchantIdFromUrl = req.params.merchantId || null;
 
@@ -276,6 +277,7 @@ router.get('/', async (req, res) => {
 // POST /iframe-process — conectado con el rule engine real
 router.post('/', async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP_HEADER);
+  res.removeHeader('X-Frame-Options');
 
   try {
     const {
