@@ -312,9 +312,11 @@ async function chargeWithToken(paymentData) {
     logger.info('PAYNOPAIN_CHARGE_RESULT', {
       component: 'payNoPainConnector',
       data: {
-        status:    chargeRes.status,
+        status:      chargeRes.status,
         orderStatus: chargeRes.body?.order?.status,
-        paid:      chargeRes.body?.order?.paid,
+        paid:        chargeRes.body?.order?.paid,
+        bodyKeys:    Object.keys(chargeRes.body || {}),
+        fullBody:    JSON.stringify(chargeRes.body).slice(0, 500),
       },
     });
 
