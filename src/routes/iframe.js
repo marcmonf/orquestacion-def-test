@@ -332,7 +332,13 @@ router.post('/', async (req, res) => {
     const finalStatus = result.status === 'approved' ? 'authorized' : 'declined';
     tx.status    = finalStatus;
     tx.processor = result.connectorUsed || null;
-    tx.authCode  = result.processorReference || null;
+    // El orderUuid de Paylands viaja como result.processorReference. DEBE guardarse
+    // en tx.processorReference: es el campo por el que el webhook entrante busca la
+    // transacción (findOneAndUpdate por processorReference). Antes se guardaba por
+    // error en tx.authCode, por lo que el webhook nunca encontraba la tx y el pago
+    // se quedaba colgado (invisible en el dashboard).
+    tx.processorReference = result.processorReference || tx.processorReference || null;
+    if (result.authCode) tx.authCode = result.authCode;
     tx.updatedAt = new Date();
     await tx.save();
 

@@ -161,6 +161,9 @@ app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'
 // IMPORTANTE: debe montarse ANTES del bloque comodín '/:merchantId/...'
 app.use('/merchants', ensureRouter(require('./src/routes/merchantRoutes'), 'merchantRoutes'));
 
+// Diagnóstico solo-lectura (admin) — inspección de transacciones sin entrar a Atlas
+app.use('/diag', ensureRouter(require('./src/routes/diagRoutes'), 'diagRoutes'));
+
 // 📌 Endpoints con merchantId como segmento de URL
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
