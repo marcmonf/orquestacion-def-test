@@ -361,10 +361,87 @@ async function chargeWithToken(paymentData) {
   }
 }
 
+/**
+ * Reembolsa (total o parcial) una orden ya pagada en Paylands.
+ *
+ * Doc oficial: POST /payment/refund
+ *   body: { signature, order_uuid, amount? }
+ *   - order_uuid: UUID de la orden en Paylands (nuestro processorReference)
+ *   - amount: en céntimos (100 = 1,00 €). Si se omite → refund TOTAL.
+ *   Respuesta 200 → order.status = "REFUNDED", con una transacción operative:"REFUND".
+ *   Respuesta 429 → too many requests (Paylands limita reintentos de refund).
+ *
+ * @param {object} data
+ * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
+ * @param {number} [data.amount]            importe a reembolsar en céntimos (opcional)
+ * @returns {Promise<{success:boolean, ...}>}
+ */
+async function refund(data) {
+  const apiKey    = API_KEY;
+  const signature = SIGNATURE;
+
+  if (!apiKey || !signature) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
+  }
+
+  const orderUuid = data.processorReference || data.orderUuid || data.order_uuid || null;
+  if (!orderUuid) {
+    return { success: false, error: 'missing_order_uuid' };
+  }
+
+  // body base; amount solo si viene informado (si no → refund total en Paylands)
+  const body = {
+    signature,
+    order_uuid: orderUuid,
+  };
+  if (data.amount !== undefined && data.amount !== null) {
+    body.amount = Number(data.amount);   // en céntimos, igual que en /payment
+  }
+
+  try {
+    const res = await postJson('/payment/refund', body, apiKey);
+
+    const order = res.body?.order || null;
+    const okStatus = order && String(order.status).toUpperCase() === 'REFUNDED';
+
+    if (res.status !== 200 || !okStatus) {
+      logger.error('PAYNOPAIN_REFUND_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: res.status, orderUuid, body: res.body },
+      });
+      return {
+        success: false,
+        error: res.body?.message || `refund_failed_status_${res.status}`,
+        raw: res.body,
+      };
+    }
+
+    logger.info('PAYNOPAIN_REFUND_OK', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, refunded: order.refunded, status: order.status },
+    });
+
+    return {
+      success: true,
+      orderUuid,
+      status: order.status,           // "REFUNDED"
+      refundedTotal: order.refunded,  // total reembolsado según Paylands (céntimos)
+      raw: order,
+    };
+  } catch (err) {
+    logger.error('PAYNOPAIN_REFUND_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, error: err.message },
+    });
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   createOrder,
   createOrder3DS,
   chargeWithToken,
   validateNotificationHash,
+  refund,
   SIGNATURE,
 };
