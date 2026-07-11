@@ -287,74 +287,69 @@ async function chargeWithToken(paymentData) {
     return { success: false, error: 'cardToken es obligatorio para chargeWithToken' };
   }
 
-  // Usar POST /charge — "Pago en un solo paso" para clientes PCI.
-  // Acepta source_uuid con el token del Proxy PCI directamente.
-  // Con secure:true devuelve 303 + URL de 3DS tokenizado si el banco lo requiere.
-  const chargeBody = {
-    signature:        signature,
-    amount:           paymentData.amount,
-    operative:        'AUTHORIZATION',
-    secure:           true,
-    customer_ext_id:  paymentData.paymentId,
-    service:          serviceUuid,
-    description:      `Pago ${paymentData.merchantId}`,
-    additional:       paymentData.paymentId,
-    url_post:         `${SERVER_URL}/webhooks/paynopain`,
-    source_uuid:      paymentData.cardToken,
-    card_holder:      paymentData.cardHolder || 'Cardholder',
-    card_expiry_month: String(paymentData.expiryMonth || '').padStart(2, '0'),
-    card_expiry_year:  String(paymentData.expiryYear || ''),
+  // Flujo ProxyFields estándar (sin perfil PCI especial):
+  // 1. POST /payment con source_uuid = card UUID del Proxy PCI
+  // 2. Respuesta incluye order.token y urls.3ds_tokenized
+  // 3. El frontend carga esa URL en el mismo iframe para el challenge 3DS del banco
+  const orderBody = {
+    operative:       'AUTHORIZATION',
+    service:         serviceUuid,
+    order_id:        paymentData.paymentId,
+    amount:          paymentData.amount,
+    description:     `Pago ${paymentData.merchantId}`,
+    signature:       signature,
+    secure:          true,
+    source_uuid:     paymentData.cardToken,
+    customer_ext_id: paymentData.paymentId,
+    url_post:        `${SERVER_URL}/webhooks/paynopain`,
+    additional:      paymentData.paymentId,
+    save_card:       false,
   };
 
   try {
-    const chargeRes = await postJson('/charge', chargeBody, apiKey);
+    const orderRes = await postJson('/payment', orderBody, apiKey);
 
-    logger.info('PAYNOPAIN_CHARGE_RESULT', {
+    logger.info('PAYNOPAIN_CHARGE_TOKEN_ORDER_RESULT', {
       component: 'payNoPainConnector',
       data: {
-        status:      chargeRes.status,
-        orderStatus: chargeRes.body?.order?.status,
-        paid:        chargeRes.body?.order?.paid,
-        bodyKeys:    Object.keys(chargeRes.body || {}),
-        fullBody:    JSON.stringify(chargeRes.body).slice(0, 500),
+        status:      orderRes.status,
+        orderStatus: orderRes.body?.order?.status,
+        urls:        orderRes.body?.order?.urls,
       },
     });
 
-    // 200 = cobro completado directamente
-    if (chargeRes.status === 200) {
-      const order   = chargeRes.body?.order;
-      const paid    = order?.paid === true || order?.status === 'SUCCESS';
-      const orderUuid = order?.uuid || order?.token;
+    if (orderRes.status !== 200 || !orderRes.body?.order?.token) {
+      logger.error('PAYNOPAIN_CHARGE_TOKEN_ORDER_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: orderRes.status, body: orderRes.body },
+      });
       return {
-        success:            paid,
-        orderUuid,
-        processorReference: orderUuid,
-        error: paid ? null : (order?.status || 'Declined'),
+        success: false,
+        error: orderRes.body?.message || `Error creando orden (status ${orderRes.status})`,
       };
     }
 
-    // 303 = banco requiere 3DS — devolver URL para que el frontend la cargue
-    if (chargeRes.status === 303) {
-      const threeDsUrl = chargeRes.body?.redirect_url || chargeRes.body?.url;
-      const orderUuid  = chargeRes.body?.order?.uuid || chargeRes.body?.order?.token;
-      return {
-        success:            false,
-        requires3DS:        true,
-        threeDsUrl,
-        orderUuid,
-        processorReference: orderUuid,
-        error: null,
-      };
-    }
+    const order      = orderRes.body.order;
+    const orderToken = order.token;
+    const orderUuid  = order.uuid;
 
-    // Cualquier otro código = error
-    logger.error('PAYNOPAIN_CHARGE_TOKEN_ERROR', {
+    // URL de 3DS tokenizado — el banco autentica directamente sin formulario de tarjeta
+    const threeDsUrl = order.urls?.['3ds_tokenized']
+      || `${BASE_URL}/payment/tokenized/${orderToken}`;
+
+    logger.info('PAYNOPAIN_CHARGE_TOKEN_3DS_URL', {
       component: 'payNoPainConnector',
-      data: { status: chargeRes.status, body: chargeRes.body },
+      data: { paymentId: paymentData.paymentId, orderUuid, threeDsUrl },
     });
+
     return {
-      success: false,
-      error: chargeRes.body?.message || `Error en cobro (status ${chargeRes.status})`,
+      success:            false,
+      requires3DS:        true,
+      threeDsUrl,
+      orderUuid,
+      orderToken,
+      processorReference: orderUuid,
+      error:              null,
     };
 
   } catch (err) {
