@@ -177,3 +177,59 @@ IMPORTANTE: NO incluir extra_data en el JSON si no esta presente en el body.
 
 128 tests — todos pasando. Verificar con: npx jest 2>&1 | tail -6
 Cubre: unit (Rule Engine, cryptoUtils, hmacAuth), integracion (S2S, Hosted Checkout, webhooks, API keys), seguridad (timing-safe, anti-replay, PAN masking)
+
+---
+
+## Flujos de pago que Monetiser debe soportar (batería de pruebas obligatoria)
+
+Estos son los flujos minimos que hay que implementar, probar y verificar end-to-end:
+
+### 1. Autorizacion (AUTHORIZATION)
+- El banco reserva el importe pero NO cobra todavia
+- Estado final en MongoDB: authorized
+- Ya funciona en el flujo actual con PayNoPain (operative: AUTHORIZATION)
+
+### 2. Captura (CAPTURE)
+- Despues de una autorizacion, confirmar el cobro efectivo
+- Estado final: captured
+- Endpoint a implementar: POST /:merchantId/payments/:paymentId/capture
+- En Paylands: POST /payment/{orderUuid}/capture
+
+### 3. Cancelacion (VOID / CANCEL)
+- Cancelar una autorizacion antes de capturarla
+- Estado final: cancelled
+- Endpoint a implementar: POST /:merchantId/payments/:paymentId/cancel
+- En Paylands: POST /payment/{orderUuid}/void
+
+### 4. Devolucion total (REFUND)
+- Devolver el importe completo de un pago ya capturado
+- Estado final: refunded
+- Endpoint a implementar: POST /:merchantId/payments/:paymentId/refund
+- En Paylands: POST /payment/{orderUuid}/refund
+
+### 5. Devolucion parcial (PARTIAL REFUND)
+- Devolver una parte del importe
+- Estado final: partially_refunded
+- Mismo endpoint que refund pero con campo amount en el body
+- En Paylands: POST /payment/{orderUuid}/refund con amount
+
+### Estados del ciclo de vida de una transaccion
+
+```
+pending
+  └─ pending_3ds
+       └─ authorized
+            ├─ captured
+            ├─ cancelled (void)
+            └─ refunded / partially_refunded
+  └─ declined
+  └─ error
+```
+
+### Lo que hay que hacer (en M2 o M3)
+
+1. Añadir endpoints de capture, cancel, refund en el conector PayNoPain
+2. Añadir rutas en Express para exponer estas operaciones al merchant
+3. Actualizar el modelo Transaction con los nuevos estados
+4. Añadir tests de integracion para cada flujo
+5. Verificar end-to-end en sandbox de Paylands con las tarjetas de test

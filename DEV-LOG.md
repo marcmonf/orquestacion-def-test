@@ -428,3 +428,43 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ---
 
 *Última revisión: julio 2026 — M1 completado y verificado end-to-end.*
+
+---
+
+## 11. Flujos de pago obligatorios — pendientes de implementar
+
+Monetiser debe soportar el ciclo de vida completo de un pago. Estos son los flujos minimos:
+
+### Ciclo de vida de una transaccion
+
+```
+pending
+  └─ pending_3ds
+       └─ authorized       ← ya funciona
+            ├─ captured         ← pendiente
+            ├─ cancelled        ← pendiente (void pre-captura)
+            └─ refunded         ← pendiente
+                 └─ partially_refunded  ← pendiente
+  └─ declined
+  └─ error
+```
+
+### Flujos a implementar
+
+| Flujo | Endpoint Monetiser | Endpoint Paylands | Estado en Transaction |
+|---|---|---|---|
+| Autorizacion | POST /payments/hosted (ya existe) | POST /payment (operative: AUTHORIZATION) | authorized |
+| Captura | POST /:merchantId/payments/:paymentId/capture | POST /payment/{orderUuid}/capture | captured |
+| Cancelacion (void) | POST /:merchantId/payments/:paymentId/cancel | POST /payment/{orderUuid}/void | cancelled |
+| Devolucion total | POST /:merchantId/payments/:paymentId/refund | POST /payment/{orderUuid}/refund | refunded |
+| Devolucion parcial | POST /:merchantId/payments/:paymentId/refund (con amount) | POST /payment/{orderUuid}/refund | partially_refunded |
+
+### Bateria de pruebas end-to-end requerida
+
+Para cada flujo:
+1. Verificar que el endpoint de Monetiser acepta la peticion del merchant
+2. Verificar que Monetiser llama al endpoint correcto de Paylands
+3. Verificar que el webhook de Paylands actualiza correctamente el estado en MongoDB
+4. Verificar que el webhook saliente notifica al merchant con el estado correcto
+
+Esto debe implementarse como parte de M2/M3 y verificarse en sandbox antes de produccion.
