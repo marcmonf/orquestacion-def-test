@@ -125,7 +125,14 @@ router.post('/charge', rateLimiter, async (req, res) => {
 
     logger.info('PROXY_PCI_TOKEN_RETRIEVED', {
       component: 'proxyPciRoutes',
-      data: { paymentId, merchantId, pan: tokenResult.pan },
+      data: {
+        paymentId,
+        merchantId,
+        pan:         tokenResult.pan,
+        tokenKeys:   Object.keys(tokenResult),
+        tokenValue:  (tokenResult.token || '').slice(0, 30) + '...',
+        cardUuid:    tokenResult.card_uuid || tokenResult.uuid || tokenResult.source_uuid || 'N/A',
+      },
     });
 
     // Paso 2: Cobrar directamente en Paylands con el token PCI
