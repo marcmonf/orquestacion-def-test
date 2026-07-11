@@ -147,7 +147,29 @@ router.post('/charge', rateLimiter, async (req, res) => {
       cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
 
-    // Paso 3: Actualizar la transacción en MongoDB
+    // Paso 3: Determinar status correcto y guardar UNA sola vez
+    // Primero verificamos si hay 3DS pendiente para no guardar 'declined' prematuramente
+    if (chargeResult.requires3DS && chargeResult.threeDsUrl) {
+      tx.status             = 'pending_3ds';
+      tx.processorReference = chargeResult.processorReference || null;
+      tx.processor          = 'payNoPain';
+      tx.updatedAt          = new Date();
+      await tx.save();
+
+      logger.info('PROXY_PCI_CHARGE_RESULT', {
+        component: 'proxyPciRoutes',
+        data: { paymentId, merchantId, success: true, status: 'pending_3ds' },
+      });
+
+      return res.status(200).json({
+        success:     true,
+        requires3DS: true,
+        threeDsUrl:  chargeResult.threeDsUrl,
+        paymentId,
+      });
+    }
+
+    // Sin 3DS: pago aprobado o rechazado directamente
     tx.status             = chargeResult.success ? 'approved' : 'declined';
     tx.processorReference = chargeResult.processorReference || null;
     tx.processor          = 'payNoPain';
@@ -158,22 +180,6 @@ router.post('/charge', rateLimiter, async (req, res) => {
       component: 'proxyPciRoutes',
       data: { paymentId, merchantId, success: chargeResult.success, status: tx.status },
     });
-
-    // 3DS requerido por el banco — devolver URL al frontend
-    if (chargeResult.requires3DS && chargeResult.threeDsUrl) {
-      tx.status             = 'pending_3ds';
-      tx.processorReference = chargeResult.processorReference || null;
-      tx.processor          = 'payNoPain';
-      tx.updatedAt          = new Date();
-      await tx.save();
-
-      return res.status(200).json({
-        success:     true,
-        requires3DS: true,
-        threeDsUrl:  chargeResult.threeDsUrl,
-        paymentId,
-      });
-    }
 
     if (!chargeResult.success) {
       return res.status(200).json({

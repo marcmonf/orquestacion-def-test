@@ -43,24 +43,33 @@ router.post('/paynopain', async (req, res) => {
   const body = req.body || {};
 
   // ── 1. Verificar firma ──────────────────────────────────────────────────────
-  // Paylands envía el campo "signature" con el valor literal de PAYNOPAIN_SIGNATURE
-  const expectedSig = process.env.PAYNOPAIN_SIGNATURE || '';
-  const receivedSig = String(body.signature || '');
+  // Paylands valida el webhook con un campo "validation_hash" calculado así:
+  //   SHA-256( JSON.stringify({ order, client, extra_data }) + PAYNOPAIN_SIGNATURE )
+  const signatureKey = process.env.PAYNOPAIN_SIGNATURE || '';
 
-  if (!expectedSig) {
+  if (!signatureKey) {
     logger.error('WEBHOOK_PAYNOPAIN_NO_SECRET', {
       component: 'webhooks',
       event: 'PAYNOPAIN_SIGNATURE env var no configurada'
     });
-    // Respondemos 200 igualmente para no causar reintentos infinitos de Paylands
     return res.status(200).json({ received: true });
   }
 
-  // Comparación timing-safe (evita ataques por tiempo de respuesta)
   let sigValid = false;
   try {
-    const a = Buffer.from(expectedSig, 'utf8');
-    const b = Buffer.from(receivedSig, 'utf8');
+    const receivedHash = String(body.validation_hash || '');
+    const payload = JSON.stringify({
+      order:      body.order      || null,
+      client:     body.client     || null,
+      extra_data: body.extra_data || null,
+    });
+    const expectedHash = crypto
+      .createHash('sha256')
+      .update(payload + signatureKey)
+      .digest('hex');
+
+    const a = Buffer.from(expectedHash, 'utf8');
+    const b = Buffer.from(receivedHash, 'utf8');
     sigValid = a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch (_) {
     sigValid = false;
@@ -69,7 +78,7 @@ router.post('/paynopain', async (req, res) => {
   if (!sigValid) {
     logger.warn('WEBHOOK_PAYNOPAIN_INVALID_SIGNATURE', {
       component: 'webhooks',
-      data: { received: receivedSig.slice(0, 8) + '…' }
+      data: { received: String(body.validation_hash || '').slice(0, 8) + '…' }
     });
     // 200 para que Paylands no reintente; el evento se ignora silenciosamente
     return res.status(200).json({ received: true, ignored: true });
