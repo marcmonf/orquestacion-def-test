@@ -59,35 +59,21 @@ router.post('/paynopain', async (req, res) => {
   try {
     const receivedHash = String(body.validation_hash || '');
 
-    // Log del payload completo para depurar la firma
-    logger.info('WEBHOOK_PAYNOPAIN_DEBUG', {
-      component: 'webhooks',
-      data: {
-        receivedHash,
-        bodyKeys: Object.keys(body),
-        orderKeys: body.order ? Object.keys(body.order) : [],
-        clientKeys: body.client ? Object.keys(body.client) : [],
-      }
-    });
+    // Construir el objeto a hashear solo con los campos presentes en el body
+    // Paylands incluye: order, client, y extra_data solo si existe
+    const hashObj = {
+      order:  body.order  || null,
+      client: body.client || null,
+    };
+    if (body.extra_data !== undefined) {
+      hashObj.extra_data = body.extra_data;
+    }
 
-    const payload = JSON.stringify({
-      order:      body.order      || null,
-      client:     body.client     || null,
-      extra_data: body.extra_data || null,
-    });
+    const payload = JSON.stringify(hashObj);
     const expectedHash = crypto
       .createHash('sha256')
       .update(payload + signatureKey)
       .digest('hex');
-
-    logger.info('WEBHOOK_PAYNOPAIN_HASH_CHECK', {
-      component: 'webhooks',
-      data: {
-        expected: expectedHash,
-        received: receivedHash,
-        match: expectedHash === receivedHash,
-      }
-    });
 
     const a = Buffer.from(expectedHash, 'utf8');
     const b = Buffer.from(receivedHash, 'utf8');
