@@ -211,45 +211,60 @@ Merchant backend
 
 | Gap | Prioridad | Descripción |
 |---|---|---|
-| Modelo Merchant en MongoDB | Alta — M2 | No existe ficha de merchant. Un merchant existe solo si tiene API key |
+| ~~Modelo Merchant en MongoDB~~ | ✅ M2 COMPLETADO | Modelo `Merchant` unificado con campos operativos (plan, status, webhookUrl, signingSecret, serviceUuid, templateUuid, branding). Rutas `/merchants` montadas y protegidas por X-Admin-Token. Dispatcher firma por-merchant. Detalle completo en sección 6 (M2). |
 | Panel de administración `/admin` | Alta — M3 | No hay UI para operar sin Postman ni Atlas |
 | OpenAPI completa | Media — M4 | La spec actual no refleja proxy-pci ni el flujo real de hosted checkout |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | Logs de debug en producción | Baja | Hay varios `logger.info` con `fullBody` y `tokenKeys` que deben eliminarse antes de producción |
-| WEBHOOK_SECRET | Alta | Verificar que está configurado en Render para que el dispatcher firme los webhooks salientes |
+| WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → 119/128 pasan. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. |
 
 ---
 
 ## 6. Hoja de ruta — próximos hitos
 
-### M2 — Modelo Merchant
-**Objetivo:** Crear `src/models/Merchant.js` con los campos necesarios para operar merchants reales.
+### M2 — Modelo Merchant ✅ COMPLETADO (julio 2026)
 
-```javascript
-{
-  merchantId:    String,   // único, ej: "inditex"
-  name:          String,   // nombre comercial, ej: "Inditex S.A."
-  country:       String,   // ISO 3166-1 alpha-2, ej: "ES"
-  plan:          String,   // enum: free | starter | growth | enterprise
-  status:        String,   // enum: active | suspended | pending
-  webhookUrl:    String,   // URL donde Monetiser notifica los pagos
-  signingSecret: String,   // secret para firmar webhooks salientes a este merchant
-  branding: {
-    logoUrl:     String,
-    primaryColor: String,
-    merchantName: String,
-  },
-  createdAt:     Date,
-  updatedAt:     Date,
-}
+**Contexto importante:** al empezar M2 se descubrió que el modelo ya existía a medias.
+Había DOS modelos solapados y un archivo de rutas huérfano (herencia de versiones
+antiguas del proyecto, hechas con GPT-3):
+- `Merchant.js` existía pero con esquema incompleto (branding plano, email/password legacy).
+- `MerchantHierarchy.js` modela la organización corporativa (globalGroup → group → branch
+  → region → tienda) y era el que usaban las rutas — pero esas rutas NO estaban montadas.
+
+**Decisión:** unificar en `Merchant` como modelo operativo y dejar `MerchantHierarchy`
+en STANDBY (funcionalidad legítima a futuro para clientes enterprise). Ver la nota de
+reactivación en la cabecera de `src/models/MerchantHierarchy.js`.
+
+**Lo implementado (por fases, todas verificadas en Render):**
+
+- **Fase A** — `src/models/Merchant.js` unificado. Campos operativos: `name`, `country`,
+  `plan` (free/starter/growth/enterprise), `status` (active/suspended/pending),
+  `webhookUrl`, `signingSecret`, `serviceUuid`, `templateUuid`, `branding` anidado,
+  `updatedAt`. Se conservaron TODOS los campos legacy (branding plano `logoUrl`/`brandColor`,
+  secretos `signingSecret`/`hmacSecret`/`secret` que lee `hpp.js`, email/passwordHash).
+  Puente a jerarquía: campo `hierarchyId` (ObjectId, ref MerchantHierarchy, default null).
+- **Fase B** — `src/routes/merchantRoutes.js` reescrito sobre el modelo `Merchant` y
+  MONTADO en `index.js` como `/merchants` (antes estaba huérfano). Protegido por
+  `adminAuth` (X-Admin-Token). Endpoints: `POST /merchants`, `GET /merchants` (paginado
+  + búsqueda), `GET /merchants/:merchantId`, `PATCH /merchants/:merchantId`. Los secretos
+  nunca se devuelven en las respuestas.
+- **Fase C** — `src/services/webhookDispatcher.js` resuelve el secreto de firma POR
+  MERCHANT: usa `Merchant.signingSecret` (o hmacSecret/secret) y hace fallback a la
+  variable global `WEBHOOK_SECRET`. Si el merchant tiene secreto propio, el webhook se
+  envía aunque no exista el global. Solo marca `no_secret_config` si no hay ninguno.
+
+**Alineación con Paylands:** `serviceUuid` → campo `service` de POST /payment;
+`templateUuid` → `template_uuid` (plantilla de la carta de pago). Ambos opcionales con
+fallback a las variables globales de entorno (hoy `demo-merchant` usa las globales).
+
+**Endpoint de creación (ejemplo verificado):**
 ```
-
-Además:
-- Endpoint `POST /merchants` para crear merchants desde el admin panel
-- Endpoint `GET /merchants` para listar
-- Endpoint `GET /merchants/:merchantId` para detalle
-- Endpoint `PATCH /merchants/:merchantId` para actualizar
-- El webhook dispatcher debe leer `signingSecret` del modelo Merchant en lugar de la variable global
+POST /merchants   (header: X-Admin-Token)
+{ "merchantId": "test-m2", "name": "...", "country": "ES",
+  "plan": "starter", "status": "active", "webhookUrl": "https://..." }
+→ 201, sin signingSecret en la respuesta
+```
 
 ### M3 — Panel de administración
 **Objetivo:** UI en `/admin` para operar sin Postman ni Atlas.
@@ -427,7 +442,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: julio 2026 — M1 completado y verificado end-to-end.*
+*Última revisión: 11 julio 2026 — M2 completado (modelo Merchant unificado, rutas /merchants, dispatcher por-merchant). M1 verificado end-to-end. Próximo: M3 (panel admin) y cierre de la vulnerabilidad uuid.*
 
 ---
 
