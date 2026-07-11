@@ -273,13 +273,50 @@ POST /merchants   (header: X-Admin-Token)
 → 201, sin signingSecret en la respuesta
 ```
 
-### M3 — Panel de administración
+### M3 — Panel de administración (EN PROGRESO — julio 2026)
 **Objetivo:** UI en `/admin` para operar sin Postman ni Atlas.
-- Login con `ADMIN_TOKEN`
-- Listado de merchants y sus transacciones
-- Creación de merchants y API keys
-- Visualización de webhooks entrantes y salientes
-- Gestión de políticas de routing
+
+**Contexto descubierto:** ya existía un panel a medias (herencia de versiones antiguas).
+Conviven DOS paneles en `public/admin/`:
+- `dashboard.html` + `dashboard.js` → el panel BUENO. Login por email+contraseña contra
+  `/backoffice/auth/login` (modelo BackofficeUser, con roles). Tiene analíticas,
+  transacciones con refund/cancel, y gestión de usuarios. ES EL QUE SE USA.
+- `index.html` + `app.js` → editor de reglas de routing antiguo (usa ADMIN_TOKEN).
+  Preservado, accesible en `/admin/index.html`.
+
+**Hecho en esta sesión (Fase A + fixes de datos):**
+- **Fase A** — `/admin` ahora sirve `dashboard.html` como página principal (ruta explícita
+  en index.js antes del estático). El editor viejo sigue en `/admin/index.html`.
+- **Fix importes** — el dashboard mostraba los importes ×100 (interpretaba céntimos como
+  euros). Corregido: `fmt()` en dashboard.js divide /100 al mostrar; el modal de refund
+  trabaja en euros de cara al usuario y convierte a céntimos al enviar. IMPORTANTE: los
+  importes se almacenan SIEMPRE en céntimos (Paylands-style, amount:100 = 1,00 €).
+- **Fix processorReference** — `iframe.js` guardaba el orderUuid de Paylands en `authCode`
+  en vez de en `processorReference` (el campo por el que el webhook busca la tx). Corregido.
+- **Refund PayNoPain** — implementado `refund()` en el conector (POST /payment/refund de
+  Paylands). Antes daba 502 porque no existía la función. VERIFICADO funcionando end-to-end.
+- **Endpoint /diag** — herramienta de diagnóstico solo-lectura (protegida por X-Admin-Token)
+  en `src/routes/diagRoutes.js`: `GET /diag/transactions` muestra estado real de las tx en
+  Mongo sin entrar a Atlas. Útil para depurar. Considerar quitarlo o dejarlo como interno.
+
+**Pendiente de M3:**
+- Pestaña de gestión de MERCHANTS en el dashboard (crear/listar/editar) — conecta con las
+  rutas /merchants de M2. Decisión tomada: exponer merchants bajo /backoffice (mismo login
+  del dashboard) reutilizando el modelo Merchant; mantener /merchants con X-Admin-Token (M2)
+  intacto. NO empezado.
+- Pestaña de API keys (crear/revocar).
+- Absorber el editor de reglas viejo como pestaña.
+
+**Aprendizaje clave de esta sesión — TARJETAS DE TEST:**
+Las tarjetas de test REALES de Paylands sandbox son las `4018810000100036` / `4018810001010010`
+/ `4018810000150015` / `4018810000190011` (exp 12/34, CVV 123). La tarjeta `4507670001000009`
+es INVENTADA y NO funciona (en 3DS deja la tx colgada en pending_3ds porque el challenge nunca
+se resuelve → Paylands nunca manda webhook). NO usarla nunca.
+
+**Nota sobre pagos colgados en pending_3ds:** las tx que quedan en pending_3ds con
+webhookReceived:false son pruebas con tarjeta mala cuyo 3DS no se completó. El webhook de
+cierre (webhooks.js) está bien montado y verificado; solo cierra tx cuando Paylands notifica
+un pago realmente completado. Sin challenge 3DS, el cierre es síncrono (iframe.js).
 
 ### M4 — OpenAPI completa
 **Objetivo:** Documentar el contrato real de la API.
@@ -449,7 +486,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 11 julio 2026 — M2 completado end-to-end (Fases A-E: modelo Merchant unificado, rutas /merchants, dispatcher por-merchant, MerchantHierarchy en standby, vulnerabilidad uuid cerrada). M1 verificado. Próximo: M3 (panel de administración en /admin).*
+*Última revisión: 11 julio 2026 (sesión tarde) — M3 en progreso: /admin sirve el dashboard bueno, importes corregidos a euros (almacenados en céntimos), processorReference arreglado en iframe.js, refund de PayNoPain implementado y VERIFICADO, endpoint /diag añadido. Pendiente M3: pestañas de merchants y API keys en el dashboard. M1 y M2 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
