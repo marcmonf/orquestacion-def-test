@@ -38,6 +38,8 @@ const DIAG_PROJECTION = {
   issuerCountry: 1,
   createdAt: 1,
   updatedAt: 1,
+  lastWebhookAt: 1,    // ← si tiene valor, el webhook entrante SÍ llegó
+  lastWebhookRaw: 1,   // ← estado crudo que mandó Paylands (para ver el STATUS_MAP)
 };
 
 // GET /diag/transactions
@@ -65,8 +67,9 @@ router.get('/transactions', async (req, res) => {
       _diag: {
         hasProcessorRef: !!t.processorReference,
         orderUuidLikelyInAuthCode: !t.processorReference && !!t.authCode,
-        stuck: t.status === 'hosted_pending',
+        stuck: t.status === 'hosted_pending' || t.status === 'pending_3ds',
         binPresent: !!t.bin,
+        webhookReceived: !!t.lastWebhookAt,   // ← ¿llegó webhook de cierre?
       }
     }));
 
