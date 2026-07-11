@@ -157,6 +157,10 @@ app.use('/backoffice', ensureRouter(require('./src/routes/backofficeRoutes'), 'b
 // Payment Request
 app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
 
+// Gestión de merchants (admin) — modelo Merchant unificado (M2)
+// IMPORTANTE: debe montarse ANTES del bloque comodín '/:merchantId/...'
+app.use('/merchants', ensureRouter(require('./src/routes/merchantRoutes'), 'merchantRoutes'));
+
 // 📌 Endpoints con merchantId como segmento de URL
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);

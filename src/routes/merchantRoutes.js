@@ -1,127 +1,150 @@
-const express = require('express');
-const router = express.Router();
-const Joi = require('joi');
-const MerchantHierarchy = require('../models/MerchantHierarchy');
-const logger = require('../utils/logger');
+// src/routes/merchantRoutes.js
+//
+// Rutas de gestión de MERCHANTS (modelo operativo Merchant — M2 Fase B).
+// Protegidas por X-Admin-Token (middleware adminAuth).
+//
+// Antes este archivo apuntaba a MerchantHierarchy y NO estaba montado en
+// index.js (estaba huérfano). Ahora usa el modelo Merchant unificado y se monta
+// en '/merchants'. La jerarquía corporativa (MerchantHierarchy) queda en standby;
+// el puente es el campo `hierarchyId` del modelo Merchant.
+//
+'use strict';
 
-// Esquema de validación para creación
-const merchantSchema = Joi.object({
-  globalGroup: Joi.string().required(),
-  country: Joi.string().required(),
-  group: Joi.string().required(),
-  branch: Joi.string().required(),
-  region: Joi.string().required(),
-  merchantId: Joi.string().required(),
-  name: Joi.string().optional(),
-  active: Joi.boolean().optional()
+const express   = require('express');
+const router    = express.Router();
+const Joi        = require('joi');
+const Merchant   = require('../models/Merchant');
+const adminAuth  = require('../middleware/adminAuth');
+const logger     = require('../utils/logger');
+
+// Todas las rutas de gestión de merchants requieren X-Admin-Token
+router.use(adminAuth);
+
+// ── Esquemas de validación ───────────────────────────────────
+const brandingSchema = Joi.object({
+  logoUrl:      Joi.string().allow('', null),
+  primaryColor: Joi.string().allow('', null),
+  accentColor:  Joi.string().allow('', null),
+  merchantName: Joi.string().allow('', null),
 });
 
-// Esquema de validación para actualización
+const createSchema = Joi.object({
+  merchantId:    Joi.string().required(),
+  name:          Joi.string().allow('', null),
+  country:       Joi.string().allow('', null),
+  plan:          Joi.string().valid('free', 'starter', 'growth', 'enterprise'),
+  status:        Joi.string().valid('active', 'suspended', 'pending'),
+  webhookUrl:    Joi.string().uri().allow('', null),
+  serviceUuid:   Joi.string().allow('', null),
+  templateUuid:  Joi.string().allow('', null),
+  signingSecret: Joi.string().allow('', null),
+  branding:      brandingSchema,
+  // branding plano legacy (compatibilidad)
+  logoUrl:       Joi.string().allow('', null),
+  brandColor:    Joi.string().allow('', null),
+  accentColor:   Joi.string().allow('', null),
+  hierarchyId:   Joi.string().allow(null),
+});
+
 const updateSchema = Joi.object({
-  globalGroup: Joi.string(),
-  country: Joi.string(),
-  group: Joi.string(),
-  branch: Joi.string(),
-  region: Joi.string(),
-  merchantId: Joi.string(),
-  name: Joi.string(),
-  active: Joi.boolean()
+  name:          Joi.string().allow('', null),
+  country:       Joi.string().allow('', null),
+  plan:          Joi.string().valid('free', 'starter', 'growth', 'enterprise'),
+  status:        Joi.string().valid('active', 'suspended', 'pending'),
+  webhookUrl:    Joi.string().uri().allow('', null),
+  serviceUuid:   Joi.string().allow('', null),
+  templateUuid:  Joi.string().allow('', null),
+  signingSecret: Joi.string().allow('', null),
+  branding:      brandingSchema,
+  logoUrl:       Joi.string().allow('', null),
+  brandColor:    Joi.string().allow('', null),
+  accentColor:   Joi.string().allow('', null),
+  hierarchyId:   Joi.string().allow(null),
 }).min(1);
 
-// GET /merchants - listar con filtros, búsqueda y paginación
-router.get('/', async (req, res) => {
-  try {
-    const {
-      globalGroup, country, group, region, branch,
-      merchantId, search, active,
-      page = 1, limit = 20
-    } = req.query;
+// signingSecret nunca se devuelve en las respuestas
+const SAFE_PROJECTION = { signingSecret: 0, hmacSecret: 0, secret: 0, passwordHash: 0 };
 
-    const query = {};
-
-    if (globalGroup) query.globalGroup = globalGroup;
-    if (country) query.country = country;
-    if (group) query.group = group;
-    if (region) query.region = region;
-    if (branch) query.branch = branch;
-    if (merchantId) query.merchantId = merchantId;
-    if (active !== undefined) query.active = active === 'true';
-
-    if (search) {
-      const regex = new RegExp(search, 'i');
-      query.$or = [
-        { name: regex },
-        { merchantId: regex },
-        { branch: regex },
-        { group: regex },
-        { region: regex },
-        { country: regex }
-      ];
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const [total, merchants] = await Promise.all([
-      MerchantHierarchy.countDocuments(query),
-      MerchantHierarchy.find(query).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit))
-    ]);
-
-    logger.info(`Consulta de merchants - Página ${page}, Filtros: ${JSON.stringify(query)}`);
-    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, merchants });
-  } catch (err) {
-    logger.error(`Error al obtener merchants: ${err.message}`);
-    res.status(500).json({ error: 'Error al obtener merchants' });
-  }
-});
-
-// POST /merchants - añadir merchant
+// ── POST /merchants — crear merchant ─────────────────────────
 router.post('/', async (req, res) => {
   try {
-    const { error, value } = merchantSchema.validate(req.body);
+    const { error, value } = createSchema.validate(req.body);
     if (error) return res.status(400).json({ error: error.details[0].message });
 
-    const newMerchant = new MerchantHierarchy(value);
-    await newMerchant.save();
+    const exists = await Merchant.findOne({ merchantId: value.merchantId }).lean();
+    if (exists) {
+      return res.status(409).json({ error: `merchant '${value.merchantId}' ya existe` });
+    }
 
-    logger.info(`Merchant creado - ID: ${newMerchant.merchantId}`);
-    res.status(201).json({ message: 'Merchant creado', merchant: newMerchant });
+    const merchant = new Merchant(value);
+    await merchant.save();
+
+    logger.info(`Merchant creado: ${merchant.merchantId}`);
+    const out = merchant.toObject();
+    delete out.signingSecret; delete out.hmacSecret; delete out.secret; delete out.passwordHash;
+    res.status(201).json({ message: 'Merchant creado', merchant: out });
   } catch (err) {
     logger.error(`Error al crear merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al crear merchant' });
   }
 });
 
-// PUT /merchants/:merchantId - actualizar merchant
-router.put('/:merchantId', async (req, res) => {
-  const { error, value } = updateSchema.validate(req.body);
-  if (error) return res.status(400).json({ error: error.details[0].message });
-
+// ── GET /merchants — listar (con paginación y búsqueda) ──────
+router.get('/', async (req, res) => {
   try {
-    const merchant = await MerchantHierarchy.findOneAndUpdate(
+    const { search, status, plan, page = 1, limit = 20 } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (plan)   query.plan   = plan;
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [{ name: regex }, { merchantId: regex }, { country: regex }];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [total, merchants] = await Promise.all([
+      Merchant.countDocuments(query),
+      Merchant.find(query, SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit)).lean(),
+    ]);
+
+    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, merchants });
+  } catch (err) {
+    logger.error(`Error al listar merchants: ${err.message}`);
+    res.status(500).json({ error: 'Error al listar merchants' });
+  }
+});
+
+// ── GET /merchants/:merchantId — detalle ─────────────────────
+router.get('/:merchantId', async (req, res) => {
+  try {
+    const merchant = await Merchant.findOne({ merchantId: req.params.merchantId }, SAFE_PROJECTION).lean();
+    if (!merchant) return res.status(404).json({ error: 'Merchant no encontrado' });
+    res.status(200).json({ merchant });
+  } catch (err) {
+    logger.error(`Error al obtener merchant: ${err.message}`);
+    res.status(500).json({ error: 'Error al obtener merchant' });
+  }
+});
+
+// ── PATCH /merchants/:merchantId — actualizar ────────────────
+router.patch('/:merchantId', async (req, res) => {
+  try {
+    const { error, value } = updateSchema.validate(req.body);
+    if (error) return res.status(400).json({ error: error.details[0].message });
+
+    const merchant = await Merchant.findOneAndUpdate(
       { merchantId: req.params.merchantId },
       { $set: value },
-      { new: true }
-    );
+      { new: true, projection: SAFE_PROJECTION }
+    ).lean();
+
     if (!merchant) return res.status(404).json({ error: 'Merchant no encontrado' });
 
-    logger.info(`Merchant actualizado - ID: ${merchant.merchantId}`);
+    logger.info(`Merchant actualizado: ${req.params.merchantId}`);
     res.status(200).json({ message: 'Merchant actualizado', merchant });
   } catch (err) {
     logger.error(`Error al actualizar merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al actualizar merchant' });
-  }
-});
-
-// DELETE /merchants/:merchantId - eliminar merchant
-router.delete('/:merchantId', async (req, res) => {
-  try {
-    const deleted = await MerchantHierarchy.findOneAndDelete({ merchantId: req.params.merchantId });
-    if (!deleted) return res.status(404).json({ error: 'Merchant no encontrado' });
-
-    logger.info(`Merchant eliminado - ID: ${req.params.merchantId}`);
-    res.status(200).json({ message: 'Merchant eliminado' });
-  } catch (err) {
-    logger.error(`Error al eliminar merchant: ${err.message}`);
-    res.status(500).json({ error: 'Error al eliminar merchant' });
   }
 });
 
