@@ -209,7 +209,8 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 
   <div class="tabs">
     <button class="tab-btn active" id="tabBtnDashboard">Dashboard</button>
-    <button class="tab-btn" id="tabBtnUsers" id="usersTab" style="display:none">Usuarios</button>
+    <button class="tab-btn" id="tabBtnUsers" style="display:none">Usuarios</button>
+    <button class="tab-btn" id="tabBtnMerchants" style="display:none">Merchants</button>
   </div>
 
   <!-- DASHBOARD TAB -->
@@ -244,6 +245,18 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <table class="users-table">
       <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Scope merchants</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody id="usersTableBody"><tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- MERCHANTS TAB -->
+  <div id="tabMerchants" style="display:none;padding:24px;max-width:1200px;margin:0 auto">
+    <div class="users-header">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Gestión de merchants</h2>
+      <button class="btn btn-primary" id="createMerchantBtn">+ Nuevo merchant</button>
+    </div>
+    <table class="users-table">
+      <thead><tr><th>Merchant ID</th><th>Nombre</th><th>País</th><th>Plan</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody id="merchantsTableBody"><tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -345,6 +358,61 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <div class="modal-actions">
       <button class="btn btn-primary" id="saveNewUserBtn">Crear usuario</button>
     </div>
+  </div>
+</div>
+
+<!-- CREATE/EDIT MERCHANT MODAL -->
+<div class="modal-overlay" id="merchantModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="merchantModalClose">×</button>
+    <h3 id="merchantModalTitle">Nuevo merchant</h3>
+    <input type="hidden" id="merchantEditId"/>
+    <div class="form-field"><label>Merchant ID</label><input type="text" id="merchantIdInput" placeholder="ej. inditex-es"/></div>
+    <div class="form-field"><label>Nombre</label><input type="text" id="merchantName" placeholder="ej. Inditex España"/></div>
+    <div class="form-field"><label>País</label><input type="text" id="merchantCountry" placeholder="ES"/></div>
+    <div class="form-field">
+      <label>Plan</label>
+      <select id="merchantPlan">
+        <option value="free">free</option>
+        <option value="starter" selected>starter</option>
+        <option value="growth">growth</option>
+        <option value="enterprise">enterprise</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>Estado</label>
+      <select id="merchantStatus">
+        <option value="active" selected>active</option>
+        <option value="suspended">suspended</option>
+        <option value="pending">pending</option>
+      </select>
+    </div>
+    <div class="form-field"><label>Webhook URL</label><input type="text" id="merchantWebhookUrl" placeholder="https://merchant.com/webhooks/monetiser"/></div>
+    <div class="modal-err" id="merchantErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveMerchantBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- API KEYS MODAL -->
+<div class="modal-overlay" id="apiKeysModal">
+  <div class="modal">
+    <button class="modal-close" id="apiKeysModalClose">×</button>
+    <h3>API Keys · <span id="apiKeysMerchantId" style="font-family:monospace"></span></h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="newKeyLabel" placeholder="Etiqueta (opcional, ej. Postman test)" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none"/>
+      <button class="btn btn-primary" id="createKeyBtn">+ Nueva key</button>
+    </div>
+    <div id="newKeyReveal" style="display:none;background:var(--surface2);border:1px solid var(--purple);border-radius:8px;padding:12px;margin-bottom:12px;font-size:12px">
+      <div style="color:var(--amber);font-weight:500;margin-bottom:8px">⚠ Guarda esto ahora — no se podrá volver a ver</div>
+      <div style="margin-bottom:4px">rawKeyId: <span id="newKeyId" style="font-family:monospace;color:var(--green)"></span></div>
+      <div>rawSecret: <span id="newKeySecret" style="font-family:monospace;color:var(--green)"></span></div>
+    </div>
+    <table class="users-table">
+      <thead><tr><th>Prefix</th><th>Etiqueta</th><th>Estado</th><th>Último uso</th><th>Acciones</th></tr></thead>
+      <tbody id="apiKeysTableBody"><tr><td colspan="5" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
+    </table>
   </div>
 </div>
 

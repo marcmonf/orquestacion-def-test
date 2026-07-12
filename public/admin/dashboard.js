@@ -88,9 +88,11 @@
     var name = u.name || u.email || '–';
     document.getElementById('merchantBadge').textContent = name;
     document.getElementById('dashTitle').textContent = 'Dashboard · ' + name;
-    // Mostrar tab de usuarios solo a superadmin
-    var usersTab = document.getElementById('usersTab');
+    // Mostrar tab de usuarios y merchants solo a superadmin
+    var usersTab = document.getElementById('tabBtnUsers');
     if (usersTab) usersTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
+    var merchantsTab = document.getElementById('tabBtnMerchants');
+    if (merchantsTab) merchantsTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
     renderWidgetPicker();
     renderGrid();
     loadAll();
@@ -516,11 +518,182 @@
       }).catch(function(e){errEl.textContent='Error: '+e.message;});
   }
 
+  /* ── MERCHANTS PANEL ── */
+  var currentApiKeysMerchant = null;
+
+  function loadMerchants() {
+    document.getElementById('merchantsTableBody').innerHTML = '<tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr>';
+    api('/backoffice/merchants').then(function(r){
+      renderMerchantsTable(r.merchants||[]);
+    }).catch(function(e){
+      document.getElementById('merchantsTableBody').innerHTML='<tr><td colspan="6" style="color:var(--red);padding:12px">'+e.message+'</td></tr>';
+    });
+  }
+
+  function renderMerchantsTable(merchants) {
+    var tbody = document.getElementById('merchantsTableBody');
+    if(!merchants.length){tbody.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:12px">No hay merchants</td></tr>';return;}
+    tbody.innerHTML = merchants.map(function(m){
+      var statusKey = m.status==='active' ? 'approved' : (m.status==='suspended' ? 'cancelled' : 'pending');
+      return '<tr>'+
+        '<td style="font-family:monospace">'+m.merchantId+'</td>'+
+        '<td>'+(m.name||'–')+'</td>'+
+        '<td>'+(m.country||'–')+'</td>'+
+        '<td>'+(m.plan||'–')+'</td>'+
+        '<td>'+statusBadge(statusKey)+'</td>'+
+        '<td style="display:flex;gap:6px">'+
+          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="edit">Editar</button>'+
+          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="keys">API Keys</button>'+
+        '</td></tr>';
+    }).join('');
+
+    tbody.querySelectorAll('button[data-action]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = this.dataset.id; var action = this.dataset.action;
+        var m = merchants.filter(function(x){return x.merchantId===id;})[0];
+        if(action==='edit') openEditMerchant(m);
+        if(action==='keys') openApiKeysModal(id);
+      });
+    });
+  }
+
+  function openCreateMerchant() {
+    document.getElementById('merchantModalTitle').textContent = 'Nuevo merchant';
+    document.getElementById('merchantEditId').value = '';
+    document.getElementById('merchantIdInput').value = '';
+    document.getElementById('merchantIdInput').disabled = false;
+    document.getElementById('merchantName').value = '';
+    document.getElementById('merchantCountry').value = '';
+    document.getElementById('merchantPlan').value = 'starter';
+    document.getElementById('merchantStatus').value = 'active';
+    document.getElementById('merchantWebhookUrl').value = '';
+    document.getElementById('merchantErr').textContent = '';
+    document.getElementById('merchantModal').classList.add('open');
+  }
+
+  function openEditMerchant(m) {
+    if(!m) return;
+    document.getElementById('merchantModalTitle').textContent = 'Editar merchant';
+    document.getElementById('merchantEditId').value = m.merchantId;
+    document.getElementById('merchantIdInput').value = m.merchantId;
+    document.getElementById('merchantIdInput').disabled = true;
+    document.getElementById('merchantName').value = m.name||'';
+    document.getElementById('merchantCountry').value = m.country||'';
+    document.getElementById('merchantPlan').value = m.plan||'starter';
+    document.getElementById('merchantStatus').value = m.status||'active';
+    document.getElementById('merchantWebhookUrl').value = m.webhookUrl||'';
+    document.getElementById('merchantErr').textContent = '';
+    document.getElementById('merchantModal').classList.add('open');
+  }
+
+  function saveMerchant() {
+    var editId = document.getElementById('merchantEditId').value;
+    var errEl  = document.getElementById('merchantErr');
+    var btn    = document.getElementById('saveMerchantBtn');
+    var body = {
+      name:       document.getElementById('merchantName').value.trim(),
+      country:    document.getElementById('merchantCountry').value.trim(),
+      plan:       document.getElementById('merchantPlan').value,
+      status:     document.getElementById('merchantStatus').value,
+      webhookUrl: document.getElementById('merchantWebhookUrl').value.trim()
+    };
+    errEl.textContent = '';
+    btn.disabled = true;
+
+    var req;
+    if (editId) {
+      req = api('/backoffice/merchants/'+editId, { method:'PATCH', body: JSON.stringify(body) });
+    } else {
+      var merchantId = document.getElementById('merchantIdInput').value.trim();
+      if (!merchantId) { errEl.textContent = 'Merchant ID requerido'; btn.disabled = false; return; }
+      body.merchantId = merchantId;
+      req = api('/backoffice/merchants', { method:'POST', body: JSON.stringify(body) });
+    }
+
+    req.then(function(){
+      btn.disabled = false;
+      document.getElementById('merchantModal').classList.remove('open');
+      loadMerchants();
+    }).catch(function(e){
+      btn.disabled = false;
+      errEl.textContent = 'Error: '+e.message;
+    });
+  }
+
+  /* ── API KEYS PANEL ── */
+  function openApiKeysModal(merchantId) {
+    currentApiKeysMerchant = merchantId;
+    document.getElementById('apiKeysMerchantId').textContent = merchantId;
+    document.getElementById('newKeyReveal').style.display = 'none';
+    document.getElementById('newKeyLabel').value = '';
+    document.getElementById('apiKeysModal').classList.add('open');
+    loadApiKeys(merchantId);
+  }
+
+  function loadApiKeys(merchantId) {
+    document.getElementById('apiKeysTableBody').innerHTML = '<tr><td colspan="5" style="color:var(--text3);padding:12px">Cargando…</td></tr>';
+    api('/backoffice/merchants/'+merchantId+'/api-keys').then(function(r){
+      renderApiKeysTable(r.keys||[]);
+    }).catch(function(e){
+      document.getElementById('apiKeysTableBody').innerHTML='<tr><td colspan="5" style="color:var(--red);padding:12px">'+e.message+'</td></tr>';
+    });
+  }
+
+  function renderApiKeysTable(keys) {
+    var tbody = document.getElementById('apiKeysTableBody');
+    if(!keys.length){tbody.innerHTML='<tr><td colspan="5" style="color:var(--text3);padding:12px">No hay keys todavía</td></tr>';return;}
+    tbody.innerHTML = keys.map(function(k){
+      var lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString('es-ES') : 'nunca';
+      var revokeBtn = k.active
+        ? '<button class="btn-sm btn-sm-danger" data-id="'+k._id+'" data-action="revoke">Revocar</button>'
+        : '<span style="color:var(--text3);font-size:11px">revocada</span>';
+      return '<tr>'+
+        '<td style="font-family:monospace">'+(k.keyPrefix||'–')+'…</td>'+
+        '<td>'+(k.label||'–')+'</td>'+
+        '<td>'+statusBadge(k.active?'approved':'cancelled')+'</td>'+
+        '<td style="font-size:11px">'+lastUsed+'</td>'+
+        '<td>'+revokeBtn+'</td>'+
+        '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('button[data-action="revoke"]').forEach(function(btn){
+      btn.addEventListener('click', function(){ revokeKey(this.dataset.id); });
+    });
+  }
+
+  function createApiKeyForCurrentMerchant() {
+    if (!currentApiKeysMerchant) return;
+    var label = document.getElementById('newKeyLabel').value.trim();
+    var btn = document.getElementById('createKeyBtn');
+    btn.disabled = true;
+    api('/backoffice/merchants/'+currentApiKeysMerchant+'/api-keys', { method:'POST', body: JSON.stringify({ label: label }) })
+      .then(function(r){
+        btn.disabled = false;
+        document.getElementById('newKeyId').textContent = r.rawKeyId;
+        document.getElementById('newKeySecret').textContent = r.rawSecret;
+        document.getElementById('newKeyReveal').style.display = 'block';
+        document.getElementById('newKeyLabel').value = '';
+        loadApiKeys(currentApiKeysMerchant);
+      }).catch(function(e){
+        btn.disabled = false;
+        alert('Error: '+e.message);
+      });
+  }
+
+  function revokeKey(keyId) {
+    if (!confirm('¿Revocar esta API key? No se podrá deshacer y dejará de funcionar de inmediato.')) return;
+    api('/backoffice/merchants/'+currentApiKeysMerchant+'/api-keys/'+keyId, { method:'DELETE' })
+      .then(function(){ loadApiKeys(currentApiKeysMerchant); })
+      .catch(function(e){ alert('Error: '+e.message); });
+  }
+
   /* ── TABS ── */
   function showTab(tab) {
-    document.getElementById('tabDashboard').style.display = tab==='dashboard'?'block':'none';
-    document.getElementById('tabUsers').style.display     = tab==='users'?'block':'none';
+    document.getElementById('tabDashboard').style.display  = tab==='dashboard'?'block':'none';
+    document.getElementById('tabUsers').style.display      = tab==='users'?'block':'none';
+    document.getElementById('tabMerchants').style.display  = tab==='merchants'?'block':'none';
     if(tab==='users') loadUsers();
+    if(tab==='merchants') loadMerchants();
   }
 
   /* ── SEARCH ── */
@@ -582,10 +755,17 @@
     document.getElementById('createUserModalClose').addEventListener('click',function(){document.getElementById('createUserModal').classList.remove('open');});
     document.getElementById('saveNewUserBtn').addEventListener('click', saveNewUser);
     document.getElementById('createUserBtn').addEventListener('click', openCreateUser);
+    document.getElementById('merchantModalClose').addEventListener('click',function(){document.getElementById('merchantModal').classList.remove('open');});
+    document.getElementById('saveMerchantBtn').addEventListener('click', saveMerchant);
+    document.getElementById('createMerchantBtn').addEventListener('click', openCreateMerchant);
+    document.getElementById('apiKeysModalClose').addEventListener('click',function(){document.getElementById('apiKeysModal').classList.remove('open');});
+    document.getElementById('createKeyBtn').addEventListener('click', createApiKeyForCurrentMerchant);
     var tabDash = document.getElementById('tabBtnDashboard');
     var tabUsr  = document.getElementById('tabBtnUsers');
+    var tabMer  = document.getElementById('tabBtnMerchants');
     if(tabDash) tabDash.addEventListener('click',function(){showTab('dashboard');});
     if(tabUsr)  tabUsr.addEventListener('click',function(){showTab('users');});
+    if(tabMer)  tabMer.addEventListener('click',function(){showTab('merchants');});
     bindPasswordToggle('loginPass','toggleLoginPass');
     bindPasswordToggle('newUserPassword','toggleNewUserPass');
   }

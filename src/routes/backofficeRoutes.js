@@ -6,7 +6,9 @@ const router         = express.Router();
 const Transaction    = require('../models/Transaction');
 const Operation      = require('../models/Operation');
 const BackofficeUser = require('../models/BackofficeUser');
+const Merchant       = require('../models/Merchant');
 const { getConnector } = require('../services/connectorRegistry');
+const { createApiKey, listApiKeys, revokeApiKey } = require('../services/apiKeyService');
 const backofficeAuth = require('../middleware/backofficeAuth');
 const { requireRole, requireMerchantAccess } = backofficeAuth;
 
@@ -492,6 +494,135 @@ router.delete('/users/:userId', requireRole('superadmin'), async (req, res) => {
     await user.save();
     return res.json({ success: true, message: 'user_deactivated', email: user.email });
   } catch (err) {
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GESTIÓN DE MERCHANTS — solo superadmin
+// Reusa el modelo Merchant unificado de M2. Las rutas /merchants (X-Admin-Token)
+// siguen intactas para uso vía Postman/scripts; estas son el equivalente para
+// el dashboard con sesión JWT de backoffice.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MERCHANT_SAFE_PROJECTION = { signingSecret: 0, hmacSecret: 0, secret: 0, passwordHash: 0 };
+
+// GET /backoffice/merchants
+router.get('/merchants', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { search, status, plan, page = 1, limit = 20 } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (plan)   query.plan   = plan;
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [{ name: regex }, { merchantId: regex }, { country: regex }];
+    }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [total, merchants] = await Promise.all([
+      Merchant.countDocuments(query),
+      Merchant.find(query, MERCHANT_SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit)).lean(),
+    ]);
+    return res.json({ success: true, page: parseInt(page), limit: parseInt(limit), total, merchants });
+  } catch (err) {
+    console.error('❌ [backoffice/merchants GET]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/merchants — crear
+router.post('/merchants', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { merchantId, name, country, plan, status, webhookUrl } = req.body || {};
+    if (!merchantId) return res.status(400).json({ success: false, error: 'merchantId_required' });
+
+    const exists = await Merchant.findOne({ merchantId }).lean();
+    if (exists) return res.status(409).json({ success: false, error: 'merchant_already_exists' });
+
+    const merchant = await Merchant.create({
+      merchantId,
+      name:       name || '',
+      country:    country || '',
+      plan:       plan   || 'starter',
+      status:     status || 'active',
+      webhookUrl: webhookUrl || null,
+    });
+
+    const out = merchant.toObject();
+    delete out.signingSecret; delete out.hmacSecret; delete out.secret; delete out.passwordHash;
+    return res.status(201).json({ success: true, merchant: out });
+  } catch (err) {
+    console.error('❌ [backoffice/merchants POST]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// PATCH /backoffice/merchants/:merchantId — actualizar
+router.patch('/merchants/:merchantId', requireRole('superadmin'), async (req, res) => {
+  try {
+    const allowed = ['name', 'country', 'plan', 'status', 'webhookUrl'];
+    const update = {};
+    allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+
+    const merchant = await Merchant.findOneAndUpdate(
+      { merchantId: req.params.merchantId },
+      { $set: { ...update, updatedAt: new Date() } },
+      { new: true, projection: MERCHANT_SAFE_PROJECTION }
+    ).lean();
+
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    return res.json({ success: true, merchant });
+  } catch (err) {
+    console.error('❌ [backoffice/merchants PATCH]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GESTIÓN DE API KEYS (por merchant) — solo superadmin
+// Reusa apiKeyService (mismas funciones que /api-keys con X-Admin-Token).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /backoffice/merchants/:merchantId/api-keys
+router.get('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (req, res) => {
+  try {
+    const keys = await listApiKeys(req.params.merchantId);
+    return res.json({ success: true, merchantId: req.params.merchantId, keys });
+  } catch (err) {
+    console.error('❌ [backoffice/api-keys GET]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/merchants/:merchantId/api-keys — crear (secret visible UNA VEZ)
+router.post('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { label = '' } = req.body || {};
+    const result = await createApiKey(req.params.merchantId, label);
+    return res.status(201).json({
+      success:      true,
+      message:      'API key creada. Guarda rawKeyId y rawSecret — no se podrán recuperar después.',
+      merchantId:   result.merchantId,
+      keyPrefix:    result.keyPrefix,
+      secretPrefix: result.secretPrefix,
+      label:        result.label,
+      rawKeyId:     result.rawKeyId,
+      rawSecret:    result.rawSecret,
+    });
+  } catch (err) {
+    console.error('❌ [backoffice/api-keys POST]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// DELETE /backoffice/merchants/:merchantId/api-keys/:keyId — revocar
+router.delete('/merchants/:merchantId/api-keys/:keyId', requireRole('superadmin'), async (req, res) => {
+  try {
+    const revoked = await revokeApiKey(req.params.keyId);
+    if (!revoked) return res.status(404).json({ success: false, error: 'key_not_found' });
+    return res.json({ success: true, message: 'key_revoked', keyPrefix: revoked.keyPrefix, revokedAt: revoked.revokedAt });
+  } catch (err) {
+    console.error('❌ [backoffice/api-keys DELETE]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
