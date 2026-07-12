@@ -213,6 +213,9 @@ Merchant backend
 |---|---|---|
 | ~~Modelo Merchant en MongoDB~~ | ✅ M2 COMPLETADO | Modelo `Merchant` unificado con campos operativos (plan, status, webhookUrl, signingSecret, serviceUuid, templateUuid, branding). Rutas `/merchants` montadas y protegidas por X-Admin-Token. Dispatcher firma por-merchant. Detalle completo en sección 6 (M2). |
 | ~~Panel de administración `/admin`~~ | ✅ M3 COMPLETADO | Dashboard con analíticas, transacciones (refund/cancel/widgets expandibles), usuarios, merchants, API keys y motor de reglas. Ver sección 6 (M3). |
+| Capture/cancel Paylands sin verificar | Alta | `POST /payment/capture` y `POST /payment/cancel` están conectados en el código (connector + controller) pero son INFERENCIA por analogía con refund — nunca se han probado contra el sandbox real. Solo refund está confirmado (`POST /payment/refund`). Ver sección 11. |
+| Flags FEATURE_RULE_* sin confirmar en Render | Media | `FEATURE_RULE_TRY`, `FEATURE_RULE_AUDIT`, `FEATURE_RULE_EXPORT_UI` gatean los botones Probar/Histórico/Exportar/Importar de la pestaña Reglas. No sabemos si están a `1` en Render — si no lo están, esos botones devuelven "función desactivada" (no rompe nada, pero conviene revisar). Cargar/guardar política NO depende de ningún flag. |
+| Editor de reglas viejo (`/admin/index.html` + `app.js`) | Baja | Redundante desde que existe la pestaña Reglas del dashboard nuevo (mismo backend). Sigue ahí sin usarse ni eliminarse — decisión de Marcos si lo retira. |
 | OpenAPI completa | Media — M4 | La spec actual no refleja proxy-pci ni el flujo real de hosted checkout |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | Logs de debug en producción | Baja | Hay varios `logger.info` con `fullBody` y `tokenKeys` que deben eliminarse antes de producción |
