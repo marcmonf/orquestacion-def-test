@@ -93,6 +93,8 @@
     if (usersTab) usersTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
     var merchantsTab = document.getElementById('tabBtnMerchants');
     if (merchantsTab) merchantsTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
+    var rulesTab = document.getElementById('tabBtnRules');
+    if (rulesTab) rulesTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
     renderWidgetPicker();
     renderGrid();
     loadAll();
@@ -976,11 +978,159 @@
       .catch(function(e){ alert('Error: '+e.message); });
   }
 
+  /* ── RULES PANEL (absorbe el editor viejo public/admin/index.html+app.js) ── */
+  function rulesSetStatus(msg) {
+    var el = document.getElementById('rulesStatus');
+    if (el) el.textContent = msg;
+  }
+
+  function rulesLoadPolicy() {
+    var mid = document.getElementById('rulesMerchantId').value.trim();
+    if (!mid) { rulesSetStatus('merchantId requerido'); return; }
+    rulesSetStatus('Cargando política…');
+    api('/backoffice/rules/'+encodeURIComponent(mid))
+      .then(function(j){
+        document.getElementById('rulesPolicy').value = JSON.stringify(j.policy, null, 2);
+        rulesSetStatus('Política cargada');
+      })
+      .catch(function(e){ rulesSetStatus('Error: '+e.message); });
+  }
+
+  function rulesSavePolicy() {
+    var mid = document.getElementById('rulesMerchantId').value.trim();
+    if (!mid) { rulesSetStatus('merchantId requerido'); return; }
+    var payload;
+    try { payload = JSON.parse(document.getElementById('rulesPolicy').value || '{}'); }
+    catch (e) { rulesSetStatus('JSON inválido'); return; }
+    rulesSetStatus('Guardando…');
+    api('/backoffice/rules/'+encodeURIComponent(mid), { method:'PUT', body: JSON.stringify(payload) })
+      .then(function(j){
+        document.getElementById('rulesPolicy').value = JSON.stringify(j.policy, null, 2);
+        rulesSetStatus('Guardado OK');
+      })
+      .catch(function(e){ rulesSetStatus('Error guardando: '+e.message); });
+  }
+
+  function rulesTryPolicy() {
+    var policy;
+    try { policy = JSON.parse(document.getElementById('rulesPolicy').value || '{}'); }
+    catch (e) { rulesRenderTry({ success:false, error:'JSON inválido en política' }); return; }
+
+    var amount     = parseFloat(document.getElementById('rulesSampleAmount').value) || undefined;
+    var currency   = document.getElementById('rulesSampleCurrency').value.trim() || undefined;
+    var cardNumber = document.getElementById('rulesSampleCard').value.trim() || undefined;
+
+    api('/backoffice/rules/try', { method:'POST', body: JSON.stringify({ policy: policy, sample: { amount: amount, currency: currency, cardNumber: cardNumber } }) })
+      .then(function(j){ rulesRenderTry(j); })
+      .catch(function(e){
+        var msg = e.message === 'HTTP 404' ? 'Función desactivada en el servidor (activa FEATURE_RULE_TRY=1 en Render)' : e.message;
+        rulesRenderTry({ success:false, error: msg });
+      });
+  }
+
+  function rulesRenderTry(resp) {
+    var el = document.getElementById('rulesTryOut');
+    if (!resp || resp.success !== true) {
+      el.innerHTML = '<div style="color:var(--red)">❌ '+(resp && resp.error || 'Error en /rules/try')+'</div>';
+      return;
+    }
+    var d = resp.decision || {};
+    var lines = [
+      '🔎 Conector: <b>'+d.connector+'</b>',
+      d.matchedRuleId ? 'Regla aplicada: <b>'+d.matchedRuleId+'</b>' : 'Sin match → default',
+      '',
+      '<b>Explicación legible</b>'
+    ].concat(Array.isArray(resp.explainHuman) ? resp.explainHuman : []);
+    el.innerHTML = lines.map(function(l){ return '<div>'+l+'</div>'; }).join('');
+  }
+
+  function rulesExportPolicy() {
+    var mid = document.getElementById('rulesMerchantId').value.trim();
+    if (!mid) { rulesSetStatus('merchantId requerido'); return; }
+    api('/backoffice/rules/export?merchantId='+encodeURIComponent(mid))
+      .then(function(j){
+        document.getElementById('rulesPolicy').value = JSON.stringify(j.export, null, 2);
+        rulesSetStatus('Export OK (copiado al editor)');
+      })
+      .catch(function(e){
+        rulesSetStatus(e.message === 'HTTP 404' ? 'Export desactivado en el servidor (activa FEATURE_RULE_EXPORT_UI=1 en Render)' : 'Export falló: '+e.message);
+      });
+  }
+
+  function rulesImportPolicyFromFile(ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var payload;
+      try { payload = JSON.parse(reader.result); }
+      catch (e) { rulesSetStatus('Archivo JSON inválido'); return; }
+      api('/backoffice/rules/import', { method:'POST', body: JSON.stringify(payload) })
+        .then(function(j){
+          document.getElementById('rulesPolicy').value = JSON.stringify(j.policy, null, 2);
+          rulesSetStatus('Import OK');
+        })
+        .catch(function(e){
+          rulesSetStatus(e.message === 'HTTP 404' ? 'Import desactivado en el servidor (activa FEATURE_RULE_EXPORT_UI=1 en Render)' : 'Import falló: '+e.message);
+        });
+    };
+    reader.readAsText(file);
+  }
+
+  function rulesShowAudit() {
+    var mid = document.getElementById('rulesMerchantId').value.trim();
+    if (!mid) { rulesSetStatus('merchantId requerido'); return; }
+    api('/backoffice/rules/'+encodeURIComponent(mid)+'/audit?limit=20')
+      .then(function(j){
+        var wrap = document.getElementById('rulesAuditWrap');
+        var list = document.getElementById('rulesAuditList');
+        wrap.style.display = 'block';
+        list.innerHTML = (j.items||[]).map(function(it){
+          var changed = Array.isArray(it.changedFields) ? it.changedFields.join(', ') : '-';
+          return '<div style="padding:8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:6px">'+
+            '<div><b>'+new Date(it.createdAt).toLocaleString('es-ES')+'</b> · actor: '+(it.actor||'unknown')+'</div>'+
+            '<div style="margin-top:4px">changedFields: '+changed+'</div>'+
+            '</div>';
+        }).join('') || '<div style="color:var(--text3)">Sin cambios registrados</div>';
+      })
+      .catch(function(e){
+        document.getElementById('rulesAuditWrap').style.display = 'none';
+        rulesSetStatus(e.message === 'HTTP 404' ? 'Auditoría desactivada en el servidor (activa FEATURE_RULE_AUDIT=1 en Render)' : 'Audit falló: '+e.message);
+      });
+  }
+
+  function bindRulesPresets() {
+    document.querySelectorAll('#tabRules [data-preset]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var pol;
+        try { pol = JSON.parse(document.getElementById('rulesPolicy').value || '{}'); } catch (e) { pol = {}; }
+        if (!pol.version) pol.version = 'v1';
+        if (!pol.defaultConnector) pol.defaultConnector = 'dummyCard';
+        if (!Array.isArray(pol.rules)) pol.rules = [];
+
+        var preset = btn.dataset.preset;
+        var id = 'preset-'+preset+'-'+Date.now();
+        var rule = { id: id, priority: pol.rules.length, when: {}, action: { route: 'dummyCard' } };
+
+        if (preset === 'eurSmall') { rule.when.currency = { in: ['EUR'] }; rule.when.amount = { lt: 50 }; }
+        else if (preset === 'binES') { rule.when.bin = { inPrefixes: ['4571','4029'] }; }
+        else if (preset === 'issuerBR') { rule.when.issuerCountry = { in: ['BR'] }; }
+        else if (preset === 'schemeVisa') { rule.when.scheme = { in: ['visa'] }; }
+        else if (preset === 'lowLatency') { rule.when.latencyMs = { lte: 150 }; }
+
+        pol.rules.push(rule);
+        document.getElementById('rulesPolicy').value = JSON.stringify(pol, null, 2);
+        rulesSetStatus('Regla añadida: '+id);
+      });
+    });
+  }
+
   /* ── TABS ── */
   function showTab(tab) {
     document.getElementById('tabDashboard').style.display  = tab==='dashboard'?'block':'none';
     document.getElementById('tabUsers').style.display      = tab==='users'?'block':'none';
     document.getElementById('tabMerchants').style.display  = tab==='merchants'?'block':'none';
+    document.getElementById('tabRules').style.display      = tab==='rules'?'block':'none';
     if(tab==='users') loadUsers();
     if(tab==='merchants') loadMerchants();
   }
@@ -1050,12 +1200,21 @@
     document.getElementById('createMerchantBtn').addEventListener('click', openCreateMerchant);
     document.getElementById('apiKeysModalClose').addEventListener('click',function(){document.getElementById('apiKeysModal').classList.remove('open');});
     document.getElementById('createKeyBtn').addEventListener('click', createApiKeyForCurrentMerchant);
+    document.getElementById('rulesLoadBtn').addEventListener('click', rulesLoadPolicy);
+    document.getElementById('rulesSaveBtn').addEventListener('click', rulesSavePolicy);
+    document.getElementById('rulesTryBtn').addEventListener('click', rulesTryPolicy);
+    document.getElementById('rulesExportBtn').addEventListener('click', rulesExportPolicy);
+    document.getElementById('rulesImportFile').addEventListener('change', rulesImportPolicyFromFile);
+    document.getElementById('rulesAuditBtn').addEventListener('click', rulesShowAudit);
+    bindRulesPresets();
     var tabDash = document.getElementById('tabBtnDashboard');
     var tabUsr  = document.getElementById('tabBtnUsers');
     var tabMer  = document.getElementById('tabBtnMerchants');
+    var tabRul  = document.getElementById('tabBtnRules');
     if(tabDash) tabDash.addEventListener('click',function(){showTab('dashboard');});
     if(tabUsr)  tabUsr.addEventListener('click',function(){showTab('users');});
     if(tabMer)  tabMer.addEventListener('click',function(){showTab('merchants');});
+    if(tabRul)  tabRul.addEventListener('click',function(){showTab('rules');});
     bindPasswordToggle('loginPass','toggleLoginPass');
     bindPasswordToggle('newUserPassword','toggleNewUserPass');
   }

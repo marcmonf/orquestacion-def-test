@@ -9,6 +9,14 @@ const BackofficeUser = require('../models/BackofficeUser');
 const Merchant       = require('../models/Merchant');
 const { getConnector } = require('../services/connectorRegistry');
 const { createApiKey, listApiKeys, revokeApiKey } = require('../services/apiKeyService');
+const {
+  getPolicy: rulesGetPolicy,
+  upsertPolicy: rulesUpsertPolicy,
+  tryPolicy: rulesTryPolicy,
+  getAudit: rulesGetAudit,
+  exportPolicy: rulesExportPolicy,
+  importPolicy: rulesImportPolicy,
+} = require('../controllers/rulesController');
 const backofficeAuth = require('../middleware/backofficeAuth');
 const { requireRole, requireMerchantAccess } = backofficeAuth;
 
@@ -626,5 +634,30 @@ router.delete('/merchants/:merchantId/api-keys/:keyId', requireRole('superadmin'
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOTOR DE REGLAS (routing por merchant) — solo superadmin
+// Absorbe el editor viejo (public/admin/index.html + app.js, con X-Admin-Token)
+// como pestaña del dashboard nuevo. Reutiliza rulesController.js SIN cambios —
+// las rutas /rules con X-Admin-Token (adminAuth) siguen intactas por si algún
+// script externo las usa directamente.
+// IMPORTANTE: rutas estáticas (/rules/export, /rules/import, /rules/try) deben
+// ir ANTES de /rules/:merchantId para que Express no las capture como parámetro,
+// igual que en rulesRoutes.js original.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Inyecta el email del usuario de sesión como actor de auditoría, en vez de
+// depender del header manual x-admin-actor que usaba el editor viejo.
+function stampRulesActor(req, res, next) {
+  req.headers['x-admin-actor'] = (req.backofficeUser && req.backofficeUser.email) || 'unknown';
+  next();
+}
+
+router.get('/rules/export', requireRole('superadmin'), rulesExportPolicy);
+router.post('/rules/import', requireRole('superadmin'), stampRulesActor, rulesImportPolicy);
+router.post('/rules/try', requireRole('superadmin'), rulesTryPolicy);
+router.get('/rules/:merchantId', requireRole('superadmin'), rulesGetPolicy);
+router.put('/rules/:merchantId', requireRole('superadmin'), stampRulesActor, rulesUpsertPolicy);
+router.get('/rules/:merchantId/audit', requireRole('superadmin'), rulesGetAudit);
 
 module.exports = router;

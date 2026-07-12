@@ -216,6 +216,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <button class="tab-btn active" id="tabBtnDashboard">Dashboard</button>
     <button class="tab-btn" id="tabBtnUsers" style="display:none">Usuarios</button>
     <button class="tab-btn" id="tabBtnMerchants" style="display:none">Merchants</button>
+    <button class="tab-btn" id="tabBtnRules" style="display:none">Reglas</button>
   </div>
 
   <!-- DASHBOARD TAB -->
@@ -263,6 +264,57 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <thead><tr><th>Merchant ID</th><th>Nombre</th><th>País</th><th>Plan</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody id="merchantsTableBody"><tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
     </table>
+  </div>
+
+  <!-- RULES TAB -->
+  <div id="tabRules" style="display:none;padding:24px;max-width:1400px;margin:0 auto">
+    <div class="users-header">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Motor de reglas · Routing por merchant</h2>
+    </div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px">
+      <div class="form-field" style="margin-bottom:0;min-width:200px">
+        <label>Merchant ID</label>
+        <input type="text" id="rulesMerchantId" placeholder="demo-merchant"/>
+      </div>
+      <button class="btn btn-primary" id="rulesLoadBtn">Cargar</button>
+      <button class="btn btn-primary" id="rulesSaveBtn">Guardar</button>
+      <button class="btn btn-ghost" id="rulesTryBtn">Probar</button>
+      <button class="btn btn-ghost" id="rulesExportBtn">Exportar</button>
+      <label class="btn btn-ghost" style="cursor:pointer;display:inline-flex;align-items:center">Importar<input type="file" id="rulesImportFile" accept="application/json" style="display:none"/></label>
+      <button class="btn btn-ghost" id="rulesAuditBtn">Histórico</button>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Atajos de regla</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-sm" data-preset="eurSmall">EUR &lt; 50 → dummyCard</button>
+        <button class="btn-sm" data-preset="binES">BIN ES (4571, 4029) → dummyCard</button>
+        <button class="btn-sm" data-preset="issuerBR">Issuer BR → dummyCard</button>
+        <button class="btn-sm" data-preset="schemeVisa">Visa → dummyCard</button>
+        <button class="btn-sm" data-preset="lowLatency">latencyMs &lt; 150 → dummyCard</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Política (JSON)</div>
+        <textarea id="rulesPolicy" style="width:100%;height:420px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);font-family:monospace;font-size:12px;outline:none;resize:vertical"></textarea>
+        <div id="rulesStatus" style="font-size:12px;color:var(--text3);margin-top:8px"></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Resultado de prueba</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <input type="text" id="rulesSampleAmount" placeholder="amount 25" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
+          <input type="text" id="rulesSampleCurrency" placeholder="currency EUR" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
+          <input type="text" id="rulesSampleCard" placeholder="cardNumber (opcional)" style="grid-column:span 2;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
+        </div>
+        <div id="rulesTryOut" style="min-height:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;color:var(--text2)"></div>
+        <div id="rulesAuditWrap" style="display:none;margin-top:16px">
+          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Histórico de cambios</div>
+          <div id="rulesAuditList" style="font-size:11px;color:var(--text2)"></div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
