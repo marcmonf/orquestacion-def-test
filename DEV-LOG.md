@@ -280,11 +280,11 @@ POST /merchants   (header: X-Admin-Token)
 Conviven DOS paneles en `public/admin/`:
 - `dashboard.html` + `dashboard.js` → el panel BUENO. Login por email+contraseña contra
   `/backoffice/auth/login` (modelo BackofficeUser, con roles). Tiene analíticas,
-  transacciones con refund/cancel, y gestión de usuarios. ES EL QUE SE USA.
+  transacciones con refund/cancel, gestión de usuarios, merchants y API keys. ES EL QUE SE USA.
 - `index.html` + `app.js` → editor de reglas de routing antiguo (usa ADMIN_TOKEN).
   Preservado, accesible en `/admin/index.html`.
 
-**Hecho en esta sesión (Fase A + fixes de datos):**
+**Hecho en la sesión anterior (Fase A + fixes de datos):**
 - **Fase A** — `/admin` ahora sirve `dashboard.html` como página principal (ruta explícita
   en index.js antes del estático). El editor viejo sigue en `/admin/index.html`.
 - **Fix importes** — el dashboard mostraba los importes ×100 (interpretaba céntimos como
@@ -299,13 +299,31 @@ Conviven DOS paneles en `public/admin/`:
   en `src/routes/diagRoutes.js`: `GET /diag/transactions` muestra estado real de las tx en
   Mongo sin entrar a Atlas. Útil para depurar. Considerar quitarlo o dejarlo como interno.
 
+**Hecho en esta sesión (pestañas Merchants + API Keys):**
+- Nueva pestaña **Merchants** en el dashboard (`tabBtnMerchants` / `tabMerchants`), visible
+  solo para rol `superadmin` (mismo criterio que la pestaña Usuarios). Lista, crea y edita
+  merchants (`merchantId`, nombre, país, plan, estado, webhookUrl).
+- Backend: `src/routes/backofficeRoutes.js` gana `GET/POST /backoffice/merchants` y
+  `PATCH /backoffice/merchants/:merchantId`, protegidos por sesión JWT + `requireRole('superadmin')`.
+  Reutiliza el modelo `Merchant` de M2 — las rutas `/merchants` con `X-Admin-Token` siguen
+  intactas para uso vía Postman/scripts, esto es el equivalente para el dashboard.
+- Botón **"API Keys"** por fila de merchant abre un modal: lista las keys existentes
+  (prefix, etiqueta, estado, último uso), permite crear una nueva (el `rawSecret` se muestra
+  UNA SOLA VEZ tras crearla, con aviso) y revocar las activas.
+- Backend: `GET/POST /backoffice/merchants/:merchantId/api-keys` y
+  `DELETE /backoffice/merchants/:merchantId/api-keys/:keyId`, mismo criterio de auth.
+  Reutiliza `apiKeyService.js` (las mismas funciones que ya usaba `/api-keys` con X-Admin-Token) —
+  no se duplicó lógica de generación/hash de credenciales.
+- **Bug preexistente corregido de paso**: el botón de la pestaña "Usuarios" tenía DOS
+  atributos `id` en el mismo `<button>` (`id="tabBtnUsers" id="usersTab"`). El navegador
+  solo respeta el primero, así que el código que la hacía visible para superadmin
+  (`getElementById('usersTab')`) nunca encontraba el elemento — la pestaña de Usuarios
+  llevaba tiempo invisible para todo el mundo. Corregido a un único id.
+
 **Pendiente de M3:**
-- Pestaña de gestión de MERCHANTS en el dashboard (crear/listar/editar) — conecta con las
-  rutas /merchants de M2. Decisión tomada: exponer merchants bajo /backoffice (mismo login
-  del dashboard) reutilizando el modelo Merchant; mantener /merchants con X-Admin-Token (M2)
-  intacto. NO empezado.
-- Pestaña de API keys (crear/revocar).
-- Absorber el editor de reglas viejo como pestaña.
+- Absorber el editor de reglas viejo (`index.html`/`app.js`) como pestaña del dashboard nuevo.
+- Sin verificar todavía en vivo (Marcos sin acceso a Mac en esta sesión) — ver pruebas
+  pendientes más abajo.
 
 **Aprendizaje clave de esta sesión — TARJETAS DE TEST:**
 Las tarjetas de test REALES de Paylands sandbox son las `4018810000100036` / `4018810001010010`
@@ -486,7 +504,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 12 julio 2026 — descubierto sistema legacy de capture/refund/cancel sin documentar (paymentsController.js + Operation). Los tres flujos (refund, capture, cancel/void) ya están reconectados a llamadas reales a Paylands, con fix de seguridad (ownership de merchant en ensureTx) y fix de lógica (refund/capture sin exigir un paso de captura previo que Paylands no tiene). refund usa el endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son INFERENCIA por analogía, SIN VERIFICAR aún contra sandbox real. Pendiente: verificar los tres en Postman contra Render cuando Marcos tenga acceso al Mac — ver sección 11. Sesión anterior (11 julio tarde): /admin sirve el dashboard bueno, importes corregidos a euros, processorReference arreglado en iframe.js, endpoint /diag añadido. M1 y M2 completados. Tarjetas test buenas: 4018810...*
+*Última revisión: 12 julio 2026 (sesión tarde) — M3: añadidas pestañas Merchants y API Keys al dashboard (`/backoffice/merchants` + `/backoffice/merchants/:id/api-keys`, solo superadmin), reutilizando el modelo Merchant (M2) y apiKeyService.js existentes. De paso, corregido bug preexistente de id duplicado que dejaba la pestaña "Usuarios" invisible para todos. Sesión de la mañana: descubierto y reconectado a Paylands real el sistema legacy de capture/refund/cancel (paymentsController.js + Operation), con fix de seguridad (ownership de merchant) y fix de lógica (refund/capture sin exigir captura previa). refund usa endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son inferencia, sin verificar aún. Pendiente: verificar todo en Postman/navegador contra Render cuando Marcos tenga acceso al Mac — ver sección 11. M1 y M2 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
@@ -552,5 +570,11 @@ pending
    Paylands.
 4. Verificar en los tres casos (refund/capture/cancel) que el webhook
    saliente al merchant notifica el estado correcto.
+5. **Dashboard M3 (nuevo, sin probar en vivo)**: login como superadmin en
+   `https://orquestacion-def-test.onrender.com/admin` → pestaña "Merchants"
+   debe verse (antes no se veía tampoco la de "Usuarios" por el bug de id
+   duplicado, ya corregido). Probar: listar merchants, crear uno nuevo, editarlo,
+   abrir "API Keys" de un merchant, crear una key (confirmar que el rawSecret
+   se muestra una vez), revocarla y confirmar que desaparece de la lista activa.
 
 Esto forma parte de M2/M3 y debe verificarse en sandbox antes de produccion.
