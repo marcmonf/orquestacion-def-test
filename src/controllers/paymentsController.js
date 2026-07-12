@@ -458,8 +458,13 @@ exports.refundPayment = async (req, res) => {
   }
 };
 
-// ===== CANCEL =====
-// NOTA: void real contra Paylands aun NO implementado (proximo hito, junto a capture).
+// ===== CANCEL (void) =====
+// Llama al conector real (payNoPain -> Paylands POST /payment/cancel,
+// INFERIDO por analogia con refund/capture, sin verificar aun contra sandbox
+// real). Solo aplica a transacciones 'authorized' que NO se hayan capturado
+// todavia — si ya hay captura, el camino correcto es refund(), no void().
+const CANCELABLE_STATUSES = ['authorized'];
+
 exports.cancelPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -478,12 +483,52 @@ exports.cancelPayment = async (req, res) => {
 
     if (await replayIfExists({ paymentId, type: 'cancel', idempotencyKey }, res)) return;
 
+    if (!CANCELABLE_STATUSES.includes(tx.status)) {
+      logger.warn('Cancel blocked: invalid status', { component: 'paymentsController', paymentId, data: { status: tx.status } });
+      return res.status(409).json({ success: false, message: `Cannot cancel payment in status '${tx.status}'` });
+    }
+
     const { capturedAmount } = await getTotals(paymentId);
     if (capturedAmount > 0) {
       logger.warn('Cancel blocked: already captured', { component: 'paymentsController', paymentId, data: { capturedAmount } });
-      return res.status(409).json({ success: false, message: 'Cannot cancel: already captured' });
+      return res.status(409).json({ success: false, message: 'Cannot cancel: already captured. Use refund instead.' });
     }
 
+    // ── Llamada real al adquirente ──────────────────────────────────────────
+    const connectorName = tx.processor || 'payNoPain';
+    let connector;
+    try {
+      connector = getConnector(connectorName);
+    } catch (e) {
+      logger.error('CANCEL.CONNECTOR_NOT_FOUND', {
+        component: 'paymentsController', paymentId, data: { connectorName, error: e.message }
+      });
+      return res.status(500).json({ success: false, message: 'cancel.connector_not_configured' });
+    }
+
+    if (!tx.processorReference) {
+      logger.error('CANCEL.NO_PROCESSOR_REFERENCE', { component: 'paymentsController', paymentId });
+      return res.status(409).json({ success: false, message: 'cancel.missing_processor_reference' });
+    }
+
+    const connectorResult = await connector.void({
+      processorReference: tx.processorReference
+    });
+
+    if (!connectorResult || connectorResult.success !== true) {
+      logger.error('CANCEL.CONNECTOR_FAILED', {
+        component: 'paymentsController',
+        paymentId,
+        data: { connectorName, error: connectorResult?.error }
+      });
+      return res.status(502).json({
+        success: false,
+        message: 'cancel.processor_declined',
+        detail: connectorResult?.error || 'unknown_error'
+      });
+    }
+
+    // ── Solo si Paylands confirmo, actualizamos Mongo ───────────────────────
     tx.status = 'canceled';
     tx.updatedAt = new Date();
     await tx.save();
@@ -492,6 +537,7 @@ exports.cancelPayment = async (req, res) => {
       action: 'CANCEL',
       paymentId,
       merchantId: tx.merchantId,
+      connectorName,
       idempotencyKey
     });
 

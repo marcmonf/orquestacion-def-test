@@ -436,6 +436,77 @@ async function capture(data) {
 }
 
 /**
+ * Cancela (void) una orden autorizada en Paylands ANTES de capturarla.
+ * No aplica a ordenes ya capturadas o reembolsadas — para eso existe refund().
+ *
+ * INFERENCIA basada en el patron de refund()/capture() (POST /payment/cancel
+ * con order_uuid en body). El webhook entrante (webhooks.js) ya reconoce los
+ * status "cancelled" / "user_cancelled" que devuelve Paylands, lo que sugiere
+ * que el verbo correcto en su API es "cancel" y no "void" — pero el propio
+ * endpoint NO esta verificado contra sandbox real todavia.
+ *
+ * @param {object} data
+ * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
+ * @returns {Promise<{success:boolean, ...}>}
+ */
+async function voidOrder(data) {
+  const apiKey    = API_KEY;
+  const signature = SIGNATURE;
+
+  if (!apiKey || !signature) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
+  }
+
+  const orderUuid = data.processorReference || data.orderUuid || data.order_uuid || null;
+  if (!orderUuid) {
+    return { success: false, error: 'missing_order_uuid' };
+  }
+
+  const body = {
+    signature,
+    order_uuid: orderUuid,
+  };
+
+  try {
+    const res = await postJson('/payment/cancel', body, apiKey);
+
+    const order = res.body?.order || null;
+    const okStatuses = ['CANCELLED', 'CANCELED', 'USER_CANCELLED'];
+    const okStatus = order && okStatuses.includes(String(order.status).toUpperCase());
+
+    if (res.status !== 200 || !okStatus) {
+      logger.error('PAYNOPAIN_CANCEL_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: res.status, orderUuid, body: res.body },
+      });
+      return {
+        success: false,
+        error: res.body?.message || `cancel_failed_status_${res.status}`,
+        raw: res.body,
+      };
+    }
+
+    logger.info('PAYNOPAIN_CANCEL_OK', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, status: order.status },
+    });
+
+    return {
+      success: true,
+      orderUuid,
+      status: order.status,
+      raw: order,
+    };
+  } catch (err) {
+    logger.error('PAYNOPAIN_CANCEL_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, error: err.message },
+    });
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Reembolsa (total o parcial) una orden ya pagada en Paylands.
  *
  * Doc oficial: POST /payment/refund
@@ -517,6 +588,7 @@ module.exports = {
   chargeWithToken,
   validateNotificationHash,
   capture,
+  void: voidOrder,
   refund,
   SIGNATURE,
 };
