@@ -486,7 +486,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 12 julio 2026 — descubierto sistema legacy de capture/refund/cancel sin documentar (paymentsController.js + Operation). Refund reconectado a Paylands real (POST /payment/refund) con fix de seguridad (ownership de merchant) y fix de lógica (refund sin capture previa). Capture reconectado a Paylands (POST /payment/capture, INFERIDO por analogía, sin verificar en sandbox). Cancel sigue siendo simulación pura. Pendiente: verificar refund y capture en Postman contra Render cuando Marcos tenga acceso al Mac. Sesión anterior (11 julio tarde): /admin sirve el dashboard bueno, importes corregidos a euros, processorReference arreglado en iframe.js, endpoint /diag añadido. M1 y M2 completados. Tarjetas test buenas: 4018810...*
+*Última revisión: 12 julio 2026 — descubierto sistema legacy de capture/refund/cancel sin documentar (paymentsController.js + Operation). Los tres flujos (refund, capture, cancel/void) ya están reconectados a llamadas reales a Paylands, con fix de seguridad (ownership de merchant en ensureTx) y fix de lógica (refund/capture sin exigir un paso de captura previo que Paylands no tiene). refund usa el endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son INFERENCIA por analogía, SIN VERIFICAR aún contra sandbox real. Pendiente: verificar los tres en Postman contra Render cuando Marcos tenga acceso al Mac — ver sección 11. Sesión anterior (11 julio tarde): /admin sirve el dashboard bueno, importes corregidos a euros, processorReference arreglado en iframe.js, endpoint /diag añadido. M1 y M2 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
@@ -519,7 +519,7 @@ estados en Mongo. Simulacion pura.
 | Autorizacion | POST /:merchantId/payments/hosted | POST /payment (operative: AUTHORIZATION) | ✅ funciona |
 | Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ CONECTADO A PAYLANDS REAL — pendiente de test en sandbox (Marcos sin acceso a Postman/Render en esta sesión) |
 | Captura | POST /payments/:paymentId/capture | POST /payment/capture (order_uuid + amount opcional) | ⚠️ CONECTADO pero endpoint Paylands es INFERENCIA por analogia con refund — SIN VERIFICAR contra sandbox real |
-| Cancelacion (void) | POST /payments/:paymentId/cancel | — | ❌ SIGUE SIENDO SIMULACION — no llama a Paylands todavia |
+| Cancelacion (void) | POST /payments/:paymentId/cancel | POST /payment/cancel (order_uuid, solo pre-captura) | ⚠️ CONECTADO pero endpoint Paylands es INFERENCIA — SIN VERIFICAR contra sandbox real |
 
 ### Ciclo de vida de una transaccion
 
@@ -528,7 +528,7 @@ pending
   └─ pending_3ds
        └─ authorized       ← ya funciona
             ├─ captured / partially_captured   ← conector conectado (sin verificar)
-            ├─ cancelled                       ← pendiente (solo simulacion)
+            ├─ cancelled                       ← conector conectado (sin verificar, solo pre-captura)
             └─ refunded / partially_refunded   ← conector conectado (sin verificar)
   └─ declined
   └─ error
@@ -545,9 +545,12 @@ pending
    alta: confirmar si `POST /payment/capture` es el endpoint correcto de
    Paylands — si Paylands responde 404 o error de ruta, revisar documentacion
    real de Paylands para el endpoint de captura.
-3. Verificar en ambos casos que el webhook saliente al merchant notifica el
-   estado correcto.
-4. **Cancel/void**: implementar llamada real a Paylands (próximo hito, aún no
-   iniciado).
+3. **Cancel real**: `POST /payments/{paymentId}/cancel` mismo patron de auth.
+   Solo funciona sobre transacciones `authorized` SIN capturar todavia (si ya
+   hay capture, el endpoint devuelve 409 y hay que usar refund). Prioridad
+   igual que capture: confirmar si `POST /payment/cancel` es la ruta real de
+   Paylands.
+4. Verificar en los tres casos (refund/capture/cancel) que el webhook
+   saliente al merchant notifica el estado correcto.
 
 Esto forma parte de M2/M3 y debe verificarse en sandbox antes de produccion.
