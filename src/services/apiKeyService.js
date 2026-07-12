@@ -85,7 +85,7 @@ async function findActiveByKeyId(keyId, merchantId) {
   const doc = await MerchantApiKey.findOne({
     keyId,
     merchantId,
-    active: true,
+    active: { $ne: false }, // tolera legacy data donde 'active' no sea boolean estricto
   }).lean();
 
   if (!doc) return null;
@@ -123,7 +123,7 @@ async function validateApiKey(rawKey, merchantId, ip = null) {
   const doc = await MerchantApiKey.findOne({
     merchantId,
     keyId: rawKey,
-    active: true,
+    active: { $ne: false }, // tolera legacy data donde 'active' no sea boolean estricto
   }).lean();
 
   if (!doc) {
@@ -132,7 +132,7 @@ async function validateApiKey(rawKey, merchantId, ip = null) {
     const legacyDoc = await MerchantApiKey.findOne({
       merchantId,
       keyHash: hash,
-      active: true,
+      active: { $ne: false },
     }).lean();
 
     if (!legacyDoc) return null;
