@@ -364,10 +364,17 @@ async function chargeWithToken(paymentData) {
 /**
  * Captura (total o parcial) una orden previamente autorizada en Paylands.
  *
- * INFERENCIA basada en el patron real de refund() (POST /payment/refund con
- * order_uuid en body, NO /payment/{uuid}/refund). Se asume el mismo patron
- * para capture: POST /payment/capture. NO VERIFICADO contra sandbox real
- * todavia — probar antes de dar por bueno en produccion.
+ * VERIFICADO contra la documentación oficial de Paylands (docs.paylands.com/en/reference):
+ * el endpoint real se llama "Confirmation" — POST /payment/confirmation, con
+ * order_uuid + amount (opcional) en el body.
+ *
+ * IMPORTANTE: según la doc oficial, este endpoint "charges the balance being
+ * held by a DEFERRED operative" — es decir, SOLO aplica a órdenes creadas con
+ * operative: DEFERRED. Nuestro createOrder() actual usa operative: AUTHORIZATION,
+ * que captura el dinero de inmediato (paid:true en la creación). Sobre una orden
+ * AUTHORIZATION no hay "balance retenido" que confirmar, así que aunque la URL ya
+ * es la correcta, esto seguirá fallando sobre las órdenes actuales — hace falta
+ * decidir si se cambia operative a DEFERRED (ver DEV-LOG).
  *
  * @param {object} data
  * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
@@ -396,7 +403,7 @@ async function capture(data) {
   }
 
   try {
-    const res = await postJson('/payment/capture', body, apiKey);
+    const res = await postJson('/payment/confirmation', body, apiKey);
 
     const order = res.body?.order || null;
     const okStatuses = ['SUCCESS', 'CAPTURED', 'AUTHORIZED'];
@@ -439,11 +446,16 @@ async function capture(data) {
  * Cancela (void) una orden autorizada en Paylands ANTES de capturarla.
  * No aplica a ordenes ya capturadas o reembolsadas — para eso existe refund().
  *
- * INFERENCIA basada en el patron de refund()/capture() (POST /payment/cancel
- * con order_uuid en body). El webhook entrante (webhooks.js) ya reconoce los
- * status "cancelled" / "user_cancelled" que devuelve Paylands, lo que sugiere
- * que el verbo correcto en su API es "cancel" y no "void" — pero el propio
- * endpoint NO esta verificado contra sandbox real todavia.
+ * VERIFICADO contra la documentación oficial de Paylands (docs.paylands.com/en/reference):
+ * el endpoint real es POST /payment/cancellation, con order_uuid en el body.
+ *
+ * IMPORTANTE: según la doc oficial, este endpoint "frees the balance being
+ * held by a DEFERRED operative" — es decir, SOLO aplica a órdenes creadas con
+ * operative: DEFERRED. Nuestro createOrder() actual usa operative: AUTHORIZATION,
+ * que captura el dinero de inmediato (paid:true en la creación). Sobre una orden
+ * AUTHORIZATION no hay "balance retenido" que liberar, así que aunque la URL ya
+ * es la correcta, esto seguirá fallando sobre las órdenes actuales — hace falta
+ * decidir si se cambia operative a DEFERRED (ver DEV-LOG).
  *
  * @param {object} data
  * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
@@ -468,7 +480,7 @@ async function voidOrder(data) {
   };
 
   try {
-    const res = await postJson('/payment/cancel', body, apiKey);
+    const res = await postJson('/payment/cancellation', body, apiKey);
 
     const order = res.body?.order || null;
     const okStatuses = ['CANCELLED', 'CANCELED', 'USER_CANCELLED'];
