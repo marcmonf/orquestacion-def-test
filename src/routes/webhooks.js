@@ -132,7 +132,24 @@ router.post('/paynopain', async (req, res) => {
     'refunded':              'refunded',
     'partially_refunded':    'partially_refunded',
   };
-  const monetiserStatus = STATUS_MAP[String(paylStatus).toLowerCase()] || 'pending';
+  const paylStatusKey   = String(paylStatus).toLowerCase();
+  const mappedStatus    = STATUS_MAP[paylStatusKey];
+  const monetiserStatus = mappedStatus || 'pending';
+
+  // Log explícito del mapeo: si mapped es null, el status que manda el
+  // adquirente NO está contemplado en STATUS_MAP y cae al 'pending' por
+  // defecto — este log dice exactamente cuál es esa clave desconocida.
+  logger.info('WEBHOOK_PAYNOPAIN_STATUS_MAPPED', {
+    component: 'webhooks',
+    data: {
+      orderUuid,
+      paylStatusRaw: paylStatus,
+      paylStatusKey,
+      mapped: mappedStatus || null,
+      finalStatus: monetiserStatus,
+      wasUnmapped: !mappedStatus,
+    }
+  });
 
   // ── 4. Buscar y actualizar Transaction en MongoDB ───────────────────────────
   let tx = null;

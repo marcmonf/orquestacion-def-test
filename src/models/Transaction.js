@@ -53,6 +53,17 @@ const transactionSchema = new mongoose.Schema({
   hostedTokenizationId:  String,
   hostedFieldsSessionId: String,
 
+  // Traza del último webhook entrante del adquirente.
+  // IMPORTANTE: estos campos NO estaban declarados y Mongoose los descartaba
+  // en silencio (bug histórico del proyecto), lo que hacía imposible depurar
+  // qué status exacto había mandado Paylands en la última notificación.
+  lastWebhookAt:      Date,
+  lastWebhookRaw:     {
+    source:    String,   // 'paynopain'
+    status:    String,   // status crudo tal cual lo manda el adquirente
+    orderUuid: String,
+  },
+
   createdAt:          { type: Date, default: Date.now },
   updatedAt:          { type: Date, default: Date.now }
 });
