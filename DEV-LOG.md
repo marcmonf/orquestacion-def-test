@@ -486,13 +486,40 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 11 julio 2026 (sesión tarde) — M3 en progreso: /admin sirve el dashboard bueno, importes corregidos a euros (almacenados en céntimos), processorReference arreglado en iframe.js, refund de PayNoPain implementado y VERIFICADO, endpoint /diag añadido. Pendiente M3: pestañas de merchants y API keys en el dashboard. M1 y M2 completados. Tarjetas test buenas: 4018810...*
+*Última revisión: 12 julio 2026 — descubierto sistema legacy de capture/refund/cancel sin documentar (paymentsController.js + Operation). Refund reconectado a Paylands real (POST /payment/refund) con fix de seguridad (ownership de merchant) y fix de lógica (refund sin capture previa). Capture reconectado a Paylands (POST /payment/capture, INFERIDO por analogía, sin verificar en sandbox). Cancel sigue siendo simulación pura. Pendiente: verificar refund y capture en Postman contra Render cuando Marcos tenga acceso al Mac. Sesión anterior (11 julio tarde): /admin sirve el dashboard bueno, importes corregidos a euros, processorReference arreglado en iframe.js, endpoint /diag añadido. M1 y M2 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
-## 11. Flujos de pago obligatorios — pendientes de implementar
+## 11. Ciclo de vida del pago — capture / refund / cancel
 
-Monetiser debe soportar el ciclo de vida completo de un pago. Estos son los flujos minimos:
+**Descubrimiento importante (julio 2026):** ya existia un sistema completo de
+capture/refund/cancel sin documentar en este DEV-LOG — herencia de una version
+anterior del proyecto. Vive en `src/routes/payments.js` +
+`src/controllers/paymentsController.js` + modelo `Operation` (bookkeeping de
+importes capturados/reembolsados), montado en Express como `POST /payments/:paymentId/{capture,refund,cancel}`
+(sin merchantId en la URL — se resuelve por header `x-merchant-id` via hmacAuth).
+Tenia: idempotencia (`Idempotency-Key` obligatorio), validacion Joi, audit log,
+replay de operaciones duplicadas. Pero **NO llamaba a Paylands** — solo movia
+estados en Mongo. Simulacion pura.
+
+**Bugs encontrados y corregidos en esta sesión:**
+- `ensureTx()` no comprobaba que la transaccion perteneciera al merchant
+  autenticado — cualquier merchant con API key valida podia operar sobre pagos
+  ajenos si adivinaba el `paymentId`. Corregido: 404 si `tx.merchantId !== req.merchantId`.
+- La logica de refund exigia una operacion de `capture` previa para calcular
+  el importe reembolsable. Como Paylands no tiene paso de captura separado en
+  el flujo actual (AUTHORIZATION ya mueve el dinero), cualquier refund fallaba
+  con "exceeds captured amount". Corregido: si no hay `capture` registrada,
+  se usa el importe autorizado como base reembolsable.
+
+### Estado actual por flujo
+
+| Flujo | Endpoint Monetiser | Endpoint Paylands | Estado |
+|---|---|---|---|
+| Autorizacion | POST /:merchantId/payments/hosted | POST /payment (operative: AUTHORIZATION) | ✅ funciona |
+| Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ CONECTADO A PAYLANDS REAL — pendiente de test en sandbox (Marcos sin acceso a Postman/Render en esta sesión) |
+| Captura | POST /payments/:paymentId/capture | POST /payment/capture (order_uuid + amount opcional) | ⚠️ CONECTADO pero endpoint Paylands es INFERENCIA por analogia con refund — SIN VERIFICAR contra sandbox real |
+| Cancelacion (void) | POST /payments/:paymentId/cancel | — | ❌ SIGUE SIENDO SIMULACION — no llama a Paylands todavia |
 
 ### Ciclo de vida de una transaccion
 
@@ -500,30 +527,27 @@ Monetiser debe soportar el ciclo de vida completo de un pago. Estos son los fluj
 pending
   └─ pending_3ds
        └─ authorized       ← ya funciona
-            ├─ captured         ← pendiente
-            ├─ cancelled        ← pendiente (void pre-captura)
-            └─ refunded         ← pendiente
-                 └─ partially_refunded  ← pendiente
+            ├─ captured / partially_captured   ← conector conectado (sin verificar)
+            ├─ cancelled                       ← pendiente (solo simulacion)
+            └─ refunded / partially_refunded   ← conector conectado (sin verificar)
   └─ declined
   └─ error
 ```
 
-### Flujos a implementar
+### Pruebas pendientes (bloqueadas — Marcos sin acceso a Postman/Render en esta sesión)
 
-| Flujo | Endpoint Monetiser | Endpoint Paylands | Estado en Transaction |
-|---|---|---|---|
-| Autorizacion | POST /payments/hosted (ya existe) | POST /payment (operative: AUTHORIZATION) | authorized |
-| Captura | POST /:merchantId/payments/:paymentId/capture | POST /payment/{orderUuid}/capture | captured |
-| Cancelacion (void) | POST /:merchantId/payments/:paymentId/cancel | POST /payment/{orderUuid}/void | cancelled |
-| Devolucion total | POST /:merchantId/payments/:paymentId/refund | POST /payment/{orderUuid}/refund | refunded |
-| Devolucion parcial | POST /:merchantId/payments/:paymentId/refund (con amount) | POST /payment/{orderUuid}/refund | partially_refunded |
+1. **Refund real**: `POST https://orquestacion-def-test.onrender.com/payments/{paymentId}/refund`
+   con `x-api-key`, `x-merchant-id: demo-merchant`, `Idempotency-Key`, body
+   `{amountOfMoney:{amount,currencyCode:"EUR"}}`. Usar un `paymentId` con
+   status `authorized` (ver `/diag/transactions`). Esperar 200 (`refunded`/
+   `partially_refunded`) o 502 (`processor_declined`).
+2. **Capture real**: mismo patron en `/payments/{paymentId}/capture`. Prioridad
+   alta: confirmar si `POST /payment/capture` es el endpoint correcto de
+   Paylands — si Paylands responde 404 o error de ruta, revisar documentacion
+   real de Paylands para el endpoint de captura.
+3. Verificar en ambos casos que el webhook saliente al merchant notifica el
+   estado correcto.
+4. **Cancel/void**: implementar llamada real a Paylands (próximo hito, aún no
+   iniciado).
 
-### Bateria de pruebas end-to-end requerida
-
-Para cada flujo:
-1. Verificar que el endpoint de Monetiser acepta la peticion del merchant
-2. Verificar que Monetiser llama al endpoint correcto de Paylands
-3. Verificar que el webhook de Paylands actualiza correctamente el estado en MongoDB
-4. Verificar que el webhook saliente notifica al merchant con el estado correcto
-
-Esto debe implementarse como parte de M2/M3 y verificarse en sandbox antes de produccion.
+Esto forma parte de M2/M3 y debe verificarse en sandbox antes de produccion.
