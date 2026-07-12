@@ -110,21 +110,27 @@ router.post('/paynopain', async (req, res) => {
   }
 
   // ── 3. Mapear status Paylands → status Monetiser ────────────────────────────
-  // Paylands usa: TBD (confirmar con docs), por ahora mapeamos los conocidos
+  // Verificado contra docs.paylands.com/en/reference.
+  // OJO con el ciclo DEFERRED: una orden DEFERRED autorizada correctamente NO
+  // devuelve SUCCESS (eso es AUTHORIZATION, que mueve el dinero al instante),
+  // sino PENDING_CONFIRMATION — el saldo está retenido esperando confirmation
+  // (capture) o cancellation (cancel). Para Monetiser eso ES 'authorized':
+  // el pago está aprobado y a la espera de captura.
   const STATUS_MAP = {
-    'success':            'authorized',
-    'paid':               'authorized',
-    'confirmed':          'authorized',
-    'refused':            'declined',
-    'error':              'declined',
-    'expired':            'declined',
-    'fraud':              'declined',
-    'blacklisted':        'declined',
-    'cancelled':          'cancelled',
-    'user_cancelled':     'cancelled',
-    'pending':            'pending',
-    'refunded':           'refunded',
-    'partially_refunded': 'partially_refunded',
+    'success':               'authorized',
+    'paid':                  'authorized',
+    'confirmed':             'authorized',
+    'pending_confirmation':  'authorized',   // ← DEFERRED autorizado, saldo retenido
+    'refused':               'declined',
+    'error':                 'declined',
+    'expired':               'declined',
+    'fraud':                 'declined',
+    'blacklisted':           'declined',
+    'cancelled':             'cancelled',
+    'user_cancelled':        'cancelled',
+    'pending':               'pending',
+    'refunded':              'refunded',
+    'partially_refunded':    'partially_refunded',
   };
   const monetiserStatus = STATUS_MAP[String(paylStatus).toLowerCase()] || 'pending';
 
