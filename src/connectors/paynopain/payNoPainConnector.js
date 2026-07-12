@@ -97,7 +97,11 @@ async function createOrder(paymentData) {
   }
 
   const orderBody = {
-    operative:    'AUTHORIZATION',
+    // DEFERRED (no AUTHORIZATION): retiene el saldo sin moverlo, para que
+    // confirmation (capture) y cancellation (cancel) funcionen de verdad.
+    // Verificado en docs.paylands.com/en/reference — confirmation/cancellation
+    // solo aplican a órdenes DEFERRED.
+    operative:    'DEFERRED',
     service:      serviceUuid,
     order_id:     paymentData.paymentId,
     amount:       paymentData.amount,
@@ -192,7 +196,9 @@ async function createOrder3DS(paymentData) {
   };
 
   const orderBody = {
-    operative:       'AUTHORIZATION',
+    // DEFERRED (no AUTHORIZATION): retiene el saldo sin moverlo, para que
+    // confirmation (capture) y cancellation (cancel) funcionen de verdad. [createOrder3DS]
+    operative:       'DEFERRED',
     service:         serviceUuid,
     order_id:        paymentData.paymentId,
     amount:          paymentData.amount,
@@ -292,7 +298,9 @@ async function chargeWithToken(paymentData) {
   // 2. Respuesta incluye order.token y urls.3ds_tokenized
   // 3. El frontend carga esa URL en el mismo iframe para el challenge 3DS del banco
   const orderBody = {
-    operative:       'AUTHORIZATION',
+    // DEFERRED (no AUTHORIZATION): retiene el saldo sin moverlo, para que
+    // confirmation (capture) y cancellation (cancel) funcionen de verdad. [chargeWithToken]
+    operative:       'DEFERRED',
     service:         serviceUuid,
     order_id:        paymentData.paymentId,
     amount:          paymentData.amount,
