@@ -5,6 +5,7 @@ const Transaction = require('../models/Transaction');
 const Operation = require('../models/Operation');
 const logger = require('../utils/logger');            // <— usamos logger
 const auditLogger = require('../logs/auditLogger');
+const { getConnector } = require('../services/connectorRegistry');
 
 // === Helpers ===
 async function sendWebhookIfAny(transaction, event, extra = {}) {
@@ -59,10 +60,23 @@ async function sendWebhookIfAny(transaction, event, extra = {}) {
   }
 }
 
-async function ensureTx(paymentId, res) {
+// ── ensureTx: busca la Transaction Y verifica que pertenece al merchant
+//    autenticado. Sin este check cualquier merchant podía operar sobre
+//    pagos ajenos si adivinaba el paymentId. Devuelve 404 (no 403) para
+//    no revelar si el paymentId existe pero es de otro merchant.
+async function ensureTx(paymentId, res, merchantId) {
   const tx = await Transaction.findOne({ paymentId });
   if (!tx) {
     logger.warn('Transaction not found', { component: 'paymentsController', paymentId });
+    res.status(404).json({ success: false, message: 'Transaction not found' });
+    return null;
+  }
+  if (merchantId && tx.merchantId !== merchantId) {
+    logger.warn('Transaction merchant mismatch', {
+      component: 'paymentsController',
+      paymentId,
+      data: { owner: tx.merchantId, requester: merchantId }
+    });
     res.status(404).json({ success: false, message: 'Transaction not found' });
     return null;
   }
@@ -151,6 +165,8 @@ async function persistAndRespond({
 }
 
 // ===== CAPTURE =====
+// NOTA: capture real contra Paylands aun NO implementado (proximo hito).
+// De momento sigue siendo simulacion local (solo bookkeeping en Mongo).
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -164,7 +180,7 @@ exports.capturePayment = async (req, res) => {
       data: { body: req.body, idempotencyKey }
     });
 
-    const tx = await ensureTx(paymentId, res);
+    const tx = await ensureTx(paymentId, res, req.merchantId);
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'capture', idempotencyKey }, res)) return;
@@ -245,6 +261,11 @@ exports.capturePayment = async (req, res) => {
 };
 
 // ===== REFUND =====
+// Llama al conector real (payNoPain -> Paylands POST /payment/refund) antes
+// de tocar el estado en Mongo. Si Paylands rechaza el refund, no se
+// actualiza nada y se devuelve 502 al merchant.
+const REFUNDABLE_STATUSES = ['authorized', 'captured', 'partially_refunded'];
+
 exports.refundPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -258,17 +279,28 @@ exports.refundPayment = async (req, res) => {
       data: { body: req.body, idempotencyKey }
     });
 
-    const tx = await ensureTx(paymentId, res);
+    const tx = await ensureTx(paymentId, res, req.merchantId);
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'refund', idempotencyKey }, res)) return;
+
+    if (!REFUNDABLE_STATUSES.includes(tx.status)) {
+      logger.warn('Refund blocked: invalid status', { component: 'paymentsController', paymentId, data: { status: tx.status } });
+      return res.status(409).json({ success: false, message: `Cannot refund payment in status '${tx.status}'` });
+    }
 
     const requested = amountOfMoney?.amount;
     const currencyCode = amountOfMoney?.currencyCode || tx.currency;
 
     const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
     const { capturedAmount, refundedAmount } = await getTotals(paymentId);
-    const refundableRemaining = Math.max(capturedAmount - refundedAmount, 0);
+
+    // Paylands (flujo actual) no exige una captura explicita separada: la
+    // AUTHORIZATION ya mueve el dinero. Si no hay operacion 'capture'
+    // registrada pero la tx esta 'authorized' o 'captured', tratamos el
+    // importe autorizado como base reembolsable.
+    const refundableBase = capturedAmount > 0 ? capturedAmount : authorizedAmount;
+    const refundableRemaining = Math.max(refundableBase - refundedAmount, 0);
     const amount = requested ?? refundableRemaining;
 
     if (!amount || amount <= 0) {
@@ -276,16 +308,52 @@ exports.refundPayment = async (req, res) => {
       return res.status(409).json({ success: false, message: 'Invalid refund amount' });
     }
     if (amount > refundableRemaining) {
-      logger.warn('Refund exceeds captured', {
+      logger.warn('Refund exceeds refundable amount', {
         component: 'paymentsController',
         paymentId,
         data: { amount, refundableRemaining }
       });
-      return res.status(409).json({ success: false, message: 'Refund exceeds captured amount' });
+      return res.status(409).json({ success: false, message: 'Refund exceeds refundable amount' });
     }
 
+    // ── Llamada real al adquirente ──────────────────────────────────────────
+    const connectorName = tx.processor || 'payNoPain';
+    let connector;
+    try {
+      connector = getConnector(connectorName);
+    } catch (e) {
+      logger.error('REFUND.CONNECTOR_NOT_FOUND', {
+        component: 'paymentsController', paymentId, data: { connectorName, error: e.message }
+      });
+      return res.status(500).json({ success: false, message: 'refund.connector_not_configured' });
+    }
+
+    if (!tx.processorReference) {
+      logger.error('REFUND.NO_PROCESSOR_REFERENCE', { component: 'paymentsController', paymentId });
+      return res.status(409).json({ success: false, message: 'refund.missing_processor_reference' });
+    }
+
+    const connectorResult = await connector.refund({
+      processorReference: tx.processorReference,
+      amount
+    });
+
+    if (!connectorResult || connectorResult.success !== true) {
+      logger.error('REFUND.CONNECTOR_FAILED', {
+        component: 'paymentsController',
+        paymentId,
+        data: { connectorName, error: connectorResult?.error }
+      });
+      return res.status(502).json({
+        success: false,
+        message: 'refund.processor_declined',
+        detail: connectorResult?.error || 'unknown_error'
+      });
+    }
+
+    // ── Solo si Paylands confirmo, actualizamos Mongo ───────────────────────
     const postRefunded = refundedAmount + amount;
-    const fullyRefunded = (postRefunded === capturedAmount) || (capturedAmount === 0 && amount === authorizedAmount);
+    const fullyRefunded = (postRefunded === refundableBase);
     tx.status = fullyRefunded ? 'refunded' : 'partially_refunded';
     tx.updatedAt = new Date();
     await tx.save();
@@ -296,6 +364,8 @@ exports.refundPayment = async (req, res) => {
       amount,
       merchantId: tx.merchantId,
       reason,
+      connectorName,
+      connectorRefundedTotal: connectorResult.refundedTotal,
       capturedAmount_before: capturedAmount,
       refundedAmount_before: refundedAmount,
       refundedAmount_after: postRefunded,
@@ -342,6 +412,7 @@ exports.refundPayment = async (req, res) => {
 };
 
 // ===== CANCEL =====
+// NOTA: void real contra Paylands aun NO implementado (proximo hito, junto a capture).
 exports.cancelPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -355,7 +426,7 @@ exports.cancelPayment = async (req, res) => {
       data: { body: req.body, idempotencyKey }
     });
 
-    const tx = await ensureTx(paymentId, res);
+    const tx = await ensureTx(paymentId, res, req.merchantId);
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'cancel', idempotencyKey }, res)) return;
