@@ -112,18 +112,19 @@ router.post('/paynopain', async (req, res) => {
   // ── 3. Mapear status Paylands → status Monetiser ────────────────────────────
   // Paylands usa: TBD (confirmar con docs), por ahora mapeamos los conocidos
   const STATUS_MAP = {
-    'success':        'authorized',
-    'paid':           'authorized',
-    'confirmed':      'authorized',
-    'refused':        'declined',
-    'error':          'declined',
-    'expired':        'declined',
-    'fraud':          'declined',
-    'blacklisted':    'declined',
-    'cancelled':      'cancelled',
-    'user_cancelled': 'cancelled',
-    'pending':        'pending',
-    'refunded':       'refunded',
+    'success':            'authorized',
+    'paid':               'authorized',
+    'confirmed':          'authorized',
+    'refused':            'declined',
+    'error':              'declined',
+    'expired':            'declined',
+    'fraud':              'declined',
+    'blacklisted':        'declined',
+    'cancelled':          'cancelled',
+    'user_cancelled':     'cancelled',
+    'pending':            'pending',
+    'refunded':           'refunded',
+    'partially_refunded': 'partially_refunded',
   };
   const monetiserStatus = STATUS_MAP[String(paylStatus).toLowerCase()] || 'pending';
 

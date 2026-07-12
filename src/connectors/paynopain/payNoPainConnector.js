@@ -547,7 +547,8 @@ async function refund(data) {
     const res = await postJson('/payment/refund', body, apiKey);
 
     const order = res.body?.order || null;
-    const okStatus = order && String(order.status).toUpperCase() === 'REFUNDED';
+    const okStatuses = ['REFUNDED', 'PARTIALLY_REFUNDED'];
+    const okStatus = order && okStatuses.includes(String(order.status).toUpperCase());
 
     if (res.status !== 200 || !okStatus) {
       logger.error('PAYNOPAIN_REFUND_ERROR', {
