@@ -33,9 +33,32 @@ function adaptDummy(connector) {
       };
     },
 
-    async capture(data)  { return connector.capture(data); },
-    async void(data)     { return connector.void(data); },
-    async refund(data)   { return connector.refund(data); },
+    async capture(data) {
+      const result = await connector.capture(data);
+      return {
+        success:       result?.status === 'captured',
+        status:        result?.status,
+        capturedTotal: result?.amount ?? data.amount ?? null,
+        raw:           result,
+      };
+    },
+    async void(data) {
+      const result = await connector.void(data);
+      return {
+        success: result?.status === 'voided',
+        status:  result?.status,
+        raw:     result,
+      };
+    },
+    async refund(data) {
+      const result = await connector.refund(data);
+      return {
+        success:       result?.status === 'refunded',
+        status:        result?.status,
+        refundedTotal: result?.amount ?? data.amount ?? null,
+        raw:           result,
+      };
+    },
 
     isSoftDecline() { return false; }
   };
