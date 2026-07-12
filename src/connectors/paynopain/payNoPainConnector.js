@@ -362,6 +362,80 @@ async function chargeWithToken(paymentData) {
 }
 
 /**
+ * Captura (total o parcial) una orden previamente autorizada en Paylands.
+ *
+ * INFERENCIA basada en el patron real de refund() (POST /payment/refund con
+ * order_uuid en body, NO /payment/{uuid}/refund). Se asume el mismo patron
+ * para capture: POST /payment/capture. NO VERIFICADO contra sandbox real
+ * todavia — probar antes de dar por bueno en produccion.
+ *
+ * @param {object} data
+ * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
+ * @param {number} [data.amount]            importe a capturar en céntimos (opcional, total si se omite)
+ * @returns {Promise<{success:boolean, ...}>}
+ */
+async function capture(data) {
+  const apiKey    = API_KEY;
+  const signature = SIGNATURE;
+
+  if (!apiKey || !signature) {
+    return { success: false, error: 'PayNoPain credentials not configured' };
+  }
+
+  const orderUuid = data.processorReference || data.orderUuid || data.order_uuid || null;
+  if (!orderUuid) {
+    return { success: false, error: 'missing_order_uuid' };
+  }
+
+  const body = {
+    signature,
+    order_uuid: orderUuid,
+  };
+  if (data.amount !== undefined && data.amount !== null) {
+    body.amount = Number(data.amount);
+  }
+
+  try {
+    const res = await postJson('/payment/capture', body, apiKey);
+
+    const order = res.body?.order || null;
+    const okStatuses = ['SUCCESS', 'CAPTURED', 'AUTHORIZED'];
+    const okStatus = order && okStatuses.includes(String(order.status).toUpperCase());
+
+    if (res.status !== 200 || !okStatus) {
+      logger.error('PAYNOPAIN_CAPTURE_ERROR', {
+        component: 'payNoPainConnector',
+        data: { status: res.status, orderUuid, body: res.body },
+      });
+      return {
+        success: false,
+        error: res.body?.message || `capture_failed_status_${res.status}`,
+        raw: res.body,
+      };
+    }
+
+    logger.info('PAYNOPAIN_CAPTURE_OK', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, captured: order.captured, status: order.status },
+    });
+
+    return {
+      success: true,
+      orderUuid,
+      status: order.status,
+      capturedTotal: order.captured ?? data.amount ?? null,
+      raw: order,
+    };
+  } catch (err) {
+    logger.error('PAYNOPAIN_CAPTURE_EXCEPTION', {
+      component: 'payNoPainConnector',
+      data: { orderUuid, error: err.message },
+    });
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Reembolsa (total o parcial) una orden ya pagada en Paylands.
  *
  * Doc oficial: POST /payment/refund
@@ -442,6 +516,7 @@ module.exports = {
   createOrder3DS,
   chargeWithToken,
   validateNotificationHash,
+  capture,
   refund,
   SIGNATURE,
 };

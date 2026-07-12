@@ -165,8 +165,12 @@ async function persistAndRespond({
 }
 
 // ===== CAPTURE =====
-// NOTA: capture real contra Paylands aun NO implementado (proximo hito).
-// De momento sigue siendo simulacion local (solo bookkeeping en Mongo).
+// Llama al conector real (payNoPain -> Paylands POST /payment/capture,
+// INFERIDO por analogia con refund, sin verificar aun contra sandbox real).
+// Solo se permite capturar transacciones en estado 'authorized' o
+// 'partially_captured'. Si Paylands rechaza, no se toca Mongo.
+const CAPTURABLE_STATUSES = ['authorized', 'partially_captured'];
+
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -184,6 +188,11 @@ exports.capturePayment = async (req, res) => {
     if (!tx) return;
 
     if (await replayIfExists({ paymentId, type: 'capture', idempotencyKey }, res)) return;
+
+    if (!CAPTURABLE_STATUSES.includes(tx.status)) {
+      logger.warn('Capture blocked: invalid status', { component: 'paymentsController', paymentId, data: { status: tx.status } });
+      return res.status(409).json({ success: false, message: `Cannot capture payment in status '${tx.status}'` });
+    }
 
     const authorizedAmount = Number.isFinite(tx.authorizedAmount) ? tx.authorizedAmount : tx.amount;
     const { capturedAmount, refundedAmount } = await getTotals(paymentId);
@@ -206,6 +215,42 @@ exports.capturePayment = async (req, res) => {
       logger.warn('Capture after refund detected', { component: 'paymentsController', paymentId, data: { refundedAmount } });
     }
 
+    // ── Llamada real al adquirente ──────────────────────────────────────────
+    const connectorName = tx.processor || 'payNoPain';
+    let connector;
+    try {
+      connector = getConnector(connectorName);
+    } catch (e) {
+      logger.error('CAPTURE.CONNECTOR_NOT_FOUND', {
+        component: 'paymentsController', paymentId, data: { connectorName, error: e.message }
+      });
+      return res.status(500).json({ success: false, message: 'capture.connector_not_configured' });
+    }
+
+    if (!tx.processorReference) {
+      logger.error('CAPTURE.NO_PROCESSOR_REFERENCE', { component: 'paymentsController', paymentId });
+      return res.status(409).json({ success: false, message: 'capture.missing_processor_reference' });
+    }
+
+    const connectorResult = await connector.capture({
+      processorReference: tx.processorReference,
+      amount
+    });
+
+    if (!connectorResult || connectorResult.success !== true) {
+      logger.error('CAPTURE.CONNECTOR_FAILED', {
+        component: 'paymentsController',
+        paymentId,
+        data: { connectorName, error: connectorResult?.error }
+      });
+      return res.status(502).json({
+        success: false,
+        message: 'capture.processor_declined',
+        detail: connectorResult?.error || 'unknown_error'
+      });
+    }
+
+    // ── Solo si Paylands confirmo, actualizamos Mongo ───────────────────────
     const postCaptured = capturedAmount + amount;
     tx.status = (postCaptured === authorizedAmount) ? 'captured' : 'partially_captured';
     tx.updatedAt = new Date();
@@ -217,6 +262,8 @@ exports.capturePayment = async (req, res) => {
       amount,
       merchantId: tx.merchantId,
       authorizedAmount,
+      connectorName,
+      connectorCapturedTotal: connectorResult.capturedTotal,
       capturedAmount_before: capturedAmount,
       capturedAmount_after: postCaptured,
       idempotencyKey
