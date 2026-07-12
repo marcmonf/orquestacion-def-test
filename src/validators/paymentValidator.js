@@ -41,7 +41,7 @@ const refundSchema = Joi.object({
   amountOfMoney: Joi.object({
     amount: Joi.number().integer().positive().required(),
     currencyCode: currency.optional()
-  }).required(),
+  }).optional(), // si falta, reembolsamos el importe reembolsable restante completo
   references: Joi.object({
     merchantReference: Joi.string().optional(),
     merchantParameters: Joi.string().optional(),
