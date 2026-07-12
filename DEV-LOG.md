@@ -320,6 +320,35 @@ Conviven DOS paneles en `public/admin/`:
   (`getElementById('usersTab')`) nunca encontraba el elemento — la pestaña de Usuarios
   llevaba tiempo invisible para todo el mundo. Corregido a un único id.
 
+**Hecho en esta sesión (widgets expandibles):**
+- Al tocar/clicar CUALQUIER widget del dashboard (no solo transacciones) se abre un
+  modal con la vista ampliada de ese widget. Mecanismo genérico: cada widget tiene un
+  listener de click a nivel de contenedor que llama a `openExpand(id)`; los elementos
+  interactivos internos (filas de transacciones) hacen `stopPropagation()` para no
+  disparar el expand a la vez que abren el detalle de la transacción.
+- Por tipo de widget, la vista ampliada muestra:
+  - **KPIs de volumen/nº transacciones** → gráfico de línea con la evolución diaria
+    (reutiliza los datos de `/backoffice/analytics/timeline` ya cargados).
+  - **KPI tasa de aprobación** → gráfico de línea de la tasa diaria (calculada
+    client-side a partir de approved/count por día).
+  - **KPI ticket medio** → gráfico de línea de volume/count por día.
+  - **KPI tasa refund / tasa fallback** → no hay endpoint de serie temporal para
+    estos dos en el backend todavía, así que se muestra una muestra filtrada de las
+    últimas transacciones ya cargadas en cliente, con aviso explícito de que NO es
+    el listado completo del período.
+  - **Gráfico de evolución temporal / métodos de pago** → versión grande del mismo
+    gráfico + tabla de datos completa debajo.
+  - **Top países** → tabla completa (el widget colapsado solo muestra barras, sin
+    truncar países).
+  - **Últimas transacciones** → esta es la pieza grande: lista COMPLETA paginada
+    (`GET /backoffice/transactions?page&limit&status&processor&country&q`), con
+    filtros de estado/conector/país/búsqueda y paginación anterior/siguiente. No
+    depende de lo cargado en cliente (solo 20 tx) — consulta el servidor de nuevo
+    en cada cambio de filtro o página. Clic en una fila cierra el expand y abre el
+    modal de detalle de transacción de siempre (refund/cancel incluidos).
+- No se tocó el backend: `/backoffice/transactions` ya soportaba paginación y
+  filtros desde antes, solo faltaba la UI que los usara más allá del top 10.
+
 **Pendiente de M3:**
 - Absorber el editor de reglas viejo (`index.html`/`app.js`) como pestaña del dashboard nuevo.
 - Sin verificar todavía en vivo (Marcos sin acceso a Mac en esta sesión) — ver pruebas
@@ -504,7 +533,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 12 julio 2026 (sesión tarde) — M3: añadidas pestañas Merchants y API Keys al dashboard (`/backoffice/merchants` + `/backoffice/merchants/:id/api-keys`, solo superadmin), reutilizando el modelo Merchant (M2) y apiKeyService.js existentes. De paso, corregido bug preexistente de id duplicado que dejaba la pestaña "Usuarios" invisible para todos. Sesión de la mañana: descubierto y reconectado a Paylands real el sistema legacy de capture/refund/cancel (paymentsController.js + Operation), con fix de seguridad (ownership de merchant) y fix de lógica (refund/capture sin exigir captura previa). refund usa endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son inferencia, sin verificar aún. Pendiente: verificar todo en Postman/navegador contra Render cuando Marcos tenga acceso al Mac — ver sección 11. M1 y M2 completados. Tarjetas test buenas: 4018810...*
+*Última revisión: 12 julio 2026 (sesión tarde) — Dashboard: al tocar cualquier widget (no solo transacciones) se abre una vista ampliada — KPIs muestran su evolución temporal en gráfico de línea, gráficos grandes ganan tabla de datos completa debajo, y "Últimas transacciones" se convierte en un listado completo paginado y filtrable (estado/conector/país/búsqueda) contra `/backoffice/transactions`, que ya soportaba esto en el backend. Antes de eso: añadidas pestañas Merchants y API Keys al dashboard (`/backoffice/merchants` + `/backoffice/merchants/:id/api-keys`, solo superadmin), reutilizando el modelo Merchant (M2) y apiKeyService.js existentes; de paso, corregido bug preexistente de id duplicado que dejaba la pestaña "Usuarios" invisible para todos. Sesión de la mañana: descubierto y reconectado a Paylands real el sistema legacy de capture/refund/cancel (paymentsController.js + Operation), con fix de seguridad (ownership de merchant) y fix de lógica (refund/capture sin exigir captura previa). refund usa endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son inferencia, sin verificar aún. Pendiente: verificar todo en Postman/navegador contra Render cuando Marcos tenga acceso al Mac — ver sección 11. M1 y M2 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
@@ -576,5 +605,13 @@ pending
    duplicado, ya corregido). Probar: listar merchants, crear uno nuevo, editarlo,
    abrir "API Keys" de un merchant, crear una key (confirmar que el rawSecret
    se muestra una vez), revocarla y confirmar que desaparece de la lista activa.
+6. **Widgets expandibles (nuevo, sin probar en vivo)**: en la pestaña Dashboard,
+   tocar cada widget uno por uno y confirmar que abre el modal ampliado sin
+   errores en consola: KPIs (gráfico de línea), gráfico de evolución temporal
+   y métodos de pago (gráfico grande + tabla), top países (tabla completa),
+   y sobre todo "Últimas transacciones" → probar los filtros (estado, conector,
+   país, búsqueda) y la paginación anterior/siguiente contra datos reales.
+   Confirmar que clicar una fila de transacción dentro del expand cierra el
+   modal y abre el detalle de siempre (con refund/cancel si aplica).
 
 Esto forma parte de M2/M3 y debe verificarse en sandbox antes de produccion.
