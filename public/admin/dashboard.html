@@ -89,6 +89,10 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .widget.dragging{opacity:.4}
 .widget-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
 .widget-title{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
+.widget-header-actions{display:flex;align-items:center;gap:6px}
+.widget-expand{background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;line-height:1;padding:0;opacity:0}
+.widget:hover .widget-expand{opacity:1}
+.widget-expand:hover{color:var(--purple2)}
 .widget-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:0;opacity:0}
 .widget:hover .widget-remove{opacity:1}
 .widget-remove:hover{color:var(--red)}
@@ -99,6 +103,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
 .kpi-badge.up{background:rgba(62,207,142,.12);color:var(--green)}
 .kpi-badge.down{background:rgba(240,96,96,.12);color:var(--red)}
 .kpi-badge.neutral{background:rgba(124,111,224,.12);color:var(--purple2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
 
 /* TABLE */
 .tx-table{width:100%;border-collapse:collapse;font-size:12px}
@@ -258,6 +263,15 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <thead><tr><th>Merchant ID</th><th>Nombre</th><th>País</th><th>Plan</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody id="merchantsTableBody"><tr><td colspan="6" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<!-- EXPAND WIDGET MODAL -->
+<div class="modal-overlay" id="expandModal">
+  <div class="modal" style="width:920px;max-width:96vw;max-height:92vh">
+    <button class="modal-close" id="expandModalClose">×</button>
+    <h3 id="expandTitle">Detalle</h3>
+    <div id="expandBody"></div>
   </div>
 </div>
 

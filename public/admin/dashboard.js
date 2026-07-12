@@ -184,12 +184,21 @@
       div.dataset.id = id; div.draggable = true;
       var header = document.createElement('div'); header.className = 'widget-header';
       var title = document.createElement('div'); title.className = 'widget-title'; title.textContent = def.label;
+      var actions = document.createElement('div'); actions.className = 'widget-header-actions';
+      var exp = document.createElement('button'); exp.className = 'widget-expand'; exp.textContent = '⤢'; exp.title = 'Ver más';
+      exp.addEventListener('click', function (e) { e.stopPropagation(); openExpand(id); });
       var rm = document.createElement('button'); rm.className = 'widget-remove'; rm.textContent = '×';
-      rm.addEventListener('click', (function (wid) { return function () { removeWidget(wid); }; })(id));
-      header.appendChild(title); header.appendChild(rm);
+      rm.addEventListener('click', function (e) { e.stopPropagation(); removeWidget(id); });
+      actions.appendChild(exp); actions.appendChild(rm);
+      header.appendChild(title); header.appendChild(actions);
       var body = document.createElement('div'); body.id = 'wb_' + id;
       var sp = document.createElement('div'); sp.className = 'spinner'; body.appendChild(sp);
-      div.appendChild(header); div.appendChild(body); grid.appendChild(div);
+      div.appendChild(header); div.appendChild(body);
+      div.addEventListener('click', function () {
+        if (div.classList.contains('dragging')) return;
+        openExpand(id);
+      });
+      grid.appendChild(div);
     });
     bindDrag();
   }
@@ -306,10 +315,290 @@
         '<td>'+statusBadge(t.status)+'</td>'+
         '<td>'+(t.processor||'–')+'</td>'+
         '<td>'+(t.createdAt||'').slice(0,10)+'</td>';
-      tr.addEventListener('click',(function(tx){return function(){showTxDetail(tx);};})(t));
+      tr.addEventListener('click',(function(tx){return function(e){ if(e&&e.stopPropagation) e.stopPropagation(); showTxDetail(tx); };})(t));
       tbody.appendChild(tr);
     });
     table.appendChild(tbody); el.innerHTML=''; el.appendChild(table);
+  }
+
+  /* ── WIDGET EXPAND ──
+     Tocar/clicar cualquier widget abre una vista ampliada de su contenido:
+     KPIs → evolución temporal; gráficos → versión grande + tabla de datos;
+     transacciones → lista completa paginada y filtrable contra el servidor. */
+  function openExpand(id) {
+    var def = WIDGET_DEFS.filter(function (w) { return w.id === id; })[0];
+    document.getElementById('expandTitle').textContent = def ? def.label : 'Detalle';
+    var body = document.getElementById('expandBody');
+    body.innerHTML = '<div class="spinner"></div>';
+    document.getElementById('expandModal').classList.add('open');
+
+    switch (id) {
+      case 'kpi_volume':   renderExpandTimeSeries(body, 'volume', 'Volumen diario', true, '#7c6fe0'); break;
+      case 'kpi_count':    renderExpandTimeSeries(body, 'count',  'Nº transacciones diario', false, '#5b9cf6'); break;
+      case 'kpi_approval': renderExpandRateSeries(body, 'approved', 'Tasa de aprobación diaria'); break;
+      case 'kpi_avg':      renderExpandAvgTicket(body); break;
+      case 'kpi_refund':   renderExpandTxSample(body, ['refunded','partially_refunded'], false); break;
+      case 'kpi_fallback': renderExpandTxSample(body, null, true); break;
+      case 'chart_timeline': renderExpandTimeline(body); break;
+      case 'chart_methods':  renderExpandMethods(body);  break;
+      case 'list_countries': renderExpandCountries(body); break;
+      case 'list_tx':         renderExpandTxList(body); break;
+      default: body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin vista ampliada disponible</div>';
+    }
+  }
+
+  function destroyExpandChart() {
+    if (chartInstances.expand) { chartInstances.expand.destroy(); chartInstances.expand = null; }
+  }
+
+  function renderExpandTimeSeries(body, field, label, isCurrency, color) {
+    var tl = data.timeline && data.timeline.timeline;
+    if (!tl || !tl.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos para este período</div>'; return; }
+    body.innerHTML = '<div style="height:300px;position:relative"><canvas id="c_expand"></canvas></div>';
+    destroyExpandChart();
+    chartInstances.expand = new Chart(document.getElementById('c_expand').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: tl.map(function (d) { return (d.date || '').slice(5); }),
+        datasets: [{ label: label, data: tl.map(function (d) { return d[field]; }), borderColor: color, backgroundColor: color + '26', fill: true, tension: .3 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return isCurrency ? fmt(c.parsed.y) : c.parsed.y; } } } },
+        scales: {
+          x: { ticks: { color: '#6b6390', font: { size: 10 } }, grid: { color: 'rgba(124,111,224,.06)' } },
+          y: { ticks: { color: '#6b6390', font: { size: 10 }, callback: function (v) { return isCurrency ? fmt(v) : v; } }, grid: { color: 'rgba(124,111,224,.06)' } }
+        }
+      }
+    });
+  }
+
+  function renderExpandRateSeries(body, numeratorField, label) {
+    var tl = data.timeline && data.timeline.timeline;
+    if (!tl || !tl.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos para este período</div>'; return; }
+    var rates = tl.map(function (d) { return d.count ? Math.round((d[numeratorField] / d.count) * 1000) / 10 : 0; });
+    body.innerHTML = '<div style="height:300px;position:relative"><canvas id="c_expand"></canvas></div>';
+    destroyExpandChart();
+    chartInstances.expand = new Chart(document.getElementById('c_expand').getContext('2d'), {
+      type: 'line',
+      data: { labels: tl.map(function (d) { return (d.date || '').slice(5); }), datasets: [{ label: label, data: rates, borderColor: '#5b9cf6', backgroundColor: 'rgba(91,156,246,.15)', fill: true, tension: .3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return c.parsed.y + '%'; } } } },
+        scales: {
+          x: { ticks: { color: '#6b6390', font: { size: 10 } }, grid: { color: 'rgba(124,111,224,.06)' } },
+          y: { min: 0, max: 100, ticks: { color: '#6b6390', font: { size: 10 }, callback: function (v) { return v + '%'; } }, grid: { color: 'rgba(124,111,224,.06)' } }
+        }
+      }
+    });
+  }
+
+  function renderExpandAvgTicket(body) {
+    var tl = data.timeline && data.timeline.timeline;
+    if (!tl || !tl.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos para este período</div>'; return; }
+    var avgs = tl.map(function (d) { return d.count ? Math.round((d.volume / d.count) * 100) / 100 : 0; });
+    body.innerHTML = '<div style="height:300px;position:relative"><canvas id="c_expand"></canvas></div>';
+    destroyExpandChart();
+    chartInstances.expand = new Chart(document.getElementById('c_expand').getContext('2d'), {
+      type: 'line',
+      data: { labels: tl.map(function (d) { return (d.date || '').slice(5); }), datasets: [{ label: 'Ticket medio', data: avgs, borderColor: '#3ecf8e', backgroundColor: 'rgba(62,207,142,.15)', fill: true, tension: .3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmt(c.parsed.y); } } } },
+        scales: {
+          x: { ticks: { color: '#6b6390', font: { size: 10 } }, grid: { color: 'rgba(124,111,224,.06)' } },
+          y: { ticks: { color: '#6b6390', font: { size: 10 }, callback: function (v) { return fmt(v); } }, grid: { color: 'rgba(124,111,224,.06)' } }
+        }
+      }
+    });
+  }
+
+  // KPIs de refund/fallback: la muestra sale de las últimas transacciones ya
+  // cargadas en cliente (no es una consulta exhaustiva del período completo,
+  // se avisa explícitamente). Para el listado completo → widget "Últimas
+  // transacciones" expandido, que sí consulta el servidor con filtros.
+  function renderExpandTxSample(body, statuses, fallbackOnly) {
+    var pool = data.txList || [];
+    var list = pool.filter(function (t) {
+      if (fallbackOnly) return !!t.fallbackUsed;
+      return statuses && statuses.indexOf(t.status) >= 0;
+    });
+    var note = '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Muestra de las últimas ' + pool.length + ' transacciones cargadas — no es el listado completo del período. Usa el widget "Últimas transacciones" ampliado para buscar en todo el histórico.</div>';
+    if (!list.length) { body.innerHTML = note + '<div style="color:var(--text3);font-size:12px">Ninguna en la muestra actual</div>'; return; }
+    var table = document.createElement('table'); table.className = 'tx-table';
+    table.innerHTML = '<thead><tr><th>Payment ID</th><th>Referencia</th><th>Importe</th><th>Estado</th><th>Conector</th><th>Fecha</th></tr></thead>';
+    var tbody = document.createElement('tbody');
+    list.forEach(function (t) {
+      var tr = document.createElement('tr'); tr.style.cursor = 'pointer';
+      tr.innerHTML = '<td style="font-family:monospace;font-size:11px">' + (t.paymentId || '–').slice(0, 14) + '…</td>' +
+        '<td>' + (t.merchantReference || '–') + '</td>' + '<td>' + fmt(t.amount) + '</td>' + '<td>' + statusBadge(t.status) + '</td>' +
+        '<td>' + (t.processor || '–') + '</td>' + '<td>' + (t.createdAt || '').slice(0, 10) + '</td>';
+      tr.addEventListener('click', (function (tx) { return function (e) { if (e && e.stopPropagation) e.stopPropagation(); closeExpandAndShowTx(tx); }; })(t));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    body.innerHTML = note; body.appendChild(table);
+  }
+
+  function renderExpandTimeline(body) {
+    var tl = data.timeline && data.timeline.timeline;
+    if (!tl || !tl.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos</div>'; return; }
+    var html = '<div style="height:320px;position:relative;margin-bottom:16px"><canvas id="c_expand"></canvas></div>';
+    html += '<table class="tx-table"><thead><tr><th>Fecha</th><th>Total</th><th>Aprobadas</th><th>Rechazadas</th><th>Volumen</th></tr></thead><tbody>';
+    tl.slice().reverse().forEach(function (d) {
+      html += '<tr><td>' + d.date + '</td><td>' + d.count + '</td><td>' + d.approved + '</td><td>' + d.declined + '</td><td>' + fmt(d.volume) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+    destroyExpandChart();
+    chartInstances.expand = new Chart(document.getElementById('c_expand').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: tl.map(function (d) { return (d.date || '').slice(5); }),
+        datasets: [
+          { label: 'Total', data: tl.map(function (d) { return d.count; }), backgroundColor: 'rgba(124,111,224,.6)', borderRadius: 3 },
+          { label: 'Aprobadas', data: tl.map(function (d) { return d.approved; }), backgroundColor: 'rgba(62,207,142,.5)', borderRadius: 3 },
+          { label: 'Rechazadas', data: tl.map(function (d) { return d.declined; }), backgroundColor: 'rgba(240,96,96,.4)', borderRadius: 3 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#a89ec8', font: { size: 10 }, boxWidth: 8 } } },
+        scales: { x: { ticks: { color: '#6b6390', font: { size: 10 } }, grid: { color: 'rgba(124,111,224,.06)' } }, y: { ticks: { color: '#6b6390', font: { size: 10 } }, grid: { color: 'rgba(124,111,224,.06)' } } }
+      }
+    });
+  }
+
+  function renderExpandMethods(body) {
+    var m = data.methods;
+    if (!m || !m.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos</div>'; return; }
+    var html = '<div style="height:280px;position:relative;margin-bottom:16px"><canvas id="c_expand"></canvas></div>';
+    html += '<table class="tx-table"><thead><tr><th>Conector</th><th>Método</th><th>Nº tx</th><th>Volumen</th><th>Tasa aprobación</th></tr></thead><tbody>';
+    m.forEach(function (x) {
+      html += '<tr><td>' + (x.processor || '–') + '</td><td>' + (x.method || '–') + '</td><td>' + x.count + '</td><td>' + fmt(x.volume) + '</td><td>' + (x.approvalRate || 0) + '%</td></tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+    destroyExpandChart();
+    chartInstances.expand = new Chart(document.getElementById('c_expand').getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: m.map(function (x) { return x.processor || x.method || '–'; }), datasets: [{ data: m.map(function (x) { return x.count; }), backgroundColor: METHOD_COLORS, borderWidth: 0, hoverOffset: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#a89ec8', font: { size: 11 }, boxWidth: 10 } } } }
+    });
+  }
+
+  function renderExpandCountries(body) {
+    var cs = data.countries;
+    if (!cs || !cs.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos de países</div>'; return; }
+    var html = '<table class="tx-table"><thead><tr><th>País</th><th>Nº tx</th><th>Volumen</th></tr></thead><tbody>';
+    cs.forEach(function (c) {
+      html += '<tr><td>' + (FLAGS[c.country] || '🌍') + ' ' + c.country + '</td><td>' + c.count + '</td><td>' + fmt(c.volume) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+
+  /* ── LISTA COMPLETA DE TRANSACCIONES (paginada + filtrable) ──
+     Consulta directamente al servidor (GET /backoffice/transactions),
+     no depende de lo ya cargado en cliente — así cubre todo el histórico,
+     no solo el top 10 del widget colapsado. */
+  var expandTxState = { page: 1, limit: 20, status: '', processor: '', country: '', q: '' };
+
+  function closeExpandAndShowTx(tx) {
+    document.getElementById('expandModal').classList.remove('open');
+    destroyExpandChart();
+    showTxDetail(tx);
+  }
+
+  function renderExpandTxList(body) {
+    expandTxState = { page: 1, limit: 20, status: '', processor: '', country: '', q: '' };
+    body.innerHTML =
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
+      '<select id="etxStatus" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">' +
+      '<option value="">Todos los estados</option>' +
+      '<option value="authorized">authorized</option><option value="approved">approved</option>' +
+      '<option value="declined">declined</option><option value="captured">captured</option>' +
+      '<option value="partially_captured">partially_captured</option>' +
+      '<option value="refunded">refunded</option><option value="partially_refunded">partially_refunded</option>' +
+      '<option value="canceled">canceled</option><option value="pending">pending</option><option value="pending_3ds">pending_3ds</option>' +
+      '</select>' +
+      '<input type="text" id="etxProcessor" placeholder="Conector" style="width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>' +
+      '<input type="text" id="etxCountry" placeholder="País emisor" style="width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>' +
+      '<input type="text" id="etxSearch" placeholder="Buscar paymentId / referencia" style="flex:1;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>' +
+      '<button class="btn btn-primary" id="etxApply">Filtrar</button>' +
+      '</div>' +
+      '<div id="etxTableWrap"><div class="spinner"></div></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">' +
+      '<button class="btn btn-ghost" id="etxPrev">← Anterior</button>' +
+      '<span id="etxPageInfo" style="font-size:12px;color:var(--text3)"></span>' +
+      '<button class="btn btn-ghost" id="etxNext">Siguiente →</button>' +
+      '</div>';
+
+    document.getElementById('etxApply').addEventListener('click', function () {
+      expandTxState.status    = document.getElementById('etxStatus').value;
+      expandTxState.processor = document.getElementById('etxProcessor').value.trim();
+      expandTxState.country   = document.getElementById('etxCountry').value.trim();
+      expandTxState.q         = document.getElementById('etxSearch').value.trim();
+      expandTxState.page      = 1;
+      loadExpandTxList();
+    });
+    document.getElementById('etxPrev').addEventListener('click', function () {
+      if (expandTxState.page > 1) { expandTxState.page -= 1; loadExpandTxList(); }
+    });
+    document.getElementById('etxNext').addEventListener('click', function () {
+      expandTxState.page += 1; loadExpandTxList();
+    });
+
+    loadExpandTxList();
+  }
+
+  function loadExpandTxList() {
+    var wrap = document.getElementById('etxTableWrap');
+    if (!wrap) return; // el modal pudo cerrarse mientras cargaba
+    wrap.innerHTML = '<div class="spinner"></div>';
+    var qs = '?page=' + expandTxState.page + '&limit=' + expandTxState.limit;
+    if (expandTxState.status)    qs += '&status=' + encodeURIComponent(expandTxState.status);
+    if (expandTxState.processor) qs += '&processor=' + encodeURIComponent(expandTxState.processor);
+    if (expandTxState.country)   qs += '&country=' + encodeURIComponent(expandTxState.country);
+    if (expandTxState.q)         qs += '&q=' + encodeURIComponent(expandTxState.q);
+
+    api('/backoffice/transactions' + qs).then(function (r) {
+      var wrapNow = document.getElementById('etxTableWrap');
+      if (!wrapNow) return;
+      renderExpandTxTable(r.transactions || []);
+      var p = r.pagination || {};
+      var pageInfo = document.getElementById('etxPageInfo');
+      if (pageInfo) pageInfo.textContent = 'Página ' + (p.page || 1) + ' de ' + (p.pages || 1) + ' · ' + (p.total || 0) + ' transacciones';
+      var prevBtn = document.getElementById('etxPrev'); if (prevBtn) prevBtn.disabled = (p.page || 1) <= 1;
+      var nextBtn = document.getElementById('etxNext'); if (nextBtn) nextBtn.disabled = (p.page || 1) >= (p.pages || 1);
+    }).catch(function (e) {
+      var wrapNow = document.getElementById('etxTableWrap');
+      if (wrapNow) wrapNow.innerHTML = '<div style="color:var(--red);font-size:12px">' + e.message + '</div>';
+    });
+  }
+
+  function renderExpandTxTable(txs) {
+    var wrap = document.getElementById('etxTableWrap');
+    if (!wrap) return;
+    if (!txs.length) { wrap.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:12px 0">Sin resultados</div>'; return; }
+    var table = document.createElement('table'); table.className = 'tx-table';
+    table.innerHTML = '<thead><tr><th>Payment ID</th><th>Referencia</th><th>Importe</th><th>Estado</th><th>Conector</th><th>País</th><th>Fecha</th></tr></thead>';
+    var tbody = document.createElement('tbody');
+    txs.forEach(function (t) {
+      var tr = document.createElement('tr'); tr.style.cursor = 'pointer';
+      tr.innerHTML =
+        '<td style="font-family:monospace;font-size:11px">' + (t.paymentId || '–').slice(0, 14) + '…</td>' +
+        '<td>' + (t.merchantReference || '–') + '</td>' +
+        '<td>' + fmt(t.amount) + '</td>' +
+        '<td>' + statusBadge(t.status) + '</td>' +
+        '<td>' + (t.processor || '–') + '</td>' +
+        '<td>' + (t.issuerCountry || '–') + '</td>' +
+        '<td>' + (t.createdAt || '').slice(0, 10) + '</td>';
+      tr.addEventListener('click', (function (tx) { return function (e) { if (e && e.stopPropagation) e.stopPropagation(); closeExpandAndShowTx(tx); }; })(t));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.innerHTML = ''; wrap.appendChild(table);
   }
 
   /* ── TX DETAIL ── */
@@ -748,6 +1037,7 @@
     document.getElementById('refreshBtn').addEventListener('click', loadAll);
     document.getElementById('widgetToggleBtn').addEventListener('click', toggleWidgetEditor);
     document.getElementById('txModalClose').addEventListener('click',function(){document.getElementById('txModal').classList.remove('open');});
+    document.getElementById('expandModalClose').addEventListener('click',function(){document.getElementById('expandModal').classList.remove('open');destroyExpandChart();});
     document.getElementById('refundModalClose').addEventListener('click',function(){document.getElementById('refundModal').classList.remove('open');});
     document.getElementById('refundBtn').addEventListener('click', doRefund);
     document.getElementById('editUserModalClose').addEventListener('click',function(){document.getElementById('editUserModal').classList.remove('open');});
