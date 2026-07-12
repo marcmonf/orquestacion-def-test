@@ -212,7 +212,7 @@ Merchant backend
 | Gap | Prioridad | Descripción |
 |---|---|---|
 | ~~Modelo Merchant en MongoDB~~ | ✅ M2 COMPLETADO | Modelo `Merchant` unificado con campos operativos (plan, status, webhookUrl, signingSecret, serviceUuid, templateUuid, branding). Rutas `/merchants` montadas y protegidas por X-Admin-Token. Dispatcher firma por-merchant. Detalle completo en sección 6 (M2). |
-| Panel de administración `/admin` | Alta — M3 | No hay UI para operar sin Postman ni Atlas |
+| ~~Panel de administración `/admin`~~ | ✅ M3 COMPLETADO | Dashboard con analíticas, transacciones (refund/cancel/widgets expandibles), usuarios, merchants, API keys y motor de reglas. Ver sección 6 (M3). |
 | OpenAPI completa | Media — M4 | La spec actual no refleja proxy-pci ni el flujo real de hosted checkout |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | Logs de debug en producción | Baja | Hay varios `logger.info` con `fullBody` y `tokenKeys` que deben eliminarse antes de producción |
@@ -273,7 +273,7 @@ POST /merchants   (header: X-Admin-Token)
 → 201, sin signingSecret en la respuesta
 ```
 
-### M3 — Panel de administración (EN PROGRESO — julio 2026)
+### M3 — Panel de administración ✅ COMPLETADO (julio 2026)
 **Objetivo:** UI en `/admin` para operar sin Postman ni Atlas.
 
 **Contexto descubierto:** ya existía un panel a medias (herencia de versiones antiguas).
@@ -349,10 +349,32 @@ Conviven DOS paneles en `public/admin/`:
 - No se tocó el backend: `/backoffice/transactions` ya soportaba paginación y
   filtros desde antes, solo faltaba la UI que los usara más allá del top 10.
 
-**Pendiente de M3:**
-- Absorber el editor de reglas viejo (`index.html`/`app.js`) como pestaña del dashboard nuevo.
-- Sin verificar todavía en vivo (Marcos sin acceso a Mac en esta sesión) — ver pruebas
-  pendientes más abajo.
+**Hecho en esta sesión (pestaña Reglas — cierra M3):**
+- Nueva pestaña **Reglas** (`tabBtnRules` / `tabRules`), solo superadmin. Absorbe
+  el editor viejo (`public/admin/index.html` + `app.js`, protegido por X-Admin-Token
+  manual) dentro del dashboard nuevo, con sesión JWT en vez de pegar el token a mano.
+- Mismas funciones que el editor viejo: cargar/guardar política JSON por merchant,
+  atajos de reglas (5 presets), probar política contra una transacción de ejemplo,
+  exportar/importar JSON, histórico de auditoría.
+- Backend: `src/routes/backofficeRoutes.js` gana `/backoffice/rules/*`, protegidas
+  por sesión JWT + `requireRole('superadmin')`, reutilizando `rulesController.js`
+  TAL CUAL (cero lógica duplicada) — solo cambia el middleware de auth. Las rutas
+  `/rules/*` con X-Admin-Token (`rulesRoutes.js`) siguen intactas por si algún
+  script externo las usa directamente.
+- Mejora sobre el editor viejo: el actor de auditoría (`x-admin-actor`) ya no
+  depende de un header manual — se rellena solo con el email de la sesión de
+  backoffice (`stampRulesActor` en backofficeRoutes.js).
+- **OJO — sin verificar**: `tryPolicy`, `getAudit`, `exportPolicy` e `importPolicy`
+  en `rulesController.js` están detrás de flags de entorno (`FEATURE_RULE_TRY`,
+  `FEATURE_RULE_AUDIT`, `FEATURE_RULE_EXPORT_UI`) que no sabemos si están activadas
+  en Render. Si no lo están, esos botones devuelven 404 y la UI lo muestra como
+  "función desactivada" con el nombre exacto del flag que falta — no rompe nada,
+  pero conviene revisar en Render qué flags están puestas. `getPolicy`/`upsertPolicy`
+  (cargar/guardar, lo esencial) NO dependen de ningún flag, siempre funcionan.
+- El editor viejo (`/admin/index.html`) queda ahora redundante pero no se ha
+  tocado ni eliminado — decisión de Marcos si quiere retirarlo más adelante.
+
+**M3 cerrado.** Pendiente de verificar en vivo — ver pruebas pendientes más abajo.
 
 **Aprendizaje clave de esta sesión — TARJETAS DE TEST:**
 Las tarjetas de test REALES de Paylands sandbox son las `4018810000100036` / `4018810001010010`
@@ -533,7 +555,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 ---
 
-*Última revisión: 12 julio 2026 (sesión tarde) — Dashboard: al tocar cualquier widget (no solo transacciones) se abre una vista ampliada — KPIs muestran su evolución temporal en gráfico de línea, gráficos grandes ganan tabla de datos completa debajo, y "Últimas transacciones" se convierte en un listado completo paginado y filtrable (estado/conector/país/búsqueda) contra `/backoffice/transactions`, que ya soportaba esto en el backend. Antes de eso: añadidas pestañas Merchants y API Keys al dashboard (`/backoffice/merchants` + `/backoffice/merchants/:id/api-keys`, solo superadmin), reutilizando el modelo Merchant (M2) y apiKeyService.js existentes; de paso, corregido bug preexistente de id duplicado que dejaba la pestaña "Usuarios" invisible para todos. Sesión de la mañana: descubierto y reconectado a Paylands real el sistema legacy de capture/refund/cancel (paymentsController.js + Operation), con fix de seguridad (ownership de merchant) y fix de lógica (refund/capture sin exigir captura previa). refund usa endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son inferencia, sin verificar aún. Pendiente: verificar todo en Postman/navegador contra Render cuando Marcos tenga acceso al Mac — ver sección 11. M1 y M2 completados. Tarjetas test buenas: 4018810...*
+*Última revisión: 12 julio 2026 (sesión tarde) — M3 CERRADO: nueva pestaña Reglas absorbe el editor viejo (index.html/app.js) sobre sesión JWT de backoffice, reutilizando rulesController.js sin cambios; el actor de auditoría ahora se rellena solo con el email de sesión. OJO: "Probar"/"Exportar"/"Importar"/"Histórico" dependen de flags de entorno (FEATURE_RULE_TRY/EXPORT_UI/AUDIT) sin confirmar en Render — cargar/guardar política no depende de ningún flag. Antes de eso, en la misma sesión: al tocar cualquier widget del dashboard se abre una vista ampliada (KPIs con evolución temporal, gráficos grandes + tabla, "Últimas transacciones" con listado completo paginado y filtrable contra `/backoffice/transactions`). Y antes: pestañas Merchants y API Keys (`/backoffice/merchants` + `/backoffice/merchants/:id/api-keys`, solo superadmin), reutilizando el modelo Merchant (M2) y apiKeyService.js; de paso, corregido bug preexistente de id duplicado que dejaba la pestaña "Usuarios" invisible para todos. Sesión de la mañana: descubierto y reconectado a Paylands real el sistema legacy de capture/refund/cancel (paymentsController.js + Operation), con fix de seguridad (ownership de merchant) y fix de lógica (refund/capture sin exigir captura previa). refund usa endpoint verificado (POST /payment/refund); capture (POST /payment/capture) y cancel (POST /payment/cancel) son inferencia, sin verificar aún. Pendiente: verificar TODO en Postman/navegador contra Render cuando Marcos tenga acceso al Mac — ver sección 11 (7 pruebas pendientes). M1, M2 y M3 completados. Tarjetas test buenas: 4018810...*
 
 ---
 
@@ -613,5 +635,11 @@ pending
    país, búsqueda) y la paginación anterior/siguiente contra datos reales.
    Confirmar que clicar una fila de transacción dentro del expand cierra el
    modal y abre el detalle de siempre (con refund/cancel si aplica).
+7. **Pestaña Reglas (nuevo, sin probar en vivo, cierra M3)**: cargar la política
+   de `demo-merchant`, guardar un cambio, probar los 5 presets, usar "Probar"
+   con una tarjeta de ejemplo y confirmar la explicación. Si "Probar",
+   "Exportar", "Importar" o "Histórico" devuelven "función desactivada" —
+   revisar en Render si `FEATURE_RULE_TRY`, `FEATURE_RULE_EXPORT_UI` y
+   `FEATURE_RULE_AUDIT` están puestas a `1`; si no, decidir si activarlas.
 
 Esto forma parte de M2/M3 y debe verificarse en sandbox antes de produccion.
