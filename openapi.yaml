@@ -1,0 +1,1968 @@
+openapi: 3.1.0
+
+info:
+  title: Monetiser — Payment Orchestration Platform API
+  version: 1.0.0
+  summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
+  description: |
+    Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
+    controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
+    esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    ## Cómo leer esta spec
+
+    Cada operación lleva una etiqueta de madurez en `x-madurez`:
+
+    | Marca | Significado |
+    |---|---|
+    | `estable` | Verificado end-to-end contra Paylands real. Integrable hoy. |
+    | `experimental` | El contrato VA A CAMBIAR. No integrar. |
+    | `interno` | Lo usa el iFrame o el dashboard de Monetiser, no el merchant. |
+    | `legado` | Anterior al diseño actual. Se mantiene por compatibilidad. |
+
+    ## Importes: SIEMPRE en céntimos
+
+    `amountOfMoney.amount` y `amount` son **enteros en céntimos**, estilo Paylands.
+    `100` = 1,00 €. Nunca decimales. Es la causa de bugs más repetida del proyecto.
+
+    ## Estados de una transacción
+
+    ```
+    pending → pending_3ds → authorized ─┬─ captured / partially_captured
+                                        ├─ cancelled  (solo antes de capturar)
+                                        └─ refunded / partially_refunded
+                          → declined
+                          → error
+    ```
+
+    ## Scope PCI (decisión de 16 jul 2026)
+
+    Monetiser opera en scope **PCI SAQ A**: el número de tarjeta (PAN) nunca toca
+    sus servidores. Los datos de tarjeta se capturan en campos ProxyFields de
+    Paylands embebidos en el iFrame y se tokenizan en Paylands.
+
+    La única excepción es `POST /{merchantId}/payments/server` (S2S), que hoy acepta
+    el PAN en el body. **Por eso está marcado `experimental` y no debe integrarse.**
+    Decisión tomada: S2S pasará a aceptar solo tokens. Ver DEV-LOG.md, sección 5.
+
+  contact:
+    name: Repositorio y estado del proyecto
+    url: https://github.com/marcmonf/orquestacion-def-test
+  license:
+    name: Propietario
+
+servers:
+  - url: https://orquestacion-def-test.onrender.com
+    description: Entorno de pruebas (Paylands sandbox). Hoy el único desplegado.
+
+tags:
+  - name: Hosted Checkout
+    description: |
+      **Flujo recomendado y único verificado end-to-end.** El merchant crea el pago
+      sin datos de tarjeta y recibe una `redirectUrl` que embebe en un iframe.
+  - name: Ciclo de vida
+    description: |
+      Capture, refund y cancel sobre un pago ya autorizado. Verificados contra
+      Paylands real el 16 jul 2026.
+
+      **Requisito:** la orden debe haberse creado con `operative: DEFERRED` (es lo
+      que hace el conector hoy). Con `AUTHORIZATION` el dinero se mueve al instante
+      y no hay nada que confirmar ni cancelar.
+  - name: Webhooks
+    description: Notificaciones entrantes (Paylands → Monetiser) y salientes (Monetiser → merchant).
+  - name: S2S
+    description: |
+      **EXPERIMENTAL — no integrar.** Ver `x-madurez` y la nota de scope PCI arriba.
+  - name: Reglas de routing
+    description: Motor de reglas que decide a qué conector va cada transacción.
+  - name: Administración
+    description: Alta de merchants y gestión de API keys. Requiere `X-Admin-Token`.
+  - name: Observabilidad
+    description: Consulta de transacciones y eventos.
+  - name: Interno
+    description: Endpoints que consume el propio iFrame de Monetiser, no el merchant.
+
+security:
+  - ApiKeySimple: []
+    MerchantId: []
+
+paths:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # HOSTED CHECKOUT
+  # ──────────────────────────────────────────────────────────────────────
+
+  /{merchantId}/payments/hosted:
+    post:
+      tags: [Hosted Checkout]
+      summary: Crear un Hosted Checkout
+      operationId: createHostedCheckout
+      x-madurez: estable
+      description: |
+        Crea una transacción y devuelve una `redirectUrl` que el merchant embebe en
+        un `<iframe>`. **El body no lleva datos de tarjeta** — se capturan después en
+        el iFrame vía ProxyFields de Paylands.
+
+        Contrato leído de `src/dtos/hostedCheckoutDTO.js` (`HostedCheckoutRequestDTO`).
+
+        El `merchantId` se lee de la URL y **no forma parte del body**.
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedCheckoutRequest'
+            examples:
+              minimo:
+                summary: Lo mínimo que acepta (verificado)
+                value:
+                  order:
+                    amountOfMoney:
+                      amount: 100
+                      currencyCode: EUR
+                  feedbacks:
+                    returnUrl: https://example.com/return
+                    webhookUrl: https://example.com/webhooks/monetiser
+      responses:
+        '200':
+          description: Checkout creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedCheckoutCreateResponse'
+        '400':
+          description: Body inválido según el DTO, o importe no válido.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Error interno.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /{merchantId}/payments/hosted/{hostedCheckoutId}/status:
+    get:
+      tags: [Hosted Checkout]
+      summary: Consultar el estado de un Hosted Checkout
+      operationId: getHostedCheckoutStatus
+      x-madurez: estable
+      description: |
+        Estado actual del checkout. Contrato de respuesta leído de
+        `buildHostedCheckoutStatusResponse` en `src/dtos/hostedCheckoutDTO.js`.
+
+        Es una alternativa al webhook para conocer el desenlace del pago, pero el
+        webhook es el mecanismo recomendado: este endpoint hay que sondearlo.
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+        - name: hostedCheckoutId
+          in: path
+          required: true
+          description: El `hostedCheckoutId` devuelto al crear el checkout.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estado del checkout.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedCheckoutStatusResponse'
+        '400':
+          description: Falta el `hostedCheckoutId`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No existe un checkout con ese id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Error interno.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # CICLO DE VIDA
+  # ──────────────────────────────────────────────────────────────────────
+
+  /payments/{paymentId}/capture:
+    post:
+      tags: [Ciclo de vida]
+      summary: Capturar (confirmar) un pago autorizado
+      operationId: capturePayment
+      x-madurez: estable
+      description: |
+        Confirma el cobro de un pago en estado `authorized`. Internamente llama a
+        `POST /payment/confirmation` de Paylands.
+
+        **Ojo con el contrato:** este endpoint usa `amount` **plano** (entero, en
+        céntimos), a diferencia de `refund` y `cancel`, que usan
+        `amountOfMoney.amount`. Es una inconsistencia real del código
+        (`captureSchema` vs `refundSchema` en `src/validators/paymentValidator.js`),
+        documentada aquí tal cual es. Si `amount` se omite, se captura el importe
+        pendiente completo.
+
+        El `merchantId` NO va en la URL: se resuelve desde el header `x-merchant-id`.
+        Una transacción de otro merchant devuelve `404`, no `403`.
+
+        El validator rechaza campos desconocidos (`allowUnknown: false`).
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+            examples:
+              total:
+                summary: Capturar todo lo pendiente (verificado — body vacío)
+                value: {}
+              parcial:
+                summary: Capturar 1,00 € de una autorización mayor
+                value:
+                  amount: 100
+                  isFinal: true
+      responses:
+        '200':
+          description: Capturado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureResponse'
+        '400':
+          $ref: '#/components/responses/BadIdempotencyKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: |
+            La transacción no existe **o pertenece a otro merchant**.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: |
+            Conflicto de estado. Mensajes reales que devuelve:
+            - `Cannot capture payment in status '<status>'`
+            - `Invalid capture amount`
+            - `Capture exceeds authorized amount`
+            - `capture.missing_processor_reference`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: |
+            `capture.connector_not_configured` o `capture.error`.
+        '502':
+          $ref: '#/components/responses/ProcessorDeclined'
+
+  /payments/{paymentId}/refund:
+    post:
+      tags: [Ciclo de vida]
+      summary: Reembolsar un pago (total o parcial)
+      operationId: refundPayment
+      x-madurez: estable
+      description: |
+        Devuelve dinero al cardholder. Internamente llama a `POST /payment/refund`
+        de Paylands. Verificado end-to-end (total y parcial).
+
+        Usa `amountOfMoney.amount` (entero, céntimos). Si se omite, se reembolsa el
+        importe reembolsable restante completo.
+
+        Si no hay una operación de `capture` previa registrada, la base reembolsable
+        es el **importe autorizado** (se corrigió así porque el flujo actual no
+        siempre pasa por una captura explícita).
+
+        El validator rechaza campos desconocidos (`allowUnknown: false`).
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+            examples:
+              parcial:
+                summary: Reembolso parcial de 1,00 € (verificado)
+                value:
+                  amountOfMoney:
+                    amount: 100
+                    currencyCode: EUR
+              total:
+                summary: Reembolso total (body vacío)
+                value: {}
+      responses:
+        '200':
+          description: Reembolsado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+        '400':
+          $ref: '#/components/responses/BadIdempotencyKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: La transacción no existe o pertenece a otro merchant.
+        '409':
+          description: |
+            Conflicto de estado. Mensajes reales:
+            - `Cannot refund payment in status '<status>'`
+            - `Invalid refund amount`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: '`refund.error`.'
+        '502':
+          $ref: '#/components/responses/ProcessorDeclined'
+
+  /payments/{paymentId}/cancel:
+    post:
+      tags: [Ciclo de vida]
+      summary: Anular un pago autorizado sin capturar
+      operationId: cancelPayment
+      x-madurez: estable
+      description: |
+        Libera la retención de una autorización **antes de capturarla**.
+        Internamente llama a `POST /payment/cancellation` de Paylands.
+
+        Si el pago ya se capturó, esto no sirve: hay que usar `refund`.
+
+        Verificado end-to-end el 16 jul 2026 con body vacío.
+
+        El validator rechaza campos desconocidos (`allowUnknown: false`).
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+            examples:
+              verificado:
+                summary: Anulación (verificado — body vacío)
+                value: {}
+      responses:
+        '200':
+          description: |
+            Anulado. **Ojo:** el campo `status` devuelve `canceled` (una `l`,
+            grafía inglesa), mientras que el estado que se persiste en la
+            transacción es `cancelled` (dos `l`). Así está en el código.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelResponse'
+        '400':
+          $ref: '#/components/responses/BadIdempotencyKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: La transacción no existe o pertenece a otro merchant.
+        '409':
+          description: Estado no anulable (por ejemplo, ya capturado).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: '`cancel.error`.'
+        '502':
+          $ref: '#/components/responses/ProcessorDeclined'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # S2S — EXPERIMENTAL
+  # ──────────────────────────────────────────────────────────────────────
+
+  /{merchantId}/payments/server:
+    post:
+      tags: [S2S]
+      summary: '[EXPERIMENTAL — NO INTEGRAR] Pago server-to-server'
+      operationId: createServerPayment
+      x-madurez: experimental
+      deprecated: true
+      description: |
+        > **NO INTEGRAR. EL CONTRATO VA A CAMBIAR.**
+        >
+        > Marcado `deprecated: true` para que las herramientas de generación de
+        > clientes lo señalen. No es que vaya a desaparecer: es que hoy **no es
+        > utilizable** y su contrato cambiará.
+
+        Dos razones por las que este endpoint no es integrable hoy:
+
+        1. **Rompe el scope PCI SAQ A.** Acepta el PAN en crudo en
+           `cardPaymentMethodSpecificInput.card.cardNumber`. Decisión tomada el
+           16 jul 2026: pasará a aceptar **solo tokens** generados vía ProxyFields.
+           Ese cambio romperá este contrato.
+
+        2. **No funciona contra Paylands.** `payNoPainConnector.js` no tiene función
+           `authorize()`. Como la política por defecto de un merchant sin reglas es
+           `defaultConnector: 'dummyCard'`, hoy este endpoint solo opera contra el
+           conector simulado. Si una regla enrutase S2S a `payNoPain`, reventaría con
+           `connector.authorize is not a function`.
+
+        **No usar con tarjetas reales ni de test.** Para generar transacciones de
+        prueba contra Paylands real, usar Hosted Checkout.
+      security:
+        - ApiKeySimple: []
+          MerchantId: []
+        - HmacV1: []
+          MerchantId: []
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServerPaymentRequest'
+      responses:
+        '200':
+          description: |
+            Resultado del pago. Hoy solo llega aquí vía el conector `dummyCard`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Body inválido.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Error interno.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # WEBHOOK ENTRANTE
+  # ──────────────────────────────────────────────────────────────────────
+
+  /webhooks/paynopain:
+    post:
+      tags: [Webhooks]
+      summary: Webhook entrante de Paylands (PSP → Monetiser)
+      operationId: paynopainWebhook
+      x-madurez: estable
+      security: []
+      description: |
+        Lo llama Paylands, no el merchant. **Sin autenticación por API key** — la
+        autenticidad se comprueba con el `validation_hash` del propio body.
+
+        ### Verificación de la firma
+
+        Implementada en `src/routes/webhooks.js`:
+
+        ```
+        expected = SHA256_hex( JSON.stringify(hashObj) + PAYNOPAIN_SIGNATURE )
+        ```
+
+        donde `hashObj` se construye **solo con los campos presentes**:
+
+        ```js
+        hashObj = { order: body.order || null, client: body.client || null }
+        // extra_data se añade SOLO si body.extra_data !== undefined
+        ```
+
+        Detalle que costó una sesión de depuración: incluir `extra_data: null`
+        cuando no viene en el body produce un hash distinto y la firma nunca valida.
+
+        La comparación es timing-safe (`crypto.timingSafeEqual`).
+
+        ### Por qué siempre responde 200
+
+        Este endpoint devuelve `200` **incluso cuando rechaza el evento** (firma
+        inválida, transacción no encontrada, o `PAYNOPAIN_SIGNATURE` sin configurar).
+        Es deliberado: un no-2xx haría que Paylands reintentase indefinidamente. Los
+        eventos rechazados responden `{"received": true, "ignored": true}` y quedan
+        registrados en los logs.
+
+        **Consecuencia operativa:** un `200` aquí NO significa que el pago se haya
+        procesado. Para saberlo hay que mirar `webhookevents` en Mongo o los logs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaylandsWebhookBody'
+      responses:
+        '200':
+          description: |
+            Recibido. Tres formas posibles — ver ejemplos.
+          content:
+            application/json:
+              examples:
+                procesado:
+                  summary: Evento válido y aplicado
+                  value:
+                    received: true
+                    paymentId: a0408ee0-ba65-4dc7-bccb-6c3a778f8c83
+                    status: authorized
+                ignorado:
+                  summary: Firma inválida o tx no encontrada (también 200)
+                  value:
+                    received: true
+                    ignored: true
+                sinSecreto:
+                  summary: PAYNOPAIN_SIGNATURE no configurada en el entorno
+                  value:
+                    received: true
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean }
+                  ignored: { type: boolean }
+                  paymentId: { type: string }
+                  status: { type: string }
+        '500':
+          description: '`db_error` — fallo al actualizar la transacción.'
+
+  /webhooks:
+    get:
+      tags: [Observabilidad]
+      summary: Histórico de eventos de webhook entrantes
+      operationId: listWebhookEvents
+      x-madurez: estable
+      parameters:
+        - name: paymentId
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Lista de `WebhookEvent`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '500':
+          description: Error interno.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ADMINISTRACIÓN
+  # ──────────────────────────────────────────────────────────────────────
+
+  /merchants:
+    post:
+      tags: [Administración]
+      summary: Crear un merchant
+      operationId: createMerchant
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: |
+        Los secretos (`signingSecret`, etc.) **nunca** se devuelven en la respuesta.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MerchantCreateRequest'
+            examples:
+              ejemplo:
+                summary: Alta verificada
+                value:
+                  merchantId: test-m2
+                  name: Comercio de prueba
+                  country: ES
+                  plan: starter
+                  status: active
+                  webhookUrl: https://example.com/webhooks/monetiser
+      responses:
+        '201':
+          description: Merchant creado (sin secretos en la respuesta).
+        '400':
+          description: Datos inválidos.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+        '409':
+          description: Ya existe un merchant con ese `merchantId`.
+    get:
+      tags: [Administración]
+      summary: Listar merchants
+      operationId: listMerchants
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: q
+          in: query
+          description: Búsqueda por texto.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lista paginada.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+
+  /merchants/{merchantId}:
+    get:
+      tags: [Administración]
+      summary: Obtener un merchant
+      operationId: getMerchant
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      responses:
+        '200':
+          description: Ficha del merchant (sin secretos).
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+        '404':
+          description: No existe.
+    patch:
+      tags: [Administración]
+      summary: Actualizar un merchant
+      operationId: updateMerchant
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MerchantPatchRequest'
+      responses:
+        '200':
+          description: Actualizado.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+        '404':
+          description: No existe.
+
+  /api-keys/{merchantId}:
+    post:
+      tags: [Administración]
+      summary: Crear una API key para un merchant
+      operationId: createApiKey
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: |
+        **El `rawSecret` se devuelve UNA SOLA VEZ**, en esta respuesta. No se puede
+        recuperar después: en Mongo solo queda su hash.
+
+        Ver la nota sobre qué es realmente `x-api-key` en el esquema de seguridad
+        `ApiKeySimple` — hoy el header lleva el `rawKeyId`, no el `rawSecret`.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  description: Etiqueta para identificar la key.
+                expiresAt:
+                  type: string
+                  format: date-time
+                  description: Opcional. Se verifica en cada validación.
+      responses:
+        '201':
+          description: Key creada. Única vez que se ve el `rawSecret`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreateResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+    get:
+      tags: [Administración]
+      summary: Listar las API keys activas de un merchant
+      operationId: listApiKeys
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      responses:
+        '200':
+          description: Lista de keys (sin secretos ni hashes).
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+
+  /api-keys/{merchantId}/{keyId}:
+    delete:
+      tags: [Administración]
+      summary: Revocar una API key
+      operationId: revokeApiKey
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: 'Marca la key como `active: false` y sella `revokedAt`. No la borra.'
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+        - name: keyId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revocada.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+        '404':
+          description: No existe.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # REGLAS DE ROUTING
+  # ──────────────────────────────────────────────────────────────────────
+
+  /rules/{merchantId}:
+    get:
+      tags: [Reglas de routing]
+      summary: Obtener la política de routing de un merchant
+      operationId: getPolicy
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: No depende de ningún feature flag. Siempre disponible.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      responses:
+        '200':
+          description: Política actual.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+    put:
+      tags: [Reglas de routing]
+      summary: Crear o actualizar la política de routing
+      operationId: upsertPolicy
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: |
+        No depende de ningún feature flag.
+
+        **Aviso de auditoría:** la entrada de auditoría de este cambio solo se
+        escribe si `FEATURE_RULE_AUDIT=1`. Con el flag apagado el cambio se guarda
+        **sin rastro de autor**, y ese histórico no se puede reconstruir después.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+        - name: x-admin-actor
+          in: header
+          required: false
+          description: |
+            Actor que queda registrado en la auditoría. Desde el dashboard se
+            rellena solo con el email de la sesión. Si falta, se guarda `unknown`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Policy' }
+      responses:
+        '200':
+          description: Guardada.
+        '400':
+          description: Política inválida.
+        '401':
+          $ref: '#/components/responses/UnauthorizedAdmin'
+
+  /rules/validate:
+    post:
+      tags: [Reglas de routing]
+      summary: Validar una política sin guardarla
+      operationId: validatePolicy
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Policy' }
+      responses:
+        '200':
+          description: Política válida (devuelve la versión normalizada).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  normalized: { $ref: '#/components/schemas/Policy' }
+        '400':
+          description: Política inválida.
+
+  /rules/try:
+    post:
+      tags: [Reglas de routing]
+      summary: Probar una política contra una transacción de ejemplo (dry-run)
+      operationId: tryPolicy
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: |
+        **Requiere `FEATURE_RULE_TRY=1`.** Si el flag no está, devuelve
+        `404 {"success": false, "error": "disabled"}` — no es un error de la
+        petición, es la función apagada.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                policy: { $ref: '#/components/schemas/Policy' }
+                sample:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Decisión que tomaría el motor, con explicación legible.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  decision: { $ref: '#/components/schemas/RuleDecision' }
+                  explainHuman:
+                    type: array
+                    items: { type: string }
+        '404':
+          $ref: '#/components/responses/FeatureDisabled'
+
+  /rules/{merchantId}/audit:
+    get:
+      tags: [Reglas de routing]
+      summary: Histórico de cambios de la política
+      operationId: getPolicyAudit
+      x-madurez: estable
+      security: [{ AdminToken: [] }]
+      description: '**Requiere `FEATURE_RULE_AUDIT=1`.**'
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Entradas de auditoría (hashes previo/siguiente, actor, ip, campos cambiados).
+        '404':
+          $ref: '#/components/responses/FeatureDisabled'
+
+  /orchestration/decide:
+    post:
+      tags: [Reglas de routing]
+      summary: Consultar qué conector elegiría el motor de reglas
+      operationId: orchestrationDecide
+      x-madurez: estable
+      description: Solo consulta. No crea ninguna transacción ni mueve dinero.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId, amount, currency, method]
+              properties:
+                paymentId: { type: string }
+                merchantId: { type: string }
+                amount: { type: number }
+                currency: { type: string }
+                method: { type: string, enum: [card, apm] }
+                cardNumber: { type: string }
+                cardInfo:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Decisión calculada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  paymentId: { type: string }
+                  decision: { $ref: '#/components/schemas/RuleDecision' }
+                  cardInfo:
+                    type: object
+                    additionalProperties: true
+                  timestamp: { type: string, format: date-time }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # INTERNO / LEGADO
+  # ──────────────────────────────────────────────────────────────────────
+
+  /hpp/{hostedCheckoutId}:
+    get:
+      tags: [Interno]
+      summary: Redirigir al iFrame firmado
+      operationId: hppRedirect
+      x-madurez: interno
+      security: []
+      description: |
+        Destino de la `redirectUrl`. Construye una URL firmada y hace un `302` al
+        iFrame. Lo abre el navegador del cardholder, no el backend del merchant.
+      parameters:
+        - name: hostedCheckoutId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirección a `/{merchantId}/iframe?paymentId=...`.
+        '404':
+          description: No existe.
+
+  /{merchantId}/iframe:
+    get:
+      tags: [Interno]
+      summary: Servir el iFrame de checkout
+      operationId: getIframe
+      x-madurez: interno
+      security: []
+      description: |
+        Devuelve el HTML del checkout con el branding del merchant y los campos
+        ProxyFields de Paylands embebidos.
+
+        `frame-ancestors: *` — deliberado, para que cualquier merchant pueda
+        embeberlo. `X-Frame-Options` se elimina explícitamente por el mismo motivo.
+
+        Los parámetros `exp` y `signature` solo se exigen si `FEATURE_IFRAME_GUARD=1`.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+        - name: paymentId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: exp
+          in: query
+          required: false
+          schema: { type: string }
+        - name: signature
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: HTML del iFrame.
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: Firma inválida (con `FEATURE_IFRAME_GUARD=1`).
+        '409':
+          description: Reuso o estado no inicializado.
+        '410':
+          description: Enlace expirado.
+
+  /{merchantId}/proxy-pci/session:
+    post:
+      tags: [Interno]
+      summary: Obtener un token de sesión del Proxy PCI
+      operationId: proxyPciSession
+      x-madurez: interno
+      description: |
+        Lo llama el iFrame, no el merchant. Devuelve el token que ProxyFields usa
+        para tokenizar el PAN contra Paylands.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      responses:
+        '200':
+          description: Token de sesión emitido.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /{merchantId}/proxy-pci/charge:
+    post:
+      tags: [Interno]
+      summary: Cobrar con el card UUID tokenizado
+      operationId: proxyPciCharge
+      x-madurez: interno
+      description: |
+        Lo llama el iFrame tras el submit del formulario. Recupera el card UUID de
+        ProxyFields y lanza el cobro contra Paylands.
+
+        Devuelve normalmente `status: pending_3ds` más una `threeDsUrl`: el
+        desenlace real llega después por webhook, no en esta respuesta.
+      parameters:
+        - $ref: '#/components/parameters/MerchantIdPath'
+      responses:
+        '200':
+          description: Cobro lanzado (normalmente `pending_3ds` + `threeDsUrl`).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Transacción no encontrada.
+        '409':
+          description: 'Transacción en estado no válido: `<status>`.'
+        '422':
+          description: |
+            No hay token PCI para esta transacción — el cardholder no completó el
+            formulario.
+
+  /initialize:
+    post:
+      tags: [Interno]
+      summary: '[LEGADO] Inicializar un pago'
+      operationId: initializePayment
+      x-madurez: legado
+      description: |
+        Anterior al diseño de Hosted Checkout. Se mantiene por compatibilidad.
+        **Para integraciones nuevas usar `POST /{merchantId}/payments/hosted`.**
+
+        Protegido con auth solo si `INITIALIZE_REQUIRE_API_KEY=true`.
+      security: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Opcional aquí (a diferencia del ciclo de vida, donde es obligatoria).
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId, amount, currency, returnUrl, callbackUrl, method]
+              properties:
+                merchantId: { type: string }
+                amount: { type: number }
+                currency: { type: string }
+                method: { type: string }
+                returnUrl: { type: string, format: uri }
+                callbackUrl: { type: string, format: uri }
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  paymentId: { type: string }
+                  merchantId: { type: string }
+                  amount: { type: number }
+                  currency: { type: string }
+                  signature: { type: string }
+                  timestamp: { type: string, format: date-time }
+                  expiresAt: { type: string, format: date-time }
+                  iframeUrl: { type: string, format: uri }
+        '409':
+          description: Conflicto de `Idempotency-Key`.
+
+  /health:
+    get:
+      tags: [Observabilidad]
+      summary: Healthcheck
+      operationId: health
+      x-madurez: estable
+      security: []
+      responses:
+        '200':
+          description: Servicio vivo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+
+# ════════════════════════════════════════════════════════════════════════
+# WEBHOOKS SALIENTES (Monetiser → merchant)
+# ════════════════════════════════════════════════════════════════════════
+
+webhooks:
+
+  payment.updated:
+    post:
+      tags: [Webhooks]
+      summary: Desenlace de un pago (autorizado, rechazado, reembolsado…)
+      x-madurez: estable
+      x-emisor: src/services/webhookDispatcher.js
+      description: |
+        Se dispara cuando Paylands notifica el desenlace de un pago. Se envía al
+        `callbackUrl` de la transacción (el `feedbacks.webhookUrl` del create).
+
+        ### Firma
+
+        Header **`Monetiser-Signature: t=<ts>, v1=<hex>`** — fíjate en el **espacio
+        después de la coma**.
+
+        ```
+        v1 = HMAC_SHA256_hex( secreto, `${t}.${JSON.stringify(body)}` )
+        ```
+
+        El secreto es el `signingSecret` del merchant (o `hmacSecret` / `secret`), y
+        si no tiene, el `WEBHOOK_SECRET` global. Sin ninguno de los dos, el webhook
+        **no se envía** y se marca `no_secret_config`.
+
+        Con reintentos y backoff exponencial (`WEBHOOK_MAX_RETRIES`, por defecto 6).
+        Cada intento queda en la colección `webhooklogs`.
+
+        > ⚠️ **Este NO es el mismo formato de firma que usan los eventos del ciclo de
+        > vida** (`payment.captured` / `payment.refunded` / `payment.canceled`). Ver
+        > la nota en esos eventos. Es una divergencia real del código, no un error de
+        > esta documentación.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundWebhookPayload'
+      responses:
+        '200':
+          description: |
+            Devuelve 2xx para confirmar la recepción. Cualquier otra cosa provoca
+            un reintento con backoff.
+
+  payment.captured:
+    post:
+      tags: [Webhooks]
+      summary: Un pago se ha capturado
+      x-madurez: estable
+      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      description: |
+        > ⚠️ **AVISO — este evento se firma DISTINTO que `payment.updated`.**
+        >
+        > Lo emite otra función (`sendWebhookIfAny` en `paymentsController.js`), no
+        > el dispatcher. Diferencias reales, verificadas en el código:
+        >
+        > | | `payment.updated` | `payment.captured/refunded/canceled` |
+        > |---|---|---|
+        > | Header | `Monetiser-Signature` | `x-monetiser-signature` |
+        > | Formato | `t=<ts>, v1=<hex>` (con espacio) | `t=<ts>,v1=<hex>` (sin espacio) |
+        > | Header extra | — | `x-monetiser-timestamp: <ts>` |
+        > | Secreto | del merchant, con fallback global | **solo `WEBHOOK_SECRET` global** |
+        > | Reintentos | sí, con backoff | **no** — un solo intento |
+        > | Registro | `webhooklogs` | **ninguno** |
+        >
+        > **Consecuencias para quien integre:**
+        > 1. Hay que verificar **los dos** headers, o los eventos de ciclo de vida
+        >    fallarán la verificación en silencio.
+        > 2. Si el merchant tiene `signingSecret` propio pero no hay `WEBHOOK_SECRET`
+        >    global, estos eventos salen **sin firmar** (no se omiten: se envían
+        >    igualmente, sin el header de firma).
+        > 3. Si la entrega falla, no hay reintento ni rastro: solo un `warn` en los
+        >    logs de Monetiser.
+        >
+        > Está documentado tal como es. Convendría unificarlo — ver DEV-LOG.
+
+        `data` incluye además `capturedAmount` (entero, céntimos).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundWebhookPayload'
+      responses:
+        '200':
+          description: Recepción confirmada. No se reintenta pase lo que pase.
+
+  payment.refunded:
+    post:
+      tags: [Webhooks]
+      summary: Un pago se ha reembolsado
+      x-madurez: estable
+      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      description: |
+        Mismas diferencias de firma y entrega que `payment.captured` — ver ese evento.
+
+        `data` incluye además `refundedAmount` (entero, céntimos).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundWebhookPayload'
+      responses:
+        '200':
+          description: Recepción confirmada. No se reintenta.
+
+  payment.canceled:
+    post:
+      tags: [Webhooks]
+      summary: Un pago se ha anulado
+      x-madurez: estable
+      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      description: |
+        Mismas diferencias de firma y entrega que `payment.captured` — ver ese evento.
+
+        `data` incluye además `canceled: true`.
+
+        Nota de grafía: el evento es `payment.canceled` (una `l`) pero el `status`
+        dentro de `data` es `cancelled` (dos `l`). Así está en el código.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundWebhookPayload'
+      responses:
+        '200':
+          description: Recepción confirmada. No se reintenta.
+
+# ════════════════════════════════════════════════════════════════════════
+# COMPONENTS
+# ════════════════════════════════════════════════════════════════════════
+
+components:
+
+  securitySchemes:
+
+    ApiKeySimple:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: |
+        Modo simple, pensado para Postman y pruebas.
+
+        **Solo funciona si `API_KEY_SIMPLE_FALLBACK=true` en el entorno.** Si no lo
+        está, hay que usar `HmacV1`.
+
+        > **Cuidado con qué va en este header.** Hoy `x-api-key` lleva el
+        > **`rawKeyId`** (`mk_...`), no el `rawSecret` (`ms_...`). Verificado en
+        > `validateApiKey()` de `src/services/apiKeyService.js`: busca por
+        > `keyId: rawKey`. El `rawSecret` no interviene en este modo.
+        >
+        > Es decir: **en modo simple el secreto no se usa, y el identificador actúa
+        > como credencial.** Aceptable para pruebas; no para producción. Ese es el
+        > motivo por el que existe `HmacV1`.
+
+        Requiere acompañarlo del header `x-merchant-id`.
+
+    MerchantId:
+      type: apiKey
+      in: header
+      name: x-merchant-id
+      description: |
+        Merchant sobre el que se opera.
+
+        En las rutas `/{merchantId}/...` se puede omitir: se toma de la URL. En las
+        de ciclo de vida (`/payments/{paymentId}/...`) **es obligatorio**, porque el
+        merchant no viaja en la ruta.
+
+        Orden de resolución real (`hmacAuth.js`): `req.params.merchantId` →
+        header `x-merchant-id` → `req.body.merchantId`.
+
+    HmacV1:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        Modo canónico (estilo Worldline GCS). Formato del header:
+
+        ```
+        Authorization: GCS v1HMAC:<keyId>:<firmaBase64>
+        ```
+
+        ### Cadena que se firma
+
+        Cinco líneas unidas por `\n`, en este orden exacto:
+
+        ```
+        <MÉTODO EN MAYÚSCULAS>
+        <Content-Type sin parámetros>
+        <valor del header Date>
+        <headers canónicos>
+        <recurso canónico>
+        ```
+
+        - **Headers canónicos**: solo los que empiezan por `x-monetiser-` o `x-gcs-`,
+          en minúsculas, ordenados alfabéticamente, como `clave:valor` unidos por
+          `\n`. Si no hay ninguno, línea vacía.
+        - **Recurso canónico**: la ruta **incluyendo el query string**
+          (`req.originalUrl` tal cual).
+        - El `Date` es obligatorio, en formato RFC 7231, y debe caer dentro de
+          ±`HMAC_DATE_TOLERANCE_MINUTES` (por defecto 5 minutos).
+
+        ### La clave HMAC no es el secreto
+
+        > La firma se calcula con **`secretHash`** (el SHA-256 del secreto guardado
+        > en Mongo) como clave HMAC, **no con el `rawSecret`**. Verificado en
+        > `hmacAuth.js`: `computeSignature(doc.secretHash, stringToHash)`. Quien
+        > integre debe hashear su secreto con SHA-256 primero y usar ese valor como
+        > clave.
+
+        Firma en base64. Comparación timing-safe.
+
+        > Aviso conocido: en Postman, `crypto.subtle` es asíncrono y no bloquea el
+        > envío de la petición — la firma sale vacía. Usar CryptoJS síncrono.
+
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: |
+        Token de administración (`ADMIN_TOKEN` del entorno). Da acceso a la gestión
+        de merchants, API keys y reglas de routing de **todos** los merchants.
+
+  parameters:
+
+    MerchantIdPath:
+      name: merchantId
+      in: path
+      required: true
+      description: Identificador del merchant (ej. `demo-merchant`).
+      schema: { type: string }
+
+    PaymentIdPath:
+      name: paymentId
+      in: path
+      required: true
+      description: El `paymentId` (UUID v4) devuelto al crear el pago.
+      schema: { type: string, format: uuid }
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        **Obligatoria** en capture, refund y cancel. Sin ella: `400 Missing
+        Idempotency-Key header`.
+
+        Formato exigido: `^[a-zA-Z0-9-]{8,64}$` (alfanumérico y guiones, 8 a 64
+        caracteres). Un UUID vale. Otro formato: `400 Invalid Idempotency-Key format`.
+
+        Repetir la misma clave sobre el mismo pago y la misma operación **rejuega la
+        respuesta original** (mismo código y mismo cuerpo), sin volver a llamar a
+        Paylands.
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9-]{8,64}$'
+      example: cnl-final-001
+
+  responses:
+
+    Unauthorized:
+      description: Credenciales ausentes o inválidas.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: false }
+              error: { type: string, const: unauthorized }
+              message: { type: string }
+              detail:
+                type: string
+                description: |
+                  Motivo exacto. Valores reales: `missing_merchant_id`,
+                  `missing_or_invalid_authorization_header`, `invalid_api_key_simple`,
+                  `malformed_authorization_header`, `empty_key_id_or_signature`,
+                  `missing_date_header`, `invalid_date_header`,
+                  `date_out_of_tolerance_window`, `key_not_found`, `invalid_signature`.
+
+    UnauthorizedAdmin:
+      description: Falta el header `X-Admin-Token` o no es válido.
+
+    BadIdempotencyKey:
+      description: |
+        Falta la `Idempotency-Key` o su formato no cumple `^[a-zA-Z0-9-]{8,64}$`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    ProcessorDeclined:
+      description: |
+        Paylands rechazó la operación. La transacción NO cambia de estado.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: false }
+              message: { type: string, const: processor_declined }
+
+    FeatureDisabled:
+      description: |
+        Función desactivada por feature flag — **no es un error de tu petición**.
+        Falta poner el flag correspondiente a `1` en el entorno.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: false }
+              error: { type: string, const: disabled }
+
+  schemas:
+
+    AmountOfMoney:
+      type: object
+      required: [amount, currencyCode]
+      description: Importe. **Siempre en céntimos.**
+      properties:
+        amount:
+          type: integer
+          description: '**Céntimos.** `100` = 1,00 €.'
+          example: 100
+        currencyCode:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: EUR
+      additionalProperties: false
+
+    HostedCheckoutRequest:
+      type: object
+      required: [order]
+      description: |
+        `HostedCheckoutRequestDTO` en `src/dtos/hostedCheckoutDTO.js`.
+        **No enviar datos de tarjeta aquí** — se capturan en el iFrame.
+      properties:
+        order:
+          type: object
+          required: [amountOfMoney]
+          properties:
+            amountOfMoney: { $ref: '#/components/schemas/AmountOfMoney' }
+            references:
+              type: object
+              properties:
+                merchantReference:
+                  type: string
+                  description: Tu referencia de pedido. Aparece en la conciliación.
+              additionalProperties: true
+            customer:
+              type: object
+              additionalProperties: true
+            shipping:
+              type: object
+              additionalProperties: true
+            shoppingCart:
+              type: object
+              additionalProperties: true
+            totalTaxAmount: { type: number }
+        feedbacks:
+          type: object
+          description: A dónde vuelve el usuario y a dónde se notifica el resultado.
+          properties:
+            returnUrl:
+              type: string
+              description: URL a la que vuelve el cardholder al terminar.
+            webhookUrl:
+              type: string
+              format: uri
+              description: |
+                Destino de los webhooks salientes. **Se persiste como `callbackUrl`
+                en la transacción.** Sin esto no hay notificación.
+            webhooksUrls:
+              type: array
+              items: { type: string, format: uri }
+          additionalProperties: false
+        cardPaymentMethodSpecificInput:
+          type: object
+          description: |
+            Opcional y **no recomendado** en este flujo: los datos de tarjeta se
+            capturan en el iFrame. `card` se acepta por compatibilidad del DTO.
+          properties:
+            token: { type: string }
+            tokenize: { type: boolean }
+            returnUrl: { type: string }
+            paymentProductId: { type: integer }
+            skipAuthentication: { type: boolean }
+            card: { $ref: '#/components/schemas/Card' }
+          additionalProperties: true
+        fraudFields:
+          type: object
+          properties:
+            customerIpAddress: { type: string }
+            blackListData: { type: string }
+            productCategories:
+              type: array
+              items: { type: string }
+      additionalProperties: false
+
+    HostedCheckoutCreateResponse:
+      type: object
+      description: '`buildHostedCheckoutCreateResponse` en `hostedCheckoutDTO.js`.'
+      properties:
+        success: { type: boolean }
+        paymentId:
+          type: string
+          description: Identificador del pago. **Es el que se usa en capture/refund/cancel.**
+        hostedCheckoutId:
+          type: string
+          description: Identificador del checkout. Se usa en el endpoint de status.
+        merchantId: { type: string }
+        merchantReference: { type: string }
+        amount:
+          type: integer
+          description: Céntimos.
+        currency: { type: string }
+        RETURNMAC: { type: string }
+        partialRedirectUrl: { type: string }
+        redirectUrl:
+          type: string
+          format: uri
+          description: |
+            **Lo que hay que embeber en un `<iframe>`.** Lleva al cardholder al
+            formulario de pago.
+        session:
+          type: object
+          additionalProperties: true
+        timestamp: { type: string, format: date-time }
+
+    HostedCheckoutStatusResponse:
+      type: object
+      description: '`buildHostedCheckoutStatusResponse` en `hostedCheckoutDTO.js`.'
+      properties:
+        success: { type: boolean }
+        hostedCheckoutId: { type: string }
+        paymentId: { type: string }
+        merchantId: { type: string }
+        amount: { type: integer, description: Céntimos. }
+        currency: { type: string }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        statusOutput:
+          type: object
+          nullable: true
+          additionalProperties: true
+        completed: { type: boolean, nullable: true }
+        expired: { type: boolean, nullable: true }
+        sessionExpiresAt: { type: string, format: date-time, nullable: true }
+        timestamp: { type: string, format: date-time }
+
+    TransactionStatus:
+      type: string
+      description: Estado de la transacción en Monetiser.
+      enum:
+        - pending
+        - pending_3ds
+        - authorized
+        - captured
+        - partially_captured
+        - cancelled
+        - refunded
+        - partially_refunded
+        - declined
+        - error
+
+    Card:
+      type: object
+      description: |
+        `CardDTO` en `src/dtos/paymentNodeDTOs.js`.
+
+        > **Solo aplica al flujo S2S experimental.** En Hosted Checkout no se envía:
+        > el PAN se captura en ProxyFields y nunca llega a Monetiser.
+      properties:
+        cardholderName: { type: string }
+        cardNumber:
+          type: string
+          description: 'PAN en crudo. **Rompe el scope SAQ A** — ver la nota del endpoint S2S.'
+        expiryDate:
+          type: number
+          description: 'Numérico en el DTO, no string. Ej: `1234` para 12/34.'
+        cvv: { type: string }
+      additionalProperties: false
+
+    ServerPaymentRequest:
+      type: object
+      description: |
+        **EXPERIMENTAL.** `serverPaymentDTO.js`. Este contrato va a cambiar: la
+        decisión tomada es aceptar solo tokens, nunca el PAN.
+      properties:
+        order:
+          type: object
+          required: [amountOfMoney]
+          properties:
+            amountOfMoney: { $ref: '#/components/schemas/AmountOfMoney' }
+            references:
+              type: object
+              additionalProperties: true
+          additionalProperties: true
+        cardPaymentMethodSpecificInput:
+          type: object
+          properties:
+            card: { $ref: '#/components/schemas/Card' }
+            token: { type: string }
+            paymentProductId: { type: integer }
+          additionalProperties: true
+        feedbacks:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+
+    CaptureRequest:
+      type: object
+      description: |
+        `captureSchema` en `src/validators/paymentValidator.js`.
+
+        > **Inconsistencia real:** aquí el importe es `amount` **plano**, mientras
+        > que en refund y cancel es `amountOfMoney.amount`. No es un error de esta
+        > spec: es así en el código. Rechaza campos desconocidos.
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: |
+            **Céntimos.** Si se omite, se captura el importe pendiente completo.
+        isFinal:
+          type: boolean
+          description: Marca esta captura como la última de la autorización.
+        references:
+          type: object
+          properties:
+            merchantReference: { type: string }
+            merchantParameters: { type: string }
+            operationGroupReference: { type: string }
+          additionalProperties: false
+        operationReferences:
+          type: object
+          properties:
+            merchantReference: { type: string }
+            operationGroupReference: { type: string }
+          additionalProperties: false
+      additionalProperties: false
+
+    RefundRequest:
+      type: object
+      description: |
+        `refundSchema` en `src/validators/paymentValidator.js`.
+        Rechaza campos desconocidos.
+      properties:
+        amountOfMoney:
+          type: object
+          required: [amount]
+          description: Si se omite, se reembolsa el importe reembolsable restante.
+          properties:
+            amount:
+              type: integer
+              minimum: 1
+              description: '**Céntimos.**'
+            currencyCode:
+              type: string
+              minLength: 3
+              maxLength: 3
+              description: Opcional aquí. Se normaliza a mayúsculas.
+          additionalProperties: false
+        reason: { type: string }
+        references:
+          type: object
+          properties:
+            merchantReference: { type: string }
+            merchantParameters: { type: string }
+            operationGroupReference: { type: string }
+          additionalProperties: false
+        operationReferences:
+          type: object
+          properties:
+            merchantReference: { type: string }
+            operationGroupReference: { type: string }
+          additionalProperties: false
+        omnichannelRefundSpecificInput:
+          type: object
+          properties:
+            operatorId: { type: string }
+          additionalProperties: false
+      additionalProperties: false
+
+    CancelRequest:
+      type: object
+      description: |
+        `cancelSchema` en `src/validators/paymentValidator.js`.
+        Rechaza campos desconocidos. Lo verificado es el body vacío.
+      properties:
+        amountOfMoney:
+          type: object
+          properties:
+            amount: { type: integer, minimum: 1, description: '**Céntimos.**' }
+            currencyCode: { type: string, minLength: 3, maxLength: 3 }
+          additionalProperties: false
+        isFinal: { type: boolean }
+        operationReferences:
+          type: object
+          properties:
+            merchantReference: { type: string }
+            operationGroupReference: { type: string }
+          additionalProperties: false
+      additionalProperties: false
+
+    CaptureResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        paymentId: { type: string }
+        capturedAmount: { type: integer, description: Céntimos capturados en ESTA operación. }
+        currency: { type: string }
+
+    RefundResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        paymentId: { type: string }
+        refundedAmount: { type: integer, description: Céntimos reembolsados en ESTA operación. }
+        currency: { type: string }
+
+    CancelResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        status:
+          type: string
+          description: |
+            Devuelve `canceled` (una `l`). El estado persistido en la transacción es
+            `cancelled` (dos `l`). Verificado en los logs de producción.
+          example: canceled
+        paymentId: { type: string }
+
+    PaylandsWebhookBody:
+      type: object
+      description: |
+        Lo que envía Paylands. Los campos que Monetiser realmente lee están
+        documentados aquí; Paylands puede mandar más.
+      properties:
+        validation_hash:
+          type: string
+          description: SHA-256 hex. Ver el detalle del cálculo en el endpoint.
+        order:
+          type: object
+          description: Entra en el cálculo del hash.
+          properties:
+            uuid:
+              type: string
+              description: |
+                **El `orderUuid`.** Está en `order.uuid`, **no** en `order_uuid` a
+                nivel raíz — confundirlos costó una sesión de depuración.
+            status:
+              type: string
+              description: |
+                Estado de Paylands. Mapeo a Monetiser (case-insensitive):
+                `SUCCESS`/`PAID`/`CONFIRMED`/`PENDING_CONFIRMATION` → `authorized`;
+                `REFUSED`/`ERROR`/`EXPIRED`/`FRAUD`/`BLACKLISTED` → `declined`;
+                `CANCELLED`/`USER_CANCELLED` → `cancelled`;
+                `PENDING` → `pending`; `REFUNDED` → `refunded`;
+                `PARTIALLY_REFUNDED` → `partially_refunded`.
+
+                Un estado no contemplado cae a `pending` y se registra
+                `wasUnmapped: true` en los logs.
+
+                `PENDING_CONFIRMATION` significa "orden DEFERRED autorizada, saldo
+                retenido" — por eso mapea a `authorized`.
+          additionalProperties: true
+        client:
+          type: object
+          description: Entra en el cálculo del hash.
+          additionalProperties: true
+        extra_data:
+          description: |
+            Entra en el hash **solo si viene en el body**. Si no viene, NO debe
+            incluirse como `null` en el objeto a hashear.
+          additionalProperties: true
+      additionalProperties: true
+
+    OutboundWebhookPayload:
+      type: object
+      required: [event, version, data]
+      description: Cuerpo de los webhooks que Monetiser envía al merchant.
+      properties:
+        event:
+          type: string
+          enum: [payment.updated, payment.captured, payment.refunded, payment.canceled]
+        version: { type: string, const: v1 }
+        data:
+          type: object
+          required: [paymentId, merchantId, status, amount, currency, timestamp]
+          properties:
+            paymentId: { type: string }
+            merchantId: { type: string }
+            status: { $ref: '#/components/schemas/TransactionStatus' }
+            amount: { type: integer, description: '**Céntimos.**' }
+            currency: { type: string }
+            connectorUsed:
+              type: string
+              nullable: true
+              description: 'Conector que procesó el pago. `unknown` si no consta.'
+            reasonCode: { type: string, nullable: true }
+            timestamp: { type: string, format: date-time }
+            cardInfo:
+              type: object
+              nullable: true
+              description: 'Solo metadatos. **Nunca el PAN.**'
+              properties:
+                bin: { type: string, nullable: true }
+                cardBrand: { type: string, nullable: true }
+                cardType: { type: string, nullable: true }
+                issuerCountry: { type: string, nullable: true }
+            capturedAmount:
+              type: integer
+              description: Solo en `payment.captured`. Céntimos.
+            refundedAmount:
+              type: integer
+              description: Solo en `payment.refunded`. Céntimos.
+            canceled:
+              type: boolean
+              description: Solo en `payment.canceled`.
+
+    ApiKeyCreateResponse:
+      type: object
+      description: |
+        **El `rawSecret` solo se ve aquí, esta única vez.**
+      properties:
+        success: { type: boolean }
+        rawKeyId:
+          type: string
+          description: 'Identificador (`mk_...`). Es lo que hoy va en `x-api-key`.'
+          example: mk_7065b5507c6efae4d1067f2768919154
+        rawSecret:
+          type: string
+          description: |
+            Secreto (`ms_...`). **No se puede recuperar después.** Se usa para
+            calcular la firma HMAC (hasheado con SHA-256 antes — ver `HmacV1`).
+        keyId: { type: string }
+        label: { type: string }
+        expiresAt: { type: string, format: date-time, nullable: true }
+
+    MerchantCreateRequest:
+      type: object
+      required: [merchantId, name, country]
+      properties:
+        merchantId:
+          type: string
+          description: Único. Es el que viaja en las URLs y en `x-merchant-id`.
+        name: { type: string }
+        country: { type: string, description: 'ISO 3166-1 alpha-2 (ej. `ES`).' }
+        plan:
+          type: string
+          enum: [free, starter, growth, enterprise]
+        status:
+          type: string
+          enum: [active, suspended, pending]
+        webhookUrl:
+          type: string
+          format: uri
+          description: Webhook por defecto del merchant.
+        signingSecret:
+          type: string
+          description: |
+            Secreto con el que se firman sus webhooks salientes. **Nunca se devuelve
+            en las respuestas.**
+
+            Ojo: solo lo usa el dispatcher (`payment.updated`). Los eventos de ciclo
+            de vida se firman con `WEBHOOK_SECRET` global — ver `payment.captured`.
+        serviceUuid:
+          type: string
+          description: 'UUID del servicio en Paylands. Va al campo `service` de POST /payment.'
+        templateUuid:
+          type: string
+          description: 'Plantilla de la carta de pago. Va a `template_uuid`.'
+        branding:
+          type: object
+          properties:
+            logoUrl: { type: string, format: uri }
+            brandColor: { type: string }
+            name: { type: string }
+
+    MerchantPatchRequest:
+      type: object
+      description: Campos actualizables. Todos opcionales.
+      properties:
+        name: { type: string }
+        country: { type: string }
+        plan: { type: string, enum: [free, starter, growth, enterprise] }
+        status: { type: string, enum: [active, suspended, pending] }
+        webhookUrl: { type: string, format: uri }
+        serviceUuid: { type: string }
+        templateUuid: { type: string }
+        branding:
+          type: object
+          additionalProperties: true
+
+    Policy:
+      type: object
+      required: [merchantId, version, defaultConnector, rules]
+      description: Política de routing de un merchant.
+      properties:
+        merchantId: { type: string }
+        version: { type: string, enum: [v1] }
+        defaultConnector:
+          type: string
+          description: |
+            Conector por defecto si ninguna regla casa. **Por defecto `dummyCard`**
+            (el conector simulado) en merchants sin política propia.
+          example: dummyCard
+        rules:
+          type: array
+          items:
+            type: object
+            required: [id, when, action]
+            properties:
+              id: { type: string }
+              priority: { type: integer }
+              when:
+                type: object
+                description: |
+                  Condiciones. El motor evalúa: amount, currency, BIN,
+                  issuerCountry, scheme, cardType, method.
+                additionalProperties: true
+              action:
+                type: object
+                properties:
+                  route:
+                    type: string
+                    description: Conector al que enrutar.
+
+    RuleDecision:
+      type: object
+      properties:
+        connector: { type: string }
+        matchedRuleId: { type: string, nullable: true }
+        reasons:
+          type: array
+          items: { type: string }
+        explain:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: false }
+        message: { type: string }
+        error: { type: string }

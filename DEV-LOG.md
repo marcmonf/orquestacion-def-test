@@ -117,6 +117,7 @@ Merchant backend
 | `src/utils/cryptoUtils.js` | AES-256-GCM, HMAC helpers, maskPan |
 | `src/services/apiKeyService.js` | Generación, validación y revocación de API keys |
 | `src/routes/apiKeyRoutes.js` | CRUD de API keys |
+| `openapi.yaml` (raíz) | **Especificación OpenAPI 3.1 v1.0.0 — contrato real de la API.** Única spec del proyecto (la antigua `openapi/monetiser.yaml` se eliminó en M4). |
 
 ---
 
@@ -218,7 +219,11 @@ Merchant backend
 | ~~Capture/cancel Paylands sin verificar~~ | ✅ RESUELTO — 16 jul 2026 | Fila obsoleta, se mantenía por error contradiciendo la fila de arriba. Capture y cancel están VERIFICADOS end-to-end contra Paylands real (ver fila 1 y sección 11). |
 | Flags FEATURE_RULE_* sin confirmar en Render | Media — **acción de Marcos** | ✅ DOCUMENTADOS (16 jul 2026) en sección 8 → "Flags de la pestaña Reglas": qué activa cada uno, qué botón depende de cuál, y por qué `FEATURE_RULE_AUDIT` es el más importante (sin él los cambios de reglas se guardan sin histórico). Pendiente: ponerlos a `1` en Render → Environment. No se ha tocado la config de Render. |
 | Editor de reglas viejo (`/admin/index.html` + `app.js`) | Baja | Redundante desde que existe la pestaña Reglas del dashboard nuevo (mismo backend). Sigue ahí sin usarse ni eliminarse — decisión de Marcos si lo retira. |
-| OpenAPI completa | Media — M4 | La spec actual no refleja proxy-pci ni el flujo real de hosted checkout |
+| ~~OpenAPI completa~~ | ✅ M4 COMPLETADO — 16 jul 2026 | `openapi.yaml` en la raíz (3.1, v1.0.0): 23 rutas, 27 operaciones, 21 schemas, 4 webhooks salientes, 0 refs rotas. Una sola spec: la antigua `openapi/monetiser.yaml` eliminada y su contenido portado (nada la referenciaba). Ver sección 6 (M4). |
+| **Webhooks salientes: DOS firmas incompatibles** | **ALTA — rompe integraciones** | Descubierto al escribir el OpenAPI (M4). Hay dos emisores de webhook saliente con contratos DISTINTOS. (1) `webhookDispatcher.js` → evento `payment.updated`: header `Monetiser-Signature: t=<ts>, v1=<hex>` (con espacio tras la coma), secreto por-merchant con fallback global, reintentos con backoff, registro en `webhooklogs`. (2) `sendWebhookIfAny()` en `paymentsController.js` → eventos `payment.captured`/`refunded`/`canceled`: header `x-monetiser-signature: t=<ts>,v1=<hex>` (nombre distinto, SIN espacio) + `x-monetiser-timestamp`, **solo `WEBHOOK_SECRET` global** (ignora el `signingSecret` del merchant), **sin reintentos** y **sin registro** (fallo = solo un `warn`). **Consecuencias reales:** (a) un merchant que verifique `Monetiser-Signature` fallará en silencio los eventos de ciclo de vida; (b) si el merchant tiene `signingSecret` propio y no hay `WEBHOOK_SECRET` global, esos eventos salen **sin firmar** — no se omiten, se envían igual sin el header; (c) esto contradice lo que este DEV-LOG afirma de M2 Fase C ("el dispatcher firma por-merchant") — cierto solo para una de las dos rutas. **Documentado tal cual en `openapi.yaml` con aviso explícito. Pendiente de decidir**: unificar los eventos de ciclo de vida para que usen el dispatcher (lo lógico: gana reintentos, registro y secreto por-merchant gratis). |
+| Contrato inconsistente capture vs refund | Media | `captureSchema` usa `amount` plano (entero, céntimos); `refundSchema` y `cancelSchema` usan `amountOfMoney: { amount, currencyCode }`. Mismo concepto, dos formas, en endpoints hermanos. Documentado tal cual en `openapi.yaml`. No rompe nada hoy (lo verificado fue con body vacío) pero confundirá a quien integre. |
+| `x-api-key` transporta el keyId, no el secreto | Media | En modo simple (`API_KEY_SIMPLE_FALLBACK=true`), `validateApiKey()` busca por `keyId: rawKey` — es decir, el header lleva el `rawKeyId` (`mk_...`) y **el `rawSecret` no interviene**: el identificador actúa como credencial. Aceptable para Postman, no para producción. Es el motivo de que exista el modo HMAC. Documentado en `openapi.yaml` (securityScheme `ApiKeySimple`). |
+| La firma HMAC usa `secretHash`, no el secreto | Baja — solo documentación | `hmacAuth.js` hace `computeSignature(doc.secretHash, stringToHash)`: la clave del HMAC es el SHA-256 del secreto, no el `rawSecret`. Quien integre debe hashear su secreto antes. No es un fallo, pero es contraintuitivo y no estaba escrito en ningún sitio. Ya documentado en `openapi.yaml`. |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
@@ -391,12 +396,37 @@ webhookReceived:false son pruebas con tarjeta mala cuyo 3DS no se completó. El 
 cierre (webhooks.js) está bien montado y verificado; solo cierra tx cuando Paylands notifica
 un pago realmente completado. Sin challenge 3DS, el cierre es síncrono (iframe.js).
 
-### M4 — OpenAPI completa
-**Objetivo:** Documentar el contrato real de la API.
-- Endpoints de proxy-pci
-- Flujo completo de hosted checkout
-- Contrato de webhooks salientes (lo que recibe el merchant)
-- Endpoints de gestión de merchants y API keys
+### M4 — OpenAPI completa ✅ COMPLETADO (16 julio 2026)
+
+**Objetivo:** documentar el contrato REAL de la API, no una versión idealizada.
+
+**Entregable: `openapi.yaml` en la raíz del repo** (OpenAPI 3.1, v1.0.0).
+23 rutas · 27 operaciones · 21 schemas · 4 webhooks salientes · 0 referencias rotas.
+Validado con `js-yaml`.
+
+**Decisión: una sola spec.** La antigua `openapi/monetiser.yaml` (v0.4.1) se ha
+ELIMINADO y su contenido está portado íntegro a la nueva (`/initialize`, `/iframe`,
+`/orchestration/decide`, `/rules/*`, schema `Policy`, webhook `payment.updated`).
+Motivo: dos specs a medias es exactamente cómo este DEV-LOG acabó contradiciéndose.
+Verificado antes de borrarla que **nada la referenciaba** — ni código, ni
+`package.json`, ni Swagger UI. Era un documento suelto, no una pieza del sistema.
+
+**Marcas de madurez** (`x-madurez` en cada operación): 21 estables · 1 experimental
+(S2S, además con `deprecated: true` para que los generadores de clientes lo señalen)
+· 4 internos (iFrame/proxy-pci) · 1 legado (`/initialize`).
+
+**Todos los campos salen de los DTOs y validators reales.** Nada inventado.
+
+**Hallazgos encontrados al escribirla** (ver sección 5 para el detalle):
+1. Los webhooks salientes se firman de DOS formas distintas según el evento.
+2. `capture` usa `amount` plano; `refund` y `cancel` usan `amountOfMoney.amount`.
+3. En modo simple, `x-api-key` lleva el `rawKeyId`, no el `rawSecret`.
+4. La firma HMAC usa `secretHash` (SHA-256 del secreto) como clave, no el secreto.
+
+Ninguno se ha "arreglado" en la spec: están documentados tal como son, con aviso.
+
+**Pendiente (no bloqueante):** publicar la spec en Swagger UI (`swagger-ui-express`)
+en `/docs`, y escribir `docs/integration-guide.md`.
 
 ### M5 — PCI SAQ A formal
 - Documentar que Monetiser cumple SAQ A: el PAN nunca toca los servidores de Monetiser
@@ -590,6 +620,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ---
 
 *Última revisión: 16 julio 2026 — Ciclo de vida DEFERRED VERIFICADO end-to-end al COMPLETO: refund (total y parcial), capture y cancel confirmados funcionando contra Paylands real. Claves del arreglo: (1) endpoints reales `/payment/confirmation` y `/payment/cancellation`; (2) operative AUTHORIZATION→DEFERRED en las 3 funciones de creación de orden; (3) mapeo del status `PENDING_CONFIRMATION`→`authorized` en el webhook; (4) declarados `lastWebhookAt`/`lastWebhookRaw` en el esquema Transaction (Mongoose los descartaba en silencio); (5) fixes de validación en refundSchema y de normalización dummyCard. Lección operativa recurrente: confirmar SIEMPRE que Render terminó de desplegar antes de probar — varios falsos negativos se debieron a probar contra el código viejo. M1, M2 y M3 completados. Bloqueante crítico pendiente: S2S acepta PAN en crudo (incompatible con SAQ A) — decidir tokens-only vs scope PCI mayor antes de M5. Tarjetas test buenas: 4018810...*
+
+*Sesión 16 julio 2026 (tarde, cont.) — M4 COMPLETADO: `openapi.yaml` en la raíz (OpenAPI 3.1, v1.0.0, 23 rutas / 27 operaciones / 21 schemas / 4 webhooks salientes / 0 refs rotas, validado con js-yaml). Una sola spec: eliminada `openapi/monetiser.yaml` y portado su contenido íntegro tras verificar que nada la referenciaba. Cada campo sale de los DTOs y validators reales. S2S documentado como `experimental` + `deprecated: true` conforme a la decisión A. **Cuatro hallazgos al escribirla, todos documentados en la spec y anotados en la sección 5** — el grave es el primero: (1) los webhooks salientes se firman de DOS formas incompatibles según el evento (`Monetiser-Signature` desde el dispatcher vs `x-monetiser-signature` desde `sendWebhookIfAny`), con distinto secreto, sin reintentos y sin registro en la segunda — un merchant que verifique una fallará la otra en silencio; (2) `capture` usa `amount` plano mientras `refund`/`cancel` usan `amountOfMoney.amount`; (3) en modo simple `x-api-key` lleva el keyId, no el secreto — el identificador actúa como credencial; (4) la firma HMAC usa `secretHash` (SHA-256 del secreto) como clave, no el secreto. Nada de esto se ha "arreglado" en la spec: está documentado tal como es.*
 
 *Sesión 16 julio 2026 (tarde) — Tarea 1, deuda técnica menor. (1a) Eliminado el PAN de los logs: `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK) lo logueaban, junto con `tokenKeys` y 30 chars del token de tarjeta. No llegó a filtrarse porque `sanitizeData()` de `logger.js` lo redactaba por regex — el valor salía como `[REDACTED]`, así que quitarlos no perdió información — pero para SAQ A el PAN no debe llegar al logger. Corregido: el DEV-LOG describía una deuda que no existía (`fullBody`: cero ocurrencias en todo el repo) y no mencionaba la que sí existía (el PAN). `serverPaymentController.js` y `payNoPainConnector.js` estaban limpios. (1b) Documentados `FEATURE_RULE_TRY`/`AUDIT`/`EXPORT_UI` en la sección 8 — hallazgo relevante: `FEATURE_RULE_AUDIT` no solo muestra el histórico, también gatea la ESCRITURA de las entradas de auditoría (rulesController.js:78 y :217); apagado, los cambios de reglas se guardan sin rastro de autor y no se pueden reconstruir. Pendiente de Marcos: poner los tres a `1` en Render. Seguridad: retirado de CLAUDE.md el PAT de GitHub que estuvo publicado en el repo público del 11 al 16 de julio (troceado en dos mitades, lo que evitó que el secret scanning de GitHub lo auto-revocara) — Marcos lo revoca por su lado; quitarlo del archivo no lo borra del historial. Limpiadas además varias contradicciones internas del documento: capture/cancel figuraban a la vez como "verificados" y "sin verificar", y la sección 11 aún decía `operative: AUTHORIZATION`.*
 
