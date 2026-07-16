@@ -529,7 +529,11 @@ exports.cancelPayment = async (req, res) => {
     }
 
     // ── Solo si Paylands confirmo, actualizamos Mongo ───────────────────────
-    tx.status = 'canceled';
+    // 'cancelled' con dos L: es la grafia de Paylands (webhook CANCELLED,
+    // endpoint /payment/cancellation) y la que usan webhooks.js y backofficeRoutes.
+    // Con 'canceled' (una L) el check de estado final de hostedCheckoutController
+    // no casaba y el pago quedaba en completed:false para siempre.
+    tx.status = 'cancelled';
     tx.updatedAt = new Date();
     await tx.save();
 

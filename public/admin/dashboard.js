@@ -522,7 +522,7 @@
       '<option value="declined">declined</option><option value="captured">captured</option>' +
       '<option value="partially_captured">partially_captured</option>' +
       '<option value="refunded">refunded</option><option value="partially_refunded">partially_refunded</option>' +
-      '<option value="canceled">canceled</option><option value="pending">pending</option><option value="pending_3ds">pending_3ds</option>' +
+      '<option value="cancelled">cancelled</option><option value="pending">pending</option><option value="pending_3ds">pending_3ds</option>' +
       '</select>' +
       '<input type="text" id="etxProcessor" placeholder="Conector" style="width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>' +
       '<input type="text" id="etxCountry" placeholder="País emisor" style="width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>' +
