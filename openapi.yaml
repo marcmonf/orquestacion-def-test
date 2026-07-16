@@ -381,9 +381,15 @@ paths:
       responses:
         '200':
           description: |
-            Anulado. **Ojo:** el campo `status` devuelve `canceled` (una `l`,
-            grafía inglesa), mientras que el estado que se persiste en la
-            transacción es `cancelled` (dos `l`). Así está en el código.
+            Anulado, con `status: "canceled"` (una `l`).
+
+            **Corrección (verificado en producción 16 jul 2026):** este endpoint no
+            solo *responde* `canceled` — también lo **persiste** así en la
+            transacción (`paymentsController.js:532`), pisando el `cancelled` (dos
+            `l`) que el webhook de Paylands acababa de escribir. Y como
+            `hostedCheckoutController.js:260` solo reconoce `cancelled` como estado
+            final, el endpoint de status de ese pago devuelve **`completed: false`
+            indefinidamente**. Ver el aviso en el esquema `TransactionStatus`.
           content:
             application/json:
               schema:
@@ -1573,13 +1579,39 @@ components:
 
     TransactionStatus:
       type: string
-      description: Estado de la transacción en Monetiser.
+      description: |
+        Estado de la transacción en Monetiser.
+
+        > **No es un enum cerrado.** En `src/models/Transaction.js` el campo es
+        > `status: { type: String, required: true }`, **sin `enum`**: Mongoose no
+        > restringe el valor. Esta lista es la de los valores que el código asigna
+        > hoy (verificados uno a uno), no una garantía del contrato. Un adquirente
+        > con un estado no contemplado en `STATUS_MAP` cae a `pending`.
+
+        > ⚠️ **`canceled` y `cancelled` coexisten, y no son sinónimos según quién
+        > escriba.** Bug real verificado en producción (16 jul 2026):
+        > - `POST /payments/{id}/cancel` guarda **`canceled`** (una `l`) —
+        >   `paymentsController.js:532`
+        > - El botón Cancelar del dashboard guarda **`cancelled`** (dos `l`) —
+        >   `backofficeRoutes.js:303`
+        > - El webhook de Paylands mapea `CANCELLED` → **`cancelled`** (dos `l`)
+        >
+        > Consecuencia: `hostedCheckoutController.js:260` decide `completed`
+        > comprobando `['approved','authorized','declined','refused','cancelled']`
+        > — solo la grafía de dos `l`. Un pago cancelado **por la API** queda con
+        > `canceled` y su endpoint de status devuelve **`completed: false` para
+        > siempre**. Quien sondee el estado, sondeará eternamente.
+        > Ver DEV-LOG sección 5.
+      examples: [hosted_pending, authorized, canceled, cancelled]
       enum:
+        - initialized
+        - hosted_pending
         - pending
         - pending_3ds
         - authorized
         - captured
         - partially_captured
+        - canceled
         - cancelled
         - refunded
         - partially_refunded
@@ -1751,8 +1783,9 @@ components:
         status:
           type: string
           description: |
-            Devuelve `canceled` (una `l`). El estado persistido en la transacción es
-            `cancelled` (dos `l`). Verificado en los logs de producción.
+            Devuelve `canceled` (una `l`), que es también lo que queda persistido.
+            Ver el aviso del esquema `TransactionStatus`: esa grafía hace que el
+            pago nunca figure como `completed` en el endpoint de status.
           example: canceled
         paymentId: { type: string }
 
