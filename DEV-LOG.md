@@ -3,7 +3,7 @@
 > Repositorio: `marcmonf/orquestacion-def-test` · Rama: `main`
 > Stack: Node.js + Express + MongoDB Atlas · Despliegue: Render
 > URL de producción: `https://orquestacion-def-test.onrender.com`
-> Última actualización: julio 2026
+> Última actualización: 16 julio 2026
 
 ---
 
@@ -212,15 +212,15 @@ Merchant backend
 | Gap | Prioridad | Descripción |
 |---|---|---|
 | ~~Capture/cancel endpoints incorrectos~~ | ✅ RESUELTO Y VERIFICADO — sesión julio 2026 | Verificado con la doc oficial de Paylands (docs.paylands.com/en/reference): capture real es `POST /payment/confirmation` (no `/payment/capture`) y cancel real es `POST /payment/cancellation` (no `/payment/cancel`). **Hallazgo clave**: ambos endpoints SOLO operan sobre órdenes creadas con `operative: "DEFERRED"` — con `AUTHORIZATION` (lo que usábamos) el dinero se mueve al instante y no hay nada que confirmar/cancelar. Cambiado `operative` a `DEFERRED` en `createOrder`/`createOrder3DS`/`chargeWithToken`. **Segundo hallazgo**: una orden DEFERRED autorizada devuelve `PENDING_CONFIRMATION` (no `SUCCESS`) en el webhook — añadido al `STATUS_MAP` → `authorized`. **VERIFICADO end-to-end** (16 jul): tx nueva DEFERRED → webhook `PENDING_CONFIRMATION` → `authorized` en local → `POST /payments/{id}/capture` → `200 captured` con importe correcto. **Cancel también VERIFICADO** (16 jul): tx nueva DEFERRED autorizada sin capturar → `POST /payments/{id}/cancel` → `200 canceled`. Los tres flujos (refund total/parcial, capture, cancel) confirmados funcionando contra Paylands real. Nota operativa: durante la depuración, varios "fallos" se debieron a que las pruebas se hacían antes de que Render terminara el deploy — SIEMPRE confirmar que el deploy está Live antes de probar. |
-| **S2S no cumple el objetivo "Monetiser nunca toca el PAN"** | **CRÍTICA — antes de M5 (PCI SAQ A)** | `POST /:merchantId/payments/server` acepta `cardPaymentMethodSpecificInput.card.cardNumber` en crudo en el body — a diferencia de Hosted Checkout (ProxyFields), aquí el PAN sí transita por la API de Monetiser. Además, **`payNoPainConnector.js` no tiene función `authorize()`** — solo `createOrder`/`createOrder3DS` (estilo Hosted, con redirect) y `chargeWithToken`. Como la política por defecto de cualquier merchant sin reglas custom es `defaultConnector: 'dummyCard'`, el S2S "funciona" hoy solo contra el conector de mentira; si una regla llegase a enrutar S2S hacia `payNoPain` reventaría con `connector.authorize is not a function`. **Verificado que hoy el PAN no se loguea ni se persiste en ningún punto del código** (ni en `Transaction`, ni en `auditLogger`, ni en `PaymentAttempt`, ni en los logs de `payNoPainConnector.js`) — pero aceptar el PAN en el body de la API ya pone a Monetiser en un scope PCI distinto (no SAQ A) para ese flujo concreto, y es incompatible con el objetivo declarado del proyecto. **Decisión pendiente antes de avanzar en S2S real:** o bien (a) S2S solo acepta tokens ya generados vía ProxyFields/hosted tokenization (nunca PAN en crudo), o (b) se acepta que S2S implica un scope PCI mayor y se documenta así explícitamente. Mientras no se decida, NO usar S2S con tarjetas reales ni de test — usar Hosted Checkout para generar transacciones de prueba contra PayNoPain real. |
+| **S2S no cumple el objetivo "Monetiser nunca toca el PAN"** | **CRÍTICA — antes de M5 (PCI SAQ A)** | `POST /:merchantId/payments/server` acepta `cardPaymentMethodSpecificInput.card.cardNumber` en crudo en el body — a diferencia de Hosted Checkout (ProxyFields), aquí el PAN sí transita por la API de Monetiser. Además, **`payNoPainConnector.js` no tiene función `authorize()`** — solo `createOrder`/`createOrder3DS` (estilo Hosted, con redirect) y `chargeWithToken`. Como la política por defecto de cualquier merchant sin reglas custom es `defaultConnector: 'dummyCard'`, el S2S "funciona" hoy solo contra el conector de mentira; si una regla llegase a enrutar S2S hacia `payNoPain` reventaría con `connector.authorize is not a function`. **Corrección (16 jul 2026):** este párrafo afirmaba que "el PAN no se loguea en ningún punto del código". Era **falso**: se comprobaron `Transaction`, `auditLogger`, `PaymentAttempt` y `payNoPainConnector.js` (esos sí estaban limpios), pero NO se revisaron `proxyPciRoutes.js` ni `pciProxyService.js`, que sí lo logueaban. Corregido — ver la fila "Logs de debug en producción". Hoy sí es cierto: el PAN no llega a ningún logger. Aun así, aceptar el PAN en el body de la API ya pone a Monetiser en un scope PCI distinto (no SAQ A) para ese flujo concreto, y es incompatible con el objetivo declarado del proyecto. **Decisión pendiente antes de avanzar en S2S real:** o bien (a) S2S solo acepta tokens ya generados vía ProxyFields/hosted tokenization (nunca PAN en crudo), o (b) se acepta que S2S implica un scope PCI mayor y se documenta así explícitamente. Mientras no se decida, NO usar S2S con tarjetas reales ni de test — usar Hosted Checkout para generar transacciones de prueba contra PayNoPain real. |
 | ~~Modelo Merchant en MongoDB~~ | ✅ M2 COMPLETADO | Modelo `Merchant` unificado con campos operativos (plan, status, webhookUrl, signingSecret, serviceUuid, templateUuid, branding). Rutas `/merchants` montadas y protegidas por X-Admin-Token. Dispatcher firma por-merchant. Detalle completo en sección 6 (M2). |
 | ~~Panel de administración `/admin`~~ | ✅ M3 COMPLETADO | Dashboard con analíticas, transacciones (refund/cancel/widgets expandibles), usuarios, merchants, API keys y motor de reglas. Ver sección 6 (M3). |
-| Capture/cancel Paylands sin verificar | Alta | `POST /payment/capture` y `POST /payment/cancel` están conectados en el código (connector + controller) pero son INFERENCIA por analogía con refund — nunca se han probado contra el sandbox real. Solo refund está confirmado (`POST /payment/refund`). Ver sección 11. |
-| Flags FEATURE_RULE_* sin confirmar en Render | Media | `FEATURE_RULE_TRY`, `FEATURE_RULE_AUDIT`, `FEATURE_RULE_EXPORT_UI` gatean los botones Probar/Histórico/Exportar/Importar de la pestaña Reglas. No sabemos si están a `1` en Render — si no lo están, esos botones devuelven "función desactivada" (no rompe nada, pero conviene revisar). Cargar/guardar política NO depende de ningún flag. |
+| ~~Capture/cancel Paylands sin verificar~~ | ✅ RESUELTO — 16 jul 2026 | Fila obsoleta, se mantenía por error contradiciendo la fila de arriba. Capture y cancel están VERIFICADOS end-to-end contra Paylands real (ver fila 1 y sección 11). |
+| Flags FEATURE_RULE_* sin confirmar en Render | Media — **acción de Marcos** | ✅ DOCUMENTADOS (16 jul 2026) en sección 8 → "Flags de la pestaña Reglas": qué activa cada uno, qué botón depende de cuál, y por qué `FEATURE_RULE_AUDIT` es el más importante (sin él los cambios de reglas se guardan sin histórico). Pendiente: ponerlos a `1` en Render → Environment. No se ha tocado la config de Render. |
 | Editor de reglas viejo (`/admin/index.html` + `app.js`) | Baja | Redundante desde que existe la pestaña Reglas del dashboard nuevo (mismo backend). Sigue ahí sin usarse ni eliminarse — decisión de Marcos si lo retira. |
 | OpenAPI completa | Media — M4 | La spec actual no refleja proxy-pci ni el flujo real de hosted checkout |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
-| Logs de debug en producción | Baja | Hay varios `logger.info` con `fullBody` y `tokenKeys` que deben eliminarse antes de producción |
+| ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
 | Suite de tests no verde en algunos entornos | Media | `npx jest` → 119/128 pasan. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. |
 
@@ -369,13 +369,12 @@ Conviven DOS paneles en `public/admin/`:
 - Mejora sobre el editor viejo: el actor de auditoría (`x-admin-actor`) ya no
   depende de un header manual — se rellena solo con el email de la sesión de
   backoffice (`stampRulesActor` en backofficeRoutes.js).
-- **OJO — sin verificar**: `tryPolicy`, `getAudit`, `exportPolicy` e `importPolicy`
-  en `rulesController.js` están detrás de flags de entorno (`FEATURE_RULE_TRY`,
-  `FEATURE_RULE_AUDIT`, `FEATURE_RULE_EXPORT_UI`) que no sabemos si están activadas
-  en Render. Si no lo están, esos botones devuelven 404 y la UI lo muestra como
-  "función desactivada" con el nombre exacto del flag que falta — no rompe nada,
-  pero conviene revisar en Render qué flags están puestas. `getPolicy`/`upsertPolicy`
-  (cargar/guardar, lo esencial) NO dependen de ningún flag, siempre funcionan.
+- **Flags `FEATURE_RULE_*`**: `tryPolicy`, `getAudit`, `exportPolicy` e `importPolicy`
+  en `rulesController.js` están detrás de flags de entorno. **Documentados al detalle en
+  la sección 8 → "Flags de la pestaña Reglas"** (qué activa cada uno, qué botón depende de
+  cuál, y por qué `FEATURE_RULE_AUDIT` es el crítico). Sigue sin confirmarse si están a `1`
+  en Render — es la acción pendiente de Marcos. `getPolicy`/`upsertPolicy` (cargar/guardar,
+  lo esencial) NO dependen de ningún flag, siempre funcionan.
 - El editor viejo (`/admin/index.html`) queda ahora redundante pero no se ha
   tocado ni eliminado — decisión de Marcos si quiere retirarlo más adelante.
 
@@ -438,7 +437,8 @@ un pago realmente completado. Sin challenge 3DS, el cierre es síncrono (iframe.
 | Elemento | Prioridad |
 |---|---|
 | WEBHOOK_SECRET configurado en Render | Alta |
-| Eliminar logs de debug (fullBody, tokenKeys) antes de producción | Alta |
+| ~~Eliminar logs de debug (fullBody, tokenKeys)~~ → ✅ HECHO 16 jul 2026. Eliminados el PAN, `tokenKeys` y `tokenValue` de `proxyPciRoutes.js` y `pciProxyService.js`. `fullBody` no existía (deuda fantasma). | — |
+| Revocar el PAT de GitHub que estuvo publicado en CLAUDE.md (11-16 jul 2026) | **Alta — acción de Marcos** |
 | 2FA para panel admin | Media |
 | Rotación de PAYNOPAIN_SIGNATURE | Media |
 
@@ -471,6 +471,35 @@ un pago realmente completado. Sin challenge 3DS, el cierre es síncrono (iframe.
 | `LOG_LEVEL` | Nivel mínimo de logs: error, warning, info, debug, trace |
 | `ALLOW_PAN_DECRYPT` | `true` solo en desarrollo |
 | `ALLOWED_ORIGINS` | CORS origins permitidos (separados por coma) |
+
+### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
+
+Estos tres flags gatean los botones de la pestaña **Reglas** del dashboard (`/admin`).
+Se leen en `src/controllers/rulesController.js` (líneas 11-13) y solo se activan con el
+valor exacto `1` (la comparación es `=== '1'`: `true`, `on` o `yes` NO funcionan).
+
+| Flag | Qué activa en el backend | Botón del dashboard | Recomendado en Render |
+|---|---|---|---|
+| `FEATURE_RULE_TRY` | `tryPolicy` — dry-run del rule engine contra una transacción de ejemplo | **Probar** | `1` |
+| `FEATURE_RULE_AUDIT` | `getAudit` (lectura del histórico) **y** la escritura de entradas de auditoría al guardar una política | **Histórico** | `1` |
+| `FEATURE_RULE_EXPORT_UI` | `exportPolicy` **e** `importPolicy` | **Exportar** e **Importar** (los dos con el mismo flag) | `1` |
+
+**Lo que hay que saber:**
+
+- **Exportar e Importar comparten flag.** No se puede tener uno sin el otro.
+- **`FEATURE_RULE_AUDIT` hace dos cosas, no una.** Además de mostrar el histórico, es lo que
+  hace que se *escriban* las entradas de auditoría al guardar una política (rulesController.js
+  líneas 78 y 217). Si está apagado, los cambios de reglas se guardan **sin dejar rastro** de
+  quién los hizo — y ese histórico no se puede reconstruir a posteriori. Es el más importante
+  de los tres.
+- **Cargar y guardar políticas (`getPolicy` / `upsertPolicy`) NO depende de ningún flag.**
+  Siempre funciona. Si un botón falla, las reglas no están rotas: falta el flag.
+- Si un flag está apagado, el endpoint devuelve `404 {"error":"disabled"}` y la UI lo muestra
+  como "función desactivada" nombrando el flag que falta (`public/admin/dashboard.js`,
+  líneas 1026, 1056, 1074, 1098). No rompe nada.
+
+**Acción pendiente de Marcos:** poner los tres a `1` en Render → Environment.
+No se ha tocado la configuración de Render desde aquí.
 
 ---
 
@@ -562,6 +591,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 *Última revisión: 16 julio 2026 — Ciclo de vida DEFERRED VERIFICADO end-to-end al COMPLETO: refund (total y parcial), capture y cancel confirmados funcionando contra Paylands real. Claves del arreglo: (1) endpoints reales `/payment/confirmation` y `/payment/cancellation`; (2) operative AUTHORIZATION→DEFERRED en las 3 funciones de creación de orden; (3) mapeo del status `PENDING_CONFIRMATION`→`authorized` en el webhook; (4) declarados `lastWebhookAt`/`lastWebhookRaw` en el esquema Transaction (Mongoose los descartaba en silencio); (5) fixes de validación en refundSchema y de normalización dummyCard. Lección operativa recurrente: confirmar SIEMPRE que Render terminó de desplegar antes de probar — varios falsos negativos se debieron a probar contra el código viejo. M1, M2 y M3 completados. Bloqueante crítico pendiente: S2S acepta PAN en crudo (incompatible con SAQ A) — decidir tokens-only vs scope PCI mayor antes de M5. Tarjetas test buenas: 4018810...*
 
+*Sesión 16 julio 2026 (tarde) — Tarea 1, deuda técnica menor. (1a) Eliminado el PAN de los logs: `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK) lo logueaban, junto con `tokenKeys` y 30 chars del token de tarjeta. No llegó a filtrarse porque `sanitizeData()` de `logger.js` lo redactaba por regex — el valor salía como `[REDACTED]`, así que quitarlos no perdió información — pero para SAQ A el PAN no debe llegar al logger. Corregido: el DEV-LOG describía una deuda que no existía (`fullBody`: cero ocurrencias en todo el repo) y no mencionaba la que sí existía (el PAN). `serverPaymentController.js` y `payNoPainConnector.js` estaban limpios. (1b) Documentados `FEATURE_RULE_TRY`/`AUDIT`/`EXPORT_UI` en la sección 8 — hallazgo relevante: `FEATURE_RULE_AUDIT` no solo muestra el histórico, también gatea la ESCRITURA de las entradas de auditoría (rulesController.js:78 y :217); apagado, los cambios de reglas se guardan sin rastro de autor y no se pueden reconstruir. Pendiente de Marcos: poner los tres a `1` en Render. Seguridad: retirado de CLAUDE.md el PAT de GitHub que estuvo publicado en el repo público del 11 al 16 de julio (troceado en dos mitades, lo que evitó que el secret scanning de GitHub lo auto-revocara) — Marcos lo revoca por su lado; quitarlo del archivo no lo borra del historial. Limpiadas además varias contradicciones internas del documento: capture/cancel figuraban a la vez como "verificados" y "sin verificar", y la sección 11 aún decía `operative: AUTHORIZATION`.*
+
 ---
 
 ## 11. Ciclo de vida del pago — capture / refund / cancel
@@ -590,40 +621,35 @@ estados en Mongo. Simulacion pura.
 
 | Flujo | Endpoint Monetiser | Endpoint Paylands | Estado |
 |---|---|---|---|
-| Autorizacion | POST /:merchantId/payments/hosted | POST /payment (operative: AUTHORIZATION) | ✅ funciona |
-| Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ CONECTADO A PAYLANDS REAL — pendiente de test en sandbox (Marcos sin acceso a Postman/Render en esta sesión) |
-| Captura | POST /payments/:paymentId/capture | POST /payment/capture (order_uuid + amount opcional) | ⚠️ CONECTADO pero endpoint Paylands es INFERENCIA por analogia con refund — SIN VERIFICAR contra sandbox real |
-| Cancelacion (void) | POST /payments/:paymentId/cancel | POST /payment/cancel (order_uuid, solo pre-captura) | ⚠️ CONECTADO pero endpoint Paylands es INFERENCIA — SIN VERIFICAR contra sandbox real |
+| Autorizacion | POST /:merchantId/payments/hosted | POST /payment (**operative: DEFERRED**) | ✅ VERIFICADO |
+| Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
+| Captura | POST /payments/:paymentId/capture | **POST /payment/confirmation** (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
+| Cancelacion (void) | POST /payments/:paymentId/cancel | **POST /payment/cancellation** (order_uuid, solo pre-captura) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
 
 ### Ciclo de vida de una transaccion
 
 ```
 pending
   └─ pending_3ds
-       └─ authorized       ← ya funciona
-            ├─ captured / partially_captured   ← conector conectado (sin verificar)
-            ├─ cancelled                       ← conector conectado (sin verificar, solo pre-captura)
-            └─ refunded / partially_refunded   ← conector conectado (sin verificar)
+       └─ authorized       ← ✅ verificado (webhook PENDING_CONFIRMATION → authorized)
+            ├─ captured / partially_captured   ← ✅ verificado (POST /payment/confirmation)
+            ├─ cancelled                       ← ✅ verificado (POST /payment/cancellation, solo pre-captura)
+            └─ refunded / partially_refunded   ← ✅ verificado (POST /payment/refund)
   └─ declined
   └─ error
 ```
 
-### Pruebas pendientes (bloqueadas — Marcos sin acceso a Postman/Render en esta sesión)
+Los cuatro estados están confirmados end-to-end contra Paylands sandbox real (16 jul 2026).
+Requisito: la orden debe crearse con `operative: DEFERRED` — con `AUTHORIZATION` el dinero se
+mueve al instante y no hay nada que confirmar ni cancelar.
 
-1. **Refund real**: `POST https://orquestacion-def-test.onrender.com/payments/{paymentId}/refund`
-   con `x-api-key`, `x-merchant-id: demo-merchant`, `Idempotency-Key`, body
-   `{amountOfMoney:{amount,currencyCode:"EUR"}}`. Usar un `paymentId` con
-   status `authorized` (ver `/diag/transactions`). Esperar 200 (`refunded`/
-   `partially_refunded`) o 502 (`processor_declined`).
-2. **Capture real**: mismo patron en `/payments/{paymentId}/capture`. Prioridad
-   alta: confirmar si `POST /payment/capture` es el endpoint correcto de
-   Paylands — si Paylands responde 404 o error de ruta, revisar documentacion
-   real de Paylands para el endpoint de captura.
-3. **Cancel real**: `POST /payments/{paymentId}/cancel` mismo patron de auth.
-   Solo funciona sobre transacciones `authorized` SIN capturar todavia (si ya
-   hay capture, el endpoint devuelve 409 y hay que usar refund). Prioridad
-   igual que capture: confirmar si `POST /payment/cancel` es la ruta real de
-   Paylands.
+### Pruebas pendientes
+
+~~1. Refund real~~ · ~~2. Capture real~~ · ~~3. Cancel real~~ — ✅ **LOS TRES VERIFICADOS**
+end-to-end contra Paylands real (16 jul 2026). Traza de la verificación de cancel:
+`PAYNOPAIN_CHARGE_TOKEN_3DS_URL` → webhook `PENDING_CONFIRMATION` → `authorized` →
+`POST /payments/{id}/cancel` → webhook `CANCELLED` → `PAYNOPAIN_CANCEL_OK` →
+`CANCEL.RESPONSE {"status":"canceled"}` (200). Ya no hay nada pendiente en este bloque.
 4. Verificar en los tres casos (refund/capture/cancel) que el webhook
    saliente al merchant notifica el estado correcto.
 5. **Dashboard M3 (nuevo, sin probar en vivo)**: login como superadmin en
