@@ -123,14 +123,13 @@ router.post('/charge', rateLimiter, async (req, res) => {
       });
     }
 
+    // Scope PCI SAQ A: aqui no entra ni el PAN ni el token de tarjeta, solo ids.
+    // El sanitizador de logger.js es una red de seguridad, no la primera linea.
     logger.info('PROXY_PCI_TOKEN_RETRIEVED', {
       component: 'proxyPciRoutes',
       data: {
         paymentId,
         merchantId,
-        pan:         tokenResult.pan,
-        tokenKeys:   Object.keys(tokenResult),
-        tokenValue:  (tokenResult.token || '').slice(0, 30) + '...',
         cardUuid:    tokenResult.card_uuid || tokenResult.uuid || tokenResult.source_uuid || 'N/A',
       },
     });

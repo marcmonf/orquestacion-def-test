@@ -170,7 +170,7 @@ async function getTokenizationResults(reference) {
 
   logger.info('PCI_PROXY_GET_RESULTS_OK', {
     component: 'pciProxyService',
-    data: { reference, brand: result.brand, pan: result.pan },
+    data: { reference, brand: result.brand },
   });
 
   return result;
