@@ -57,16 +57,23 @@ No basta con mirar quien usa el "hub" o el modulo padre: puede haber requires
 directos. Asi se rompio main — transactionController requeria los conectores APM
 sin pasar por apmHub.
 
-## Despliegue — el auto-deploy de Render NO es fiable
+## Despliegue — SIEMPRE MANUAL. No hay auto-deploy.
 
-El 16 jul 2026 se subieron 9 commits a main y Render no desplego ninguno; hubo
-que lanzar un Manual Deploy desde el panel. Un commit en main NO significa que
-este en produccion.
+**El auto-deploy no existe y nunca ha existido en este proyecto.** Marcos lanza
+cada despliegue a mano desde el panel de Render (Manual Deploy -> Deploy latest
+commit). No esta roto: es asi por diseno.
 
-Tras cada push, confirmar que el deploy entro antes de dar nada por bueno ni
-pedirle a Marcos que pruebe. Si un cambio "no funciona", lo primero que hay que
-descartar es que siga corriendo el codigo viejo: es la causa recurrente de falsos
-negativos en este proyecto.
+Consecuencia practica: **un commit en main NO esta en produccion.** Hacer push no
+despliega nada. Cuando un cambio tenga que probarse en el servidor, decirselo a
+Marcos explicitamente para que lo despliegue — no esperar a que ocurra solo.
+
+Si un cambio "no funciona" en produccion, lo PRIMERO que hay que descartar es que
+siga corriendo el codigo viejo porque nadie ha desplegado. Es la causa recurrente
+de falsos negativos en este proyecto y ya esta anotada en el DEV-LOG.
+
+(Aviso para el proximo chat: tanto el prompt de sesion como versiones antiguas del
+DEV-LOG decian "auto-deploy desde main". Es FALSO — corregido el 16 jul 2026 por
+Marcos. No fiarse de esa frase si reaparece.)
 
 ## Contrato con Paylands
 
