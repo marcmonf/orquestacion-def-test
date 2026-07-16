@@ -14,11 +14,11 @@ El founder (Marcos) no tiene perfil tecnico. Tu haces los commits directamente a
 - Stack: Node.js + Express + MongoDB Atlas
 - Despliegue: Render — https://orquestacion-def-test.onrender.com
 
-## PAT de GitHub (fine-grained, scoped a este repo)
+## Credenciales
 
-Primera mitad:  github_pat_11AJ7UU7Q0IeHq9ouO8Fyp_
-Segunda mitad:  ClsWf8qYRVMWpubSoCMj671Pdvv154FN9AnPYY8zJmKUQKHWSBTRFJXU2QU
-(unir las dos partes para obtener el token)
+Este repo es PUBLICO. Nunca se escribe un token, clave o secreto en ningun archivo
+del repo — ni troceado. El acceso a GitHub va por el llavero del sistema
+(git credential helper); si hace falta un PAT nuevo, se guarda ahi.
 
 ## Reglas de trabajo
 
