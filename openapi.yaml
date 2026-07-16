@@ -1143,9 +1143,10 @@ webhooks:
         Cada intento queda en la colección `webhooklogs`.
 
         > ⚠️ **Este NO es el mismo formato de firma que usan los eventos del ciclo de
-        > vida** (`payment.captured` / `payment.refunded` / `payment.canceled`). Ver
-        > la nota en esos eventos. Es una divergencia real del código, no un error de
-        > esta documentación.
+        > vida** (`payment.captured` / `payment.refunded` / `payment.canceled`), que
+        > van por el header `x-monetiser-signature`. Ver la tabla comparativa de los
+        > tres emisores en la nota de `payment.captured`. Es una divergencia real del
+        > código, no un error de esta documentación, y no depende del entorno.
       requestBody:
         required: true
         content:
@@ -1167,26 +1168,28 @@ webhooks:
       description: |
         > ⚠️ **AVISO — este evento se firma DISTINTO que `payment.updated`.**
         >
-        > Lo emite otra función (`sendWebhookIfAny` en `paymentsController.js`), no
-        > el dispatcher. Diferencias reales, verificadas en el código:
+        > Monetiser tiene hoy **tres** emisores de webhook independientes, escritos
+        > en momentos distintos. **No depende del entorno**: los nombres de cabecera
+        > son literales en el código, sin condicionales de `NODE_ENV`.
         >
-        > | | `payment.updated` | `payment.captured/refunded/canceled` |
-        > |---|---|---|
-        > | Header | `Monetiser-Signature` | `x-monetiser-signature` |
-        > | Formato | `t=<ts>, v1=<hex>` (con espacio) | `t=<ts>,v1=<hex>` (sin espacio) |
-        > | Header extra | — | `x-monetiser-timestamp: <ts>` |
-        > | Secreto | del merchant, con fallback global | **solo `WEBHOOK_SECRET` global** |
-        > | Reintentos | sí, con backoff | **no** — un solo intento |
-        > | Registro | `webhooklogs` | **ninguno** |
+        > | | (1) `payment.updated` | (2) `payment.captured/refunded/canceled` | (3) eventos de APMs |
+        > |---|---|---|---|
+        > | Emisor | `webhookDispatcher.js` | `paymentsController.js` | `core/webhookService.js` |
+        > | Header | `Monetiser-Signature` | **`x-monetiser-signature`** | `Monetiser-Signature` |
+        > | Formato | `t=<ts>, v1=<hex>` (con espacio) | `t=<ts>,v1=<hex>` (sin espacio) | `t=<ts>, v1=<hex>` |
+        > | Header extra | — | `x-monetiser-timestamp: <ts>` | — |
+        > | Secreto | del merchant, fallback global | **solo `WEBHOOK_SECRET` global** | **solo global** |
+        > | Reintentos | sí, con backoff | **no** — un solo intento | sí, cola en memoria |
+        > | Registro | `webhooklogs` | **ninguno** | ninguno |
         >
         > **Consecuencias para quien integre:**
-        > 1. Hay que verificar **los dos** headers, o los eventos de ciclo de vida
-        >    fallarán la verificación en silencio.
+        > 1. Hay que verificar **los dos nombres de header**, o los eventos de ciclo
+        >    de vida fallarán la verificación en silencio.
         > 2. Si el merchant tiene `signingSecret` propio pero no hay `WEBHOOK_SECRET`
-        >    global, estos eventos salen **sin firmar** (no se omiten: se envían
-        >    igualmente, sin el header de firma).
-        > 3. Si la entrega falla, no hay reintento ni rastro: solo un `warn` en los
-        >    logs de Monetiser.
+        >    global, los emisores (2) y (3) envían **sin firmar** (no se omiten: se
+        >    envían igualmente, sin el header de firma).
+        > 3. En (2), si la entrega falla no hay reintento ni rastro: solo un `warn`
+        >    en los logs de Monetiser.
         >
         > Está documentado tal como es. Convendría unificarlo — ver DEV-LOG.
 
