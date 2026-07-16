@@ -127,8 +127,11 @@ app.use('/:merchantId/iframe-process', iframeRouter);
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 
-// APMs y Tokens
-app.use('/apms', ensureRouter(require('./src/channels/apms/apmsHandler'), 'apmsHandler'));
+// Tokens
+// /apms retirado (16 jul 2026): era un stack de pago paralelo de una version
+// antigua — publico sin auth, sin validacion efectiva y aceptaba PAN en crudo.
+// Procesaba contra conectores simulados. Ver DEV-LOG seccion 4. Los APMs reales
+// (M8) se construiran sobre connectorRegistry, no sobre aquello.
 app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
 
 // Orquestración + reglas
