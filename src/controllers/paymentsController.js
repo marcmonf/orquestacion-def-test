@@ -1,17 +1,29 @@
 // src/controllers/paymentsController.js
 'use strict';
-const crypto = require('crypto');
 const Transaction = require('../models/Transaction');
 const Operation = require('../models/Operation');
 const logger = require('../utils/logger');            // <— usamos logger
 const auditLogger = require('../logs/auditLogger');
 const { getConnector } = require('../services/connectorRegistry');
+const webhookDispatcher = require('../services/webhookDispatcher');
 
 // === Helpers ===
+/**
+ * Webhook saliente de ciclo de vida (payment.captured / refunded / cancelled).
+ *
+ * Unificado el 17 jul 2026: antes este emisor enviaba con su propia firma
+ * ("x-monetiser-signature", sin espacio, solo WEBHOOK_SECRET global, sin
+ * reintentos y sin registro), incompatible con la del webhookDispatcher.
+ * Ahora TODOS los webhooks salientes pasan por webhookDispatcher.enqueue():
+ *   - un único header de firma: "Monetiser-Signature: t=<ts>, v1=<hex>"
+ *   - secreto por-merchant (signingSecret) con fallback a WEBHOOK_SECRET
+ *   - reintentos con backoff exponencial
+ *   - registro de intentos en la colección webhooklogs
+ */
 async function sendWebhookIfAny(transaction, event, extra = {}) {
   try {
     const url = transaction?.callbackUrl;
-    if (!url || typeof fetch !== 'function') return;
+    if (!url) return;
 
     const payload = {
       event,
@@ -35,25 +47,11 @@ async function sendWebhookIfAny(transaction, event, extra = {}) {
       }
     };
 
-    const body = JSON.stringify(payload);
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const secret = process.env.WEBHOOK_SECRET || '';
-
-    let signatureHeader = {};
-    if (secret) {
-      const msg = `${ts}.${body}`;
-      const sig = crypto.createHmac('sha256', secret).update(msg, 'utf8').digest('hex');
-      signatureHeader = { 'x-monetiser-signature': `t=${ts},v1=${sig}` };
-    }
-
-    await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-monetiser-timestamp': ts,
-        ...signatureHeader
-      },
-      body
+    await webhookDispatcher.enqueue({
+      paymentId: transaction.paymentId,
+      merchantId: transaction.merchantId,
+      url,
+      payload
     });
   } catch (err) {
     logger.warn('Webhook emit failed', { component: 'paymentsController', data: { error: err.message } });
@@ -558,7 +556,8 @@ exports.cancelPayment = async (req, res) => {
       data: { status: tx.status }
     });
 
-    await sendWebhookIfAny(tx, 'payment.canceled', { canceled: true });
+    // Grafía alineada a Paylands (dos L) — mismo criterio que el status (16 jul 2026)
+    await sendWebhookIfAny(tx, 'payment.cancelled', { cancelled: true });
 
     return persistAndRespond({
       res,
