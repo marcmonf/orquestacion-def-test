@@ -2,12 +2,20 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 1.0.0
+  version: 2.0.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.0.0 (17 jul 2026)** — cambios de contrato (sin merchants integrados):
+    retirado `/initialize` (legado); todos los webhooks salientes unificados en
+    una única firma (`Monetiser-Signature`, secreto por-merchant, reintentos,
+    registro); evento `payment.canceled` renombrado a `payment.cancelled`.
+    Retirados también del servidor (nunca estuvieron en esta spec): `/tokens`,
+    `/payment-requests`, `POST /transactions/card-payment` y el CRUD de
+    escritura de `/transactions`.
 
     ## Cómo leer esta spec
 
@@ -1045,58 +1053,6 @@ paths:
             No hay token PCI para esta transacción — el cardholder no completó el
             formulario.
 
-  /initialize:
-    post:
-      tags: [Interno]
-      summary: '[LEGADO] Inicializar un pago'
-      operationId: initializePayment
-      x-madurez: legado
-      description: |
-        Anterior al diseño de Hosted Checkout. Se mantiene por compatibilidad.
-        **Para integraciones nuevas usar `POST /{merchantId}/payments/hosted`.**
-
-        Protegido con auth solo si `INITIALIZE_REQUIRE_API_KEY=true`.
-      security: []
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          description: Opcional aquí (a diferencia del ciclo de vida, donde es obligatoria).
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [merchantId, amount, currency, returnUrl, callbackUrl, method]
-              properties:
-                merchantId: { type: string }
-                amount: { type: number }
-                currency: { type: string }
-                method: { type: string }
-                returnUrl: { type: string, format: uri }
-                callbackUrl: { type: string, format: uri }
-      responses:
-        '200':
-          description: OK.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  paymentId: { type: string }
-                  merchantId: { type: string }
-                  amount: { type: number }
-                  currency: { type: string }
-                  signature: { type: string }
-                  timestamp: { type: string, format: date-time }
-                  expiresAt: { type: string, format: date-time }
-                  iframeUrl: { type: string, format: uri }
-        '409':
-          description: Conflicto de `Idempotency-Key`.
-
   /health:
     get:
       tags: [Observabilidad]
@@ -1146,11 +1102,11 @@ webhooks:
         Con reintentos y backoff exponencial (`WEBHOOK_MAX_RETRIES`, por defecto 6).
         Cada intento queda en la colección `webhooklogs`.
 
-        > ⚠️ **Este NO es el mismo formato de firma que usan los eventos del ciclo de
-        > vida** (`payment.captured` / `payment.refunded` / `payment.canceled`), que
-        > van por el header `x-monetiser-signature`. Ver la tabla comparativa de los
-        > tres emisores en la nota de `payment.captured`. Es una divergencia real del
-        > código, no un error de esta documentación, y no depende del entorno.
+        **Desde el 17 jul 2026 esta es la firma de TODOS los webhooks salientes**
+        (`payment.updated`, `payment.captured`, `payment.refunded`,
+        `payment.cancelled`): un único emisor (`webhookDispatcher`), un único
+        header, mismo secreto, mismos reintentos y mismo registro. La divergencia
+        histórica de firmas (`x-monetiser-signature`) quedó eliminada.
       requestBody:
         required: true
         content:
@@ -1168,37 +1124,11 @@ webhooks:
       tags: [Webhooks]
       summary: Un pago se ha capturado
       x-madurez: estable
-      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      x-emisor: src/services/webhookDispatcher.js (vía paymentsController)
       description: |
-        > ⚠️ **AVISO — este evento se firma DISTINTO que `payment.updated`.**
-        >
-        > Monetiser tiene hoy **dos** emisores de webhook independientes, escritos en
-        > momentos distintos. **No depende del entorno**: los nombres de cabecera son
-        > literales en el código, sin condicionales de `NODE_ENV`.
-        >
-        > | | (1) `payment.updated` | (2) `payment.captured/refunded/canceled` |
-        > |---|---|---|
-        > | Emisor | `webhookDispatcher.js` | `paymentsController.js` |
-        > | Header | `Monetiser-Signature` | **`x-monetiser-signature`** |
-        > | Formato | `t=<ts>, v1=<hex>` (con espacio) | `t=<ts>,v1=<hex>` (sin espacio) |
-        > | Header extra | — | `x-monetiser-timestamp: <ts>` |
-        > | Secreto | del merchant, fallback global | **solo `WEBHOOK_SECRET` global** |
-        > | Reintentos | sí, con backoff | **no** — un solo intento |
-        > | Registro | `webhooklogs` | **ninguno** |
-        >
-        > **Consecuencias para quien integre:**
-        > 1. Hay que verificar **los dos nombres de header**, o los eventos de ciclo
-        >    de vida fallarán la verificación en silencio.
-        > 2. Si el merchant tiene `signingSecret` propio pero no hay `WEBHOOK_SECRET`
-        >    global, el emisor (2) envía **sin firmar** (no se omite: se envía
-        >    igualmente, sin el header de firma).
-        > 3. En (2), si la entrega falla no hay reintento ni rastro: solo un `warn`
-        >    en los logs de Monetiser.
-        >
-        > Está documentado tal como es. Convendría unificarlo — ver DEV-LOG.
-        >
-        > (Hubo un tercer emisor, `core/webhookService.js`, que salía por `/apms`.
-        > Ese stack se retiró el 16 jul 2026 — ver DEV-LOG sección 4.)
+        Misma firma, entrega, reintentos y registro que `payment.updated` — ver ese
+        evento. (La divergencia histórica de firmas entre emisores se eliminó el
+        17 jul 2026: todos los webhooks salientes pasan por `webhookDispatcher`.)
 
         `data` incluye además `capturedAmount` (entero, céntimos).
       requestBody:
@@ -1209,16 +1139,18 @@ webhooks:
               $ref: '#/components/schemas/OutboundWebhookPayload'
       responses:
         '200':
-          description: Recepción confirmada. No se reintenta pase lo que pase.
+          description: |
+            Devuelve 2xx para confirmar la recepción. Cualquier otra cosa provoca
+            un reintento con backoff.
 
   payment.refunded:
     post:
       tags: [Webhooks]
       summary: Un pago se ha reembolsado
       x-madurez: estable
-      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      x-emisor: src/services/webhookDispatcher.js (vía paymentsController)
       description: |
-        Mismas diferencias de firma y entrega que `payment.captured` — ver ese evento.
+        Misma firma, entrega, reintentos y registro que `payment.updated` — ver ese evento.
 
         `data` incluye además `refundedAmount` (entero, céntimos).
       requestBody:
@@ -1229,24 +1161,25 @@ webhooks:
               $ref: '#/components/schemas/OutboundWebhookPayload'
       responses:
         '200':
-          description: Recepción confirmada. No se reintenta.
+          description: |
+            Devuelve 2xx para confirmar la recepción. Cualquier otra cosa provoca
+            un reintento con backoff.
 
-  payment.canceled:
+  payment.cancelled:
     post:
       tags: [Webhooks]
       summary: Un pago se ha anulado
       x-madurez: estable
-      x-emisor: src/controllers/paymentsController.js (sendWebhookIfAny)
+      x-emisor: src/services/webhookDispatcher.js (vía paymentsController)
       description: |
-        Mismas diferencias de firma y entrega que `payment.captured` — ver ese evento.
+        Misma firma, entrega, reintentos y registro que `payment.updated` — ver ese evento.
 
-        `data` incluye además `canceled: true`.
+        `data` incluye además `cancelled: true`.
 
-        Nota de grafía: el evento se llama `payment.canceled` y el flag es
-        `canceled` (una `l`), mientras que `data.status` es `cancelled` (dos `l`).
-        No es un error de esta spec: el nombre del evento es contrato propio de
-        Monetiser y no se tocó al alinear el *status* con la grafía de Paylands el
-        16 jul 2026. Inconsistencia cosmética conocida; ver DEV-LOG.
+        Grafía: evento, flag y `data.status` usan ya todos `cancelled` (dos `l`),
+        la grafía de Paylands. El evento se llamó `payment.canceled` (una `l`)
+        hasta el 17 jul 2026, cuando se alineó junto con la unificación de los
+        emisores de webhook. No había merchants integrados verificando eventos.
       requestBody:
         required: true
         content:
@@ -1255,7 +1188,9 @@ webhooks:
               $ref: '#/components/schemas/OutboundWebhookPayload'
       responses:
         '200':
-          description: Recepción confirmada. No se reintenta.
+          description: |
+            Devuelve 2xx para confirmar la recepción. Cualquier otra cosa provoca
+            un reintento con backoff.
 
 # ════════════════════════════════════════════════════════════════════════
 # COMPONENTS
@@ -1837,7 +1772,7 @@ components:
       properties:
         event:
           type: string
-          enum: [payment.updated, payment.captured, payment.refunded, payment.canceled]
+          enum: [payment.updated, payment.captured, payment.refunded, payment.cancelled]
         version: { type: string, const: v1 }
         data:
           type: object
@@ -1869,9 +1804,9 @@ components:
             refundedAmount:
               type: integer
               description: Solo en `payment.refunded`. Céntimos.
-            canceled:
+            cancelled:
               type: boolean
-              description: Solo en `payment.canceled`.
+              description: Solo en `payment.cancelled`.
 
     ApiKeyCreateResponse:
       type: object
