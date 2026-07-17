@@ -1,55 +1,49 @@
 // src/controllers/transactionController.js
 'use strict';
 
-const Joi                       = require('joi');
-const { v4: uuidv4 }            = require('uuid');
-const Transaction               = require('../models/Transaction');
-const logger                    = require('../utils/logger');
-const auditLogger               = require('../logs/auditLogger');
-const transactionSchema         = require('../validators/transactionValidator');
-const { createTokenForCard }    = require('../services/tokenService');
-const RecurrentProfile          = require('../models/RecurrentProfile');
+/**
+ * Controlador de OBSERVABILIDAD de transacciones — SOLO LECTURA.
+ *
+ * Reescrito el 17 jul 2026 (retirada del stack legacy):
+ * - Eliminados createTransaction / updateTransaction / deleteTransaction:
+ *   PUT y DELETE operaban por paymentId SIN comprobar la pertenencia al
+ *   merchant autenticado (cualquier merchant con API key podía modificar o
+ *   borrar transacciones ajenas). POST creaba transacciones por fuera del
+ *   flujo real de pago (Hosted Checkout / S2S).
+ * - Eliminado el arrastre legacy: acquirers mock, conectores APM simulados,
+ *   orquestador V1, tokenService interno y RecurrentProfile.
+ *
+ * TODAS las consultas quedan limitadas al merchant autenticado
+ * (req.merchantId, que fija el middleware hmacAuth). Un merchant solo ve
+ * sus propias transacciones y sus propias métricas.
+ *
+ * La escritura de transacciones ocurre únicamente en los flujos de pago
+ * (hostedCheckoutController, serverPaymentController, webhooks,
+ * paymentsController) — nunca por CRUD directo.
+ */
 
-const { selectConnector }       = require('../orchestrator/orchestrationEngine');
-const { executeCardPayment }    = require('../orchestrator/fallbackEngine');
+const Transaction = require('../models/Transaction');
+const logger = require('../utils/logger');
 
-const mbwayConnector            = require('../channels/apms/hub/connectors/mbwayConnector');
-const { initiatePayment: initiateBizumPayment } = require('../channels/apms/hub/connectors/bizumConnector');
-const { initiatePayment: initiatePixPayment }   = require('../channels/apms/hub/connectors/pixConnector');
+const DB_QUERY_TIMEOUT_MS = Math.max(300, Math.min(5000, parseInt(process.env.DB_QUERY_TIMEOUT_MS || '1200', 10)));
 
-const visaAcquirer              = require('../channels/acquirers/visaAcquirer');
-const mcAcquirer                = require('../channels/acquirers/mcAcquirer');
-const amexAcquirer              = require('../channels/acquirers/amexAcquirer');
-const defaultCardAcquirer       = require('../channels/acquirers/defaultCardAcquirer');
-
-const { parseBin }              = require('../utils/cardInfoParser');
-const webhookDispatcher         = require('../services/webhookDispatcher');
-
-/* ------------ FLAGS / TIMEOUTS ------------- */
-const TX_TIMEOUT_MS         = Math.max(1000, parseInt(process.env.TX_TIMEOUT_MS || '8000', 10));
-const FEATURE_ASYNC_PERSIST = process.env.FEATURE_ASYNC_PERSIST === '1';
-const PERSIST_TIMEOUT_MS    = Math.max(500, Math.min(5000, parseInt(process.env.PERSIST_TIMEOUT_MS || '3000', 10)));
-const DB_QUERY_TIMEOUT_MS   = Math.max(300, Math.min(5000, parseInt(process.env.DB_QUERY_TIMEOUT_MS || '1200', 10)));
-const BIN_OFFLINE           = process.env.BIN_OFFLINE === '1';
-const FAST_TX               = process.env.FAST_TX === '1';
-
-function withTimeout(promise, ms, label) {
+function withTimeout(promise, ms, tag) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`timeout:${label}`)), ms);
-    promise.then(v => { clearTimeout(t); resolve(v); })
-           .catch(e => { clearTimeout(t); reject(e); });
+    const t = setTimeout(() => reject(new Error(`timeout:${tag}`)), ms);
+    promise
+      .then(v => { clearTimeout(t); resolve(v); })
+      .catch(e => { clearTimeout(t); reject(e); });
   });
 }
-function nowIso() { return new Date().toISOString(); }
 
 /* --------------------------------------------------------------------------- */
 const getAllTransactions = async (req, res) => {
   try {
-    const { merchantId, status, method, fromDate, toDate, page = 1, limit = 20 } = req.query;
-    const query = {};
-    if (merchantId) query.merchantId = merchantId;
-    if (status)     query.status     = status;
-    if (method)     query.method     = method;
+    const { status, method, fromDate, toDate, page = 1, limit = 20 } = req.query;
+    // Scoping obligatorio: el merchant autenticado solo lista lo suyo.
+    const query = { merchantId: req.merchantId };
+    if (status) query.status = status;
+    if (method) query.method = method;
     if (fromDate || toDate) {
       query.createdAt = {};
       if (fromDate) query.createdAt.$gte = new Date(fromDate);
@@ -64,7 +58,7 @@ const getAllTransactions = async (req, res) => {
         'mongo-find'
       )
     ]);
-    logger.info('Transacciones obtenidas', { total, query });
+    logger.info('Transacciones obtenidas', { merchantId: req.merchantId, total });
     res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
   } catch (error) {
     logger.error('Error al obtener transacciones', { error: error.message });
@@ -73,294 +67,17 @@ const getAllTransactions = async (req, res) => {
 };
 
 /* --------------------------------------------------------------------------- */
-const createTransaction = async (req, res) => {
-  const { error, value } = transactionSchema.validate(req.body);
-  if (error) {
-    const messageKey = error.details[0].message;
-    const translated = res.getMessage?.(messageKey) || messageKey || 'transaction.validation';
-    logger.warn('Validación fallida en creación', { details: messageKey });
-    auditLogger.info({
-      action: 'TRANSACTION_VALIDATION_FAILED',
-      user: req.merchantId || 'unknown',
-      details: { error: messageKey },
-      metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
-    });
-    return res.status(400).json({ success: false, message: translated });
-  }
-
-  const hardAbortTimer = setTimeout(() => {
-    logger.error('TX hard timeout alcanzado', { merchantId: value.merchantId, amount: value.amount });
-    try { res.status(504).json({ success: false, error: 'timeout', message: `No respuesta en ${TX_TIMEOUT_MS}ms` }); } catch {}
-  }, TX_TIMEOUT_MS);
-
-  try {
-    const generatedPaymentId = uuidv4();
-
-    if (FAST_TX) {
-      const sanitized = { ...value };
-      delete sanitized.cvv; delete sanitized.cardNumber;
-      let response = {
-        status: 'approved',
-        processor: 'fast-sim',
-        transactionId: `tx_${Date.now()}`,
-        authCode: 'FASTOK',
-        timestamp: nowIso()
-      };
-
-      // 🔹 SINGLE MESSAGE
-      if (value.captureNow && response.status === 'approved') {
-        response = { ...response, status: 'captured', capturedAt: nowIso() };
-      }
-
-      const doc = new Transaction({ ...sanitized, ...response, paymentId: generatedPaymentId });
-      const saveP = doc.save();
-      if (FEATURE_ASYNC_PERSIST) {
-        setImmediate(async () => { try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast async', { e: e.message }); } });
-      } else {
-        try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-fast'); } catch (e) { logger.warn('save fast sync', { e: e.message }); }
-      }
-      clearTimeout(hardAbortTimer);
-      res.status(response.status === 'captured' ? 201 : 201).json({
-        success: true,
-        message: res.getMessage('transaction.created'),
-        transaction: { ...doc.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' }
-      });
-      try {
-        if (doc.callbackUrl && process.env.WEBHOOK_SECRET) {
-          webhookDispatcher.enqueue({
-            paymentId: doc.paymentId,
-            merchantId: doc.merchantId,
-            url: doc.callbackUrl,
-            payload: {
-              event: 'payment.updated',
-              version: 'v1',
-              data: {
-                paymentId: doc.paymentId,
-                merchantId: doc.merchantId,
-                status: doc.status,
-                amount: doc.amount,
-                currency: doc.currency,
-                connectorUsed: 'fast-sim',
-                reasonCode: null,
-                timestamp: nowIso(),
-                cardInfo: null
-              }
-            }
-          });
-        }
-      } catch {}
-      return;
-    }
-
-    // Recurrencia
-    let recurrenceId = value.recurrenceId || null;
-    let token        = value.token || null;
-
-    if (value.transactionType === 'CIT' && value.isRecurring && !token) {
-      recurrenceId = uuidv4();
-      token = await createTokenForCard({
-        cardNumber:      value.cardNumber,
-        cardholderName:  value.cardholderName,
-        expiryMonth:     value.expiryMonth,
-        expiryYear:      value.expiryYear,
-        cvv:             value.cvv
-      });
-
-      const rp = new RecurrentProfile({
-        recurrenceId, token, merchantId: value.merchantId,
-        cardholderName: value.cardholderName, expiryMonth: value.expiryMonth, expiryYear: value.expiryYear
-      });
-      await withTimeout(rp.save(), DB_QUERY_TIMEOUT_MS, 'mongo-save-recurrent');
-    }
-
-    if (value.transactionType === 'MIT') {
-      const findPrevP = Transaction.findOne({
-        recurrenceId:  value.recurrenceId,
-        token:         value.token,
-        transactionType: 'CIT'
-      });
-      const previous = await withTimeout(findPrevP, DB_QUERY_TIMEOUT_MS, 'mongo-find-previous');
-      if (!previous) {
-        logger.warn('MIT sin CIT previa vinculada', { recurrenceId: value.recurrenceId, token: value.token });
-        auditLogger.info({
-          action: 'MIT_WITHOUT_CIT',
-          user: req.merchantId || 'unknown',
-          details: { recurrenceId: value.recurrenceId, token: value.token },
-          metadata: { ip: req.ip, method: req.method, url: req.originalUrl }
-        });
-        clearTimeout(hardAbortTimer);
-        return res.status(400).json({ success: false, message: res.getMessage('transaction.invalid.mit.noMatch') });
-      }
-    }
-
-    // Sanitizar
-    const sanitizedValue = { ...value };
-    delete sanitizedValue.cvv; delete sanitizedValue.cardNumber;
-    if (value.returnUrl)   sanitizedValue.returnUrl   = value.returnUrl;
-    if (value.callbackUrl) sanitizedValue.callbackUrl = value.callbackUrl;
-
-    // BIN enrichment
-    let cardInfo = null;
-    if (value.method === 'card' && value.cardNumber && !value.token) {
-      try {
-        const parseP = parseBin(value.cardNumber);
-        cardInfo = BIN_OFFLINE ? await parseP : await withTimeout(parseP, 1200, 'bin-lookup');
-      } catch { cardInfo = null; }
-    }
-
-    // Orquestación
-    let selectedConnector = 'defaultCardAcquirer';
-    try {
-      selectedConnector = await withTimeout(
-        Promise.resolve(selectConnector({ ...value, cardInfo })),
-        800,
-        'select-connector'
-      );
-    } catch (e) {
-      logger.warn('selectConnector timeout/fallback → defaultCardAcquirer', { err: e.message });
-      selectedConnector = 'defaultCardAcquirer';
-    }
-
-    // Ejecución protegida
-    let response;
-    let qrCodeImage = null;
-
-    if (value.method === 'card') {
-      const execP = executeCardPayment({ paymentRequest: value, paymentId: generatedPaymentId, primaryConnector: selectedConnector });
-      response = await withTimeout(execP, Math.max(800, TX_TIMEOUT_MS - 2000), 'execute-card');
-
-      // 🔹 SINGLE MESSAGE: si aprobada y `captureNow` → marcar como capturada
-      if (value.captureNow && response?.status === 'approved') {
-        response = { ...response, status: 'captured', capturedAt: nowIso() };
-      }
-
-    } else {
-      switch (selectedConnector) {
-        case 'mbwayConnector':
-          response = await withTimeout(mbwayConnector.process(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mbway');
-          break;
-        case 'bizumConnector':
-          response = await withTimeout(initiateBizumPayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-bizum');
-          break;
-        case 'pixConnector': {
-          const pixP = initiatePixPayment(value);
-          response = await withTimeout(pixP, Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-pix');
-          sanitizedValue.qrCodePayload = response.qrCodePayload;
-          sanitizedValue.paymentUrl    = response.paymentUrl;
-          qrCodeImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(response.qrCodePayload)}`;
-          break;
-        }
-        case 'visaAcquirer':
-          response = await withTimeout(visaAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-visa');
-          break;
-        case 'mcAcquirer':
-          response = await withTimeout(mcAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-mc');
-          break;
-        case 'amexAcquirer':
-          response = await withTimeout(amexAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-amex');
-          break;
-        case 'defaultCardAcquirer':
-          response = await withTimeout(defaultCardAcquirer.initiatePayment(value), Math.max(800, TX_TIMEOUT_MS - 2000), 'exec-default');
-          break;
-        default: throw new Error(`Unsupported connector: ${selectedConnector}`);
-      }
-    }
-
-    // Persistencia
-    sanitizedValue.status        = response.status;
-    sanitizedValue.processor     = response.processor;
-    sanitizedValue.transactionId = response.transactionId;
-    if (response.authCode)   sanitizedValue.authCode   = response.authCode;
-    if (response.timestamp)  sanitizedValue.timestamp  = response.timestamp;
-    if (response.capturedAt) sanitizedValue.capturedAt = response.capturedAt;
-    if (cardInfo)            sanitizedValue.cardInfo   = cardInfo;
-
-    const docToSave = new Transaction({
-      ...sanitizedValue,
-      paymentId:   generatedPaymentId,
-      recurrenceId,
-      token
-    });
-
-    const saveP = docToSave.save();
-    if (!FEATURE_ASYNC_PERSIST) {
-      await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save');
-    } else {
-      setImmediate(async () => {
-        try { await withTimeout(saveP, PERSIST_TIMEOUT_MS, 'mongo-save-async'); logger.info('Persistencia async OK', { paymentId: generatedPaymentId }); }
-        catch (e) { logger.error('Persistencia async FAILED', { paymentId: generatedPaymentId, error: e.message }); }
-      });
-    }
-
-    clearTimeout(hardAbortTimer);
-    res.status(['approved','captured'].includes(response.status) ? 201 : 402).json({
-      success:       ['approved','captured'].includes(response.status),
-      message:       res.getMessage(response.status === 'declined' ? 'transaction.declined' : 'transaction.created'),
-      transaction:   { ...docToSave.toObject(), _persist: FEATURE_ASYNC_PERSIST ? 'async' : 'sync' },
-      recurrenceId,
-      token,
-      qrCodeImage
-    });
-
-    // Webhook async
-    try {
-      const callbackUrl = docToSave.callbackUrl;
-      if (callbackUrl && process.env.WEBHOOK_SECRET) {
-        const payload = {
-          event: 'payment.updated',
-          version: 'v1',
-          data: {
-            paymentId: docToSave.paymentId,
-            merchantId: docToSave.merchantId,
-            status: docToSave.status,
-            amount: docToSave.amount,
-            currency: docToSave.currency,
-            connectorUsed: selectedConnector,
-            reasonCode: response.reasonCode || null,
-            timestamp: nowIso(),
-            cardInfo: cardInfo ? {
-              bin: cardInfo.bin || null,
-              cardBrand: cardInfo.cardBrand || null,
-              cardType: cardInfo.cardType || null,
-              issuerCountry: cardInfo.issuerCountry || null
-            } : null
-          }
-        };
-        webhookDispatcher.enqueue({ paymentId: docToSave.paymentId, merchantId: docToSave.merchantId, url: callbackUrl, payload });
-      }
-    } catch (e) {
-      logger.warn('Webhook enqueue error', { error: e.message });
-    }
-
-  } catch (err) {
-    clearTimeout(hardAbortTimer);
-    const isTimeout = String(err?.message || '').startsWith('timeout:');
-    if (isTimeout) {
-      logger.error('Timeout controlado en TX', { step: err.message });
-      return res.status(504).json({ success: false, error: 'timeout', message: `Paso lento: ${err.message}` });
-    }
-    logger.error('Error al crear transacción', { error: err.message });
-    auditLogger.info({
-      action: 'TRANSACTION_CREATE_ERROR',
-      user:   req.merchantId || 'unknown',
-      details:{ error: err.message },
-      metadata:{ ip: req.ip, method: req.method, url: req.originalUrl }
-    });
-    return res.status(500).json({ success: false, message: res.getMessage('transaction.create.error') });
-  }
-};
-
-/* --------------------------------------------------------------------------- */
 const getTransactionById = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const findP = Transaction.findOne({ paymentId });
-    const transaction = await withTimeout(findP, DB_QUERY_TIMEOUT_MS, 'mongo-find-by-id');
+    // Scoping obligatorio: 404 si la transacción no pertenece al merchant.
+    const txP = Transaction.findOne({ paymentId, merchantId: req.merchantId });
+    const transaction = await withTimeout(txP, DB_QUERY_TIMEOUT_MS, 'mongo-findone');
     if (!transaction) {
-      logger.warn('Transacción no encontrada', { paymentId });
+      logger.warn('Transacción no encontrada', { paymentId, merchantId: req.merchantId });
       return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
     }
-    logger.info('Transacción obtenida por ID', { paymentId });
+    logger.info('Transacción obtenida por ID', { paymentId, merchantId: req.merchantId });
     res.status(200).json({ success: true, transaction });
   } catch (err) {
     logger.error('Error al obtener transacción', { error: err.message });
@@ -368,55 +85,16 @@ const getTransactionById = async (req, res) => {
   }
 };
 
-/* --------------------------------------------------------------------------- */
-const updateTransaction = async (req, res) => {
-  try {
-    const { paymentId } = req.params;
-    const updates = req.body;
-    const updP = Transaction.findOneAndUpdate(
-      { paymentId },
-      { $set: updates },
-      { new: true }
-    );
-    const transaction = await withTimeout(updP, DB_QUERY_TIMEOUT_MS, 'mongo-update');
-    if (!transaction) {
-      logger.warn('Transacción no encontrada para actualizar', { paymentId });
-      return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
-    }
-    logger.info('Transacción actualizada', { paymentId, updates });
-    res.status(200).json({ success: true, message: res.getMessage('transaction.updated'), transaction });
-  } catch (err) {
-    logger.error('Error al actualizar transacción', { error: err.message });
-    res.status(500).json({ success: false, message: res.getMessage('transaction.update.error') });
-  }
-};
-
-const deleteTransaction = async (req, res) => {
-  try {
-    const { paymentId } = req.params;
-    const delP = Transaction.findOneAndDelete({ paymentId });
-    const deleted = await withTimeout(delP, DB_QUERY_TIMEOUT_MS, 'mongo-delete');
-    if (!deleted) {
-      logger.warn('Transacción no encontrada para eliminar', { paymentId });
-      return res.status(404).json({ success: false, message: res.getMessage('transaction.not.found') });
-    }
-    logger.info('Transacción eliminada', { paymentId });
-    res.status(200).json({ success: true, message: res.getMessage('transaction.deleted') });
-  } catch (err) {
-    logger.error('Error al eliminar transacción', { error: err.message });
-    res.status(500).json({ success: false, message: res.getMessage('transaction.delete.error') });
-  }
-};
-
+/* ------------------------- ANALÍTICAS (por merchant) ----------------------- */
 const getTransactionVolume = async (req, res) => {
   try {
     const aggP = Transaction.aggregate([
-      { $match: { status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: 'approved' } },
       { $group: { _id: null, totalVolume: { $sum: '$amount' } } }
     ]);
     const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-volume');
     const totalVolume = result[0]?.totalVolume || 0;
-    logger.info('Volumen total obtenido', { totalVolume });
+    logger.info('Volumen total obtenido', { merchantId: req.merchantId, totalVolume });
     res.status(200).json({ totalVolume });
   } catch (err) {
     logger.error('Error al obtener volumen', { error: err.message });
@@ -426,14 +104,15 @@ const getTransactionVolume = async (req, res) => {
 
 const getApprovalRate = async (req, res) => {
   try {
-    const totalP    = Transaction.countDocuments();
-    const approvedP = Transaction.countDocuments({ status: 'approved' });
+    const scope = { merchantId: req.merchantId };
+    const totalP    = Transaction.countDocuments(scope);
+    const approvedP = Transaction.countDocuments({ ...scope, status: 'approved' });
     const [total, approved] = await Promise.all([
       withTimeout(totalP, DB_QUERY_TIMEOUT_MS, 'mongo-count-all'),
       withTimeout(approvedP, DB_QUERY_TIMEOUT_MS, 'mongo-count-approved')
     ]);
     const rate = total ? ((approved / total) * 100).toFixed(2) : '0';
-    logger.info('Tasa de aprobación obtenida', { total, approved, rate });
+    logger.info('Tasa de aprobación obtenida', { merchantId: req.merchantId, total, approved, rate });
     res.status(200).json({ approvalRate: `${rate}%` });
   } catch (err) {
     logger.error('Error al obtener tasa aprobación', { error: err.message });
@@ -444,12 +123,12 @@ const getApprovalRate = async (req, res) => {
 const getAverageMSC = async (req, res) => {
   try {
     const aggP = Transaction.aggregate([
-      { $match: { status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: 'approved' } },
       { $group: { _id: null, average: { $avg: '$amount' } } }
     ]);
     const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-avg');
     const averageMSC = result[0]?.average || 0;
-    logger.info('MSC promedio obtenido', { averageMSC });
+    logger.info('MSC promedio obtenido', { merchantId: req.merchantId, averageMSC });
     res.status(200).json({ averageMSC });
   } catch (err) {
     logger.error('Error al obtener MSC promedio', { error: err.message });
@@ -459,11 +138,12 @@ const getAverageMSC = async (req, res) => {
 
 const getTransactionSummary = async (req, res) => {
   try {
-    const totalP    = Transaction.countDocuments();
-    const approvedP = Transaction.countDocuments({ status: 'approved' });
-    const declinedP = Transaction.countDocuments({ status: 'declined' });
+    const scope = { merchantId: req.merchantId };
+    const totalP    = Transaction.countDocuments(scope);
+    const approvedP = Transaction.countDocuments({ ...scope, status: 'approved' });
+    const declinedP = Transaction.countDocuments({ ...scope, status: 'declined' });
     const volumeP   = Transaction.aggregate([
-      { $match: { status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const [total, approved, declined, volumeRes] = await Promise.all([
@@ -474,7 +154,7 @@ const getTransactionSummary = async (req, res) => {
     ]);
     const volume = volumeRes[0]?.total || 0;
 
-    logger.info('Resumen de métricas obtenido', { total, approved, declined, volume });
+    logger.info('Resumen de métricas obtenido', { merchantId: req.merchantId, total, approved, declined, volume });
     res.status(200).json({
       totalTransactions:     total,
       approvedTransactions:  approved,
@@ -490,10 +170,7 @@ const getTransactionSummary = async (req, res) => {
 
 module.exports = {
   getAllTransactions,
-  createTransaction,
   getTransactionById,
-  updateTransaction,
-  deleteTransaction,
   getTransactionVolume,
   getApprovalRate,
   getAverageMSC,

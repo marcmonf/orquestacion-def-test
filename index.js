@@ -101,19 +101,10 @@ const ensureRouter = (moduleExport, moduleName) => {
 /* ===== Healthcheck ===== */
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-/* ===== Idempotencia en /initialize (opt-in por header) ===== */
-const idempotency = require('./src/middleware/idempotency');
-app.use('/initialize', idempotency());
-
 /* ===== Rutas principales ===== */
-let initializeRoutesExport;
-try {
-  initializeRoutesExport = require('./src/routes/initializeRoutes');
-  console.log('🟢 [DEBUG] initializeRoutes export:', initializeRoutesExport);
-} catch (err) {
-  console.error('❌ [ERROR] require("./src/routes/initializeRoutes"):', err);
-}
-app.use('/initialize', ensureRouter(initializeRoutesExport, 'initializeRoutes'));
+// /initialize retirado (17 jul 2026): stack legacy pre-Hosted-Checkout.
+// Nada del front ni de los flujos actuales lo llamaba. El flujo real de
+// creación de pagos es POST /:merchantId/payments/hosted (y S2S).
 
 // Iframe: mismo router para /iframe y /iframe-process
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
@@ -127,12 +118,13 @@ app.use('/:merchantId/iframe-process', iframeRouter);
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 
-// Tokens
 // /apms retirado (16 jul 2026): era un stack de pago paralelo de una version
 // antigua — publico sin auth, sin validacion efectiva y aceptaba PAN en crudo.
 // Procesaba contra conectores simulados. Ver DEV-LOG seccion 4. Los APMs reales
 // (M8) se construiran sobre connectorRegistry, no sobre aquello.
-app.use('/tokens', ensureRouter(require('./src/tokens/tokenRoutes'), 'tokenRoutes'));
+// /tokens retirado (17 jul 2026): aceptaba PAN + CVV y guardaba el PAN cifrado
+// en MongoDB (bóveda propia = scope SAQ D). La tokenización real la hace
+// ProxyFields de Paylands; Monetiser nunca debe almacenar PAN.
 
 // Orquestración + reglas
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
@@ -157,8 +149,8 @@ app.use('/backoffice/auth', ensureRouter(require('./src/routes/backofficeAuthRou
 // Backoffice — endpoints protegidos por JWT de sesión
 app.use('/backoffice', ensureRouter(require('./src/routes/backofficeRoutes'), 'backofficeRoutes'));
 
-// Payment Request
-app.use('/payment-requests', ensureRouter(require('./src/routes/paymentRequests'), 'paymentRequests'));
+// /payment-requests retirado (17 jul 2026): stack legacy que desembocaba en el
+// CRUD antiguo de transacciones. Sin uso desde el front ni desde merchants.
 
 // Gestión de merchants (admin) — modelo Merchant unificado (M2)
 // IMPORTANTE: debe montarse ANTES del bloque comodín '/:merchantId/...'
