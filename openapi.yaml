@@ -295,6 +295,12 @@ paths:
         Devuelve dinero al cardholder. Internamente llama a `POST /payment/refund`
         de Paylands. Verificado end-to-end (total y parcial).
 
+        **Prerequisito (operativa `DEFERRED`, verificado en vivo 18 jul 2026):** el
+        pago debe estar **capturado**. Sobre un pago `authorized` sin capturar no hay
+        dinero movido que reembolsar: Paylands responde `409 Conflict` y Monetiser lo
+        devuelve como `502 refund.processor_declined`. Las operaciones válidas sobre
+        una autorización sin capturar son `capture` o `cancel`.
+
         Usa `amountOfMoney.amount` (entero, céntimos). Si se omite, se reembolsa el
         importe reembolsable restante completo.
 

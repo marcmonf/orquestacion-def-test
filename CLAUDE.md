@@ -85,6 +85,12 @@ Lo verificado end-to-end contra Paylands real (NO tocar sin motivo): hosted
 checkout, y el ciclo de vida refund/capture/cancel con `operative: DEFERRED`
 (`/payment/confirmation` y `/payment/cancellation`).
 
+Orden del ciclo de vida con DEFERRED — aprendido en las pruebas del 18 jul 2026
+(el plan de pruebas de Claude lo hizo mal): sobre un pago `authorized` SIN
+capturar solo caben `capture` o `cancel`. El refund exige captura previa: no hay
+dinero movido que devolver. Refund sobre authorized sin capturar -> Paylands
+409 Conflict -> Monetiser 502 `refund.processor_declined`. No es un bug.
+
 ## Lectura del DEV-LOG
 
 El DEV-LOG.md del repo contiene:
