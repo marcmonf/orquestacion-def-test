@@ -57,6 +57,25 @@ async function createServerPayment(req, res) {
     });
   }
 
+  // ── Política TOKENS-ONLY (PCI SAQ A) ────────────────────────────────────────
+  // El PAN NUNCA entra por la API S2S. Se rechaza cardNumber/cvv en crudo con un
+  // mensaje claro, ANTES de validar la estructura, para que el motivo no quede
+  // sepultado entre otros errores de validación. Decisión ratificada 18 jul 2026
+  // (ver DEV-LOG sección 5, fila S2S). La tarjeta se tokeniza con ProxyFields de
+  // Paylands y el merchant envía el source_uuid resultante.
+  const rawCard = body?.cardPaymentMethodSpecificInput?.card || {};
+  if (rawCard.cardNumber || rawCard.cvv) {
+    return res.status(400).json({
+      success: false,
+      error: 'card_data_not_accepted',
+      detail:
+        'S2S no acepta datos de tarjeta en crudo (cardNumber/cvv): Monetiser opera en ' +
+        'scope PCI SAQ A y el PAN nunca debe transitar por la API. Tokeniza la tarjeta ' +
+        'con ProxyFields de Paylands y envía el token (source_uuid) en el campo raíz ' +
+        '"source_uuid" o en "cardPaymentMethodSpecificInput.token".'
+    });
+  }
+
   const { error, value } = ServerPaymentRequestDTO.validate(body, { abortEarly: false });
   if (error || !value) {
     return res.status(400).json({
@@ -76,6 +95,20 @@ async function createServerPayment(req, res) {
   }
 
 const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedFieldsSessionId, feedbacks } = value;
+
+  // Token de ProxyFields (Paylands source_uuid). Aceptado a nivel raíz o dentro
+  // de cardPaymentMethodSpecificInput.token. Es obligatorio en el modelo tokens-only.
+  const cardToken = value.source_uuid || cardPaymentMethodSpecificInput.token || null;
+  if (!cardToken) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_card_token',
+      detail:
+        'Falta el token de tarjeta. Tokeniza la tarjeta con ProxyFields de Paylands y ' +
+        'envía el source_uuid en el campo raíz "source_uuid" o en ' +
+        '"cardPaymentMethodSpecificInput.token".'
+    });
+  }
 
   const amount    = order.amountOfMoney.amount;
   const currency  = order.amountOfMoney.currencyCode;
@@ -133,27 +166,18 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
     let connectorUsed = null;
 
     if (!requiresChallenge) {
-      // Construimos el paymentData que processCardPayment espera
-      const card = cardPaymentMethodSpecificInput.card || {};
+      // paymentData TOKENS-ONLY: se pasa el source_uuid de ProxyFields como
+      // cardToken. Ningún dato de tarjeta en crudo — el PAN ya fue rechazado
+      // arriba. El conector payNoPain lo envía a Paylands como source_uuid.
       const paymentData = {
         paymentId,
         merchantId,
         amount,
         currency,
-        method: 'card',
-        // Datos de tarjeta (pueden venir o no en S2S)
-        card: {
-          number:   card.cardNumber  || null,
-          expMonth: card.expiryDate
-            ? String(card.expiryDate).slice(0, 2)
-            : null,
-          expYear:  card.expiryDate
-            ? String(card.expiryDate).slice(2)
-            : null,
-          cvc:      card.cvv || null,
-        },
-        // Campos de enriquecimiento BIN (vacíos en este punto, se enriquecen si hay BIN service)
-        bin:           card.cardNumber ? String(card.cardNumber).slice(0, 8) : null,
+        method:    'card',
+        cardToken,                 // ← source_uuid de ProxyFields
+        // Contexto de routing sin PAN (no hay BIN disponible en tokens-only)
+        bin:           null,
         cardBrand:     null,
         issuerCountry: null,
         cardType:      null,
@@ -162,8 +186,21 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
       const result = await processCardPayment(paymentData);
 
       // ── 4. Actualizar transacción con el resultado del conector ────────────
-      connectorUsed  = result.connectorUsed  || null;
-      internalStatus = result.status === 'approved' ? 'authorized' : 'declined';
+      connectorUsed = result.connectorUsed || null;
+
+      if (result.status === 'pending_3ds') {
+        // El conector real (payNoPain) devuelve un challenge 3DS tokenizado. No
+        // es aprobado ni rechazado: el cardholder debe autenticarse en la URL y
+        // Paylands cerrará la transacción por webhook (POST /webhooks/paynopain,
+        // que localiza la tx por processorReference).
+        internalStatus = 'pending_3ds';
+        merchantAction = {
+          actionType: 'REDIRECT',
+          redirectData: { redirectURL: result.threeDsUrl || null },
+        };
+      } else {
+        internalStatus = result.status === 'approved' ? 'authorized' : 'declined';
+      }
 
       txn.status             = internalStatus;
       txn.processor          = connectorUsed;

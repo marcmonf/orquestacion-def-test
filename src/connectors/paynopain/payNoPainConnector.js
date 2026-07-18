@@ -370,6 +370,89 @@ async function chargeWithToken(paymentData) {
 }
 
 /**
+ * authorize() — punto de entrada del conector para el flujo S2S.
+ *
+ * Es la función que `connectorRegistry` (adaptPayNoPain) y `paymentService`
+ * esperan encontrar en todo conector. Hasta ahora NO existía: si una regla de
+ * routing enrutaba un pago S2S hacia `payNoPain`, reventaba con
+ * `connector.authorize is not a function` (ver DEV-LOG, sección 5, fila S2S).
+ *
+ * Reutiliza `chargeWithToken` (ya en `operative: DEFERRED`). El S2S de Monetiser
+ * opera en scope PCI SAQ A: aquí NUNCA entra un PAN, solo el `source_uuid` que
+ * ProxyFields generó al tokenizar la tarjeta. Ese token llega en
+ * `paymentData.cardToken` y se envía a Paylands como `source_uuid`.
+ *
+ * Normaliza la respuesta de `chargeWithToken` al contrato que consume el
+ * registry/paymentService:
+ *   - 3DS pendiente → { success:false, requires3DS:true, threeDsUrl, processorReference }
+ *   - aprobado      → { success:true,  responseCode:'approved', processorReference }
+ *   - rechazado     → { success:false, responseCode:<motivo>, processorReference }
+ *
+ * IMPORTANTE: en el flujo tokenizado de Paylands, una orden 200 con token SIEMPRE
+ * devuelve un challenge 3DS (`requires3DS:true`), así que la rama "aprobado" es
+ * defensiva — hoy el camino real termina en `pending_3ds` y lo cierra el webhook.
+ *
+ * @param {object} paymentData
+ * @param {string} paymentData.cardToken  source_uuid de ProxyFields (obligatorio)
+ * @param {string} paymentData.paymentId
+ * @param {string} paymentData.merchantId
+ * @param {number} paymentData.amount     céntimos
+ * @param {string} [paymentData.currency]
+ * @returns {Promise<{success:boolean, requires3DS:boolean, responseCode:string, processorReference:(string|null), threeDsUrl?:string, error:(string|null)}>}
+ */
+async function authorize(paymentData) {
+  const data = paymentData || {};
+
+  // Tokens-only: sin source_uuid no hay nada que cobrar. No llamamos a Paylands.
+  if (!data.cardToken) {
+    return {
+      success: false,
+      requires3DS: false,
+      responseCode: 'missing_card_token',
+      processorReference: null,
+      error: 'cardToken (source_uuid de ProxyFields) es obligatorio para authorize',
+    };
+  }
+
+  const res = await chargeWithToken(data);
+
+  // chargeWithToken devuelve requires3DS:true con la URL de challenge tokenizado.
+  if (res.requires3DS && res.threeDsUrl) {
+    return {
+      success: false,
+      requires3DS: true,
+      threeDsUrl: res.threeDsUrl,
+      responseCode: 'pending_3ds',
+      processorReference: res.processorReference || res.orderUuid || null,
+      orderUuid: res.orderUuid || null,
+      error: null,
+    };
+  }
+
+  // Aprobado directo (defensivo: hoy chargeWithToken no llega aquí en tokenizado).
+  if (res.success === true) {
+    return {
+      success: true,
+      requires3DS: false,
+      responseCode: 'approved',
+      processorReference: res.processorReference || res.orderUuid || null,
+      orderUuid: res.orderUuid || null,
+      error: null,
+    };
+  }
+
+  // Rechazo / error del procesador.
+  return {
+    success: false,
+    requires3DS: false,
+    responseCode: res.error || 'declined',
+    processorReference: res.processorReference || res.orderUuid || null,
+    orderUuid: res.orderUuid || null,
+    error: res.error || null,
+  };
+}
+
+/**
  * Captura (total o parcial) una orden previamente autorizada en Paylands.
  *
  * VERIFICADO contra la documentación oficial de Paylands (docs.paylands.com/en/reference):
@@ -607,6 +690,7 @@ module.exports = {
   createOrder,
   createOrder3DS,
   chargeWithToken,
+  authorize,
   validateNotificationHash,
   capture,
   void: voidOrder,

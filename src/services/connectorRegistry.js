@@ -65,10 +65,12 @@ function adaptDummy(connector) {
 }
 
 // ─── Adaptador payNoPain ─────────────────────────────────────────────────────
-// payNoPainConnector.authorize devuelve:
-//   { success, orderUuid, redirectUrl, responseCode }
-// Normalizamos orderUuid → processorReference para que el ciclo de webhooks
-// pueda encontrar la transacción por este campo cuando Paylands notifica.
+// payNoPainConnector.authorize devuelve (flujo S2S tokens-only, sobre chargeWithToken):
+//   { success, requires3DS, threeDsUrl, responseCode, processorReference, orderUuid }
+// Normalizamos processorReference (orderUuid de Paylands) para que el ciclo de
+// webhooks pueda encontrar la transacción por este campo cuando Paylands notifica.
+// requires3DS/threeDsUrl se propagan tal cual: el flujo tokenizado SIEMPRE pasa
+// por un challenge 3DS y paymentService debe distinguirlo de un decline.
 function adaptPayNoPain(connector) {
   return {
     name: 'payNoPain',
@@ -77,9 +79,11 @@ function adaptPayNoPain(connector) {
       const result = await connector.authorize(paymentData);
       return {
         success:            result.success === true,
+        requires3DS:        result.requires3DS === true,
+        threeDsUrl:         result.threeDsUrl  || null,   // ← URL de challenge 3DS tokenizado
         responseCode:       result.responseCode || (result.success ? 'approved' : 'declined'),
-        processorReference: result.orderUuid    || null,   // ← orderUuid de Paylands
-        redirectUrl:        result.redirectUrl  || null,   // ← URL de la página de pago
+        processorReference: result.processorReference || result.orderUuid || null,   // ← orderUuid de Paylands
+        redirectUrl:        result.redirectUrl  || null,   // ← URL de la página de pago (flujo hosted)
       };
     },
 

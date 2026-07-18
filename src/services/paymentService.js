@@ -108,12 +108,26 @@ async function processCardPayment(paymentData) {
           paymentId:     paymentData.paymentId,
           connector:     connector.name,
           attemptNumber,
-          status:        result.success ? 'approved' : 'declined',
-          reasonCode:    result.success ? null : (result.responseCode || 'unknown'),
+          status:        result.requires3DS ? 'pending_3ds' : (result.success ? 'approved' : 'declined'),
+          reasonCode:    result.requires3DS ? '3ds_required' : (result.success ? null : (result.responseCode || 'unknown')),
         });
       } catch (dbErr) {
         // No bloqueamos el pago por un error de log
         console.warn('[paymentService] Error guardando PaymentAttempt:', dbErr.message);
+      }
+
+      // Challenge 3DS pendiente: NO es un decline. El cardholder debe autenticarse
+      // en threeDsUrl y Paylands cerrará la transacción por webhook. Se propaga
+      // hacia arriba sin intentar fallback (fallback aquí sería incorrecto: el pago
+      // no ha fallado, está a la espera de autenticación).
+      if (result.requires3DS && result.threeDsUrl) {
+        return {
+          status:             'pending_3ds',
+          connectorUsed:      connector.name,
+          processorReference: result.processorReference || null,
+          threeDsUrl:         result.threeDsUrl,
+          matchedRuleId:      decision.matchedRuleId,
+        };
       }
 
       if (result.success) {
