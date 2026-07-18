@@ -2,12 +2,21 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.0.0
+  version: 2.1.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.1.0 (18 jul 2026)** — S2S pasa a **tokens-only** (decisión ratificada,
+    ver DEV-LOG sección 5). `POST /{merchantId}/payments/server` ya **no acepta el
+    PAN** (`cardNumber`/`cvv`): lo rechaza con `400 card_data_not_accepted` y exige
+    el `source_uuid` de ProxyFields. Se implementó `authorize()` en
+    `payNoPainConnector.js` (sobre `chargeWithToken`, DEFERRED), así que enrutar
+    S2S a `payNoPain` ya no revienta. El endpoint deja de estar `deprecated`; pasa
+    de `experimental` a `beta` (contrato cerrado, aún sin verificar end-to-end
+    contra Paylands real). Monetiser se mantiene en scope PCI SAQ A también en S2S.
 
     **v2.0.0 (17 jul 2026)** — cambios de contrato (sin merchants integrados):
     retirado `/initialize` (legado); todos los webhooks salientes unificados en
@@ -24,6 +33,7 @@ info:
     | Marca | Significado |
     |---|---|
     | `estable` | Verificado end-to-end contra Paylands real. Integrable hoy. |
+    | `beta` | Contrato cerrado e implementado, pero **aún sin verificar end-to-end contra Paylands real**. Integrable con cautela. |
     | `experimental` | El contrato VA A CAMBIAR. No integrar. |
     | `interno` | Lo usa el iFrame o el dashboard de Monetiser, no el merchant. |
     | `legado` | Anterior al diseño actual. Se mantiene por compatibilidad. |
@@ -49,9 +59,11 @@ info:
     sus servidores. Los datos de tarjeta se capturan en campos ProxyFields de
     Paylands embebidos en el iFrame y se tokenizan en Paylands.
 
-    La única excepción es `POST /{merchantId}/payments/server` (S2S), que hoy acepta
-    el PAN en el body. **Por eso está marcado `experimental` y no debe integrarse.**
-    Decisión tomada: S2S pasará a aceptar solo tokens. Ver DEV-LOG.md, sección 5.
+    Esto vale **también para S2S** (`POST /{merchantId}/payments/server`) desde
+    v2.1.0: el endpoint es **tokens-only**. Rechaza el PAN en crudo
+    (`cardNumber`/`cvv`) con `400 card_data_not_accepted` y solo acepta el
+    `source_uuid` que ProxyFields generó al tokenizar la tarjeta. No queda ningún
+    flujo por el que el PAN entre a Monetiser. Ver DEV-LOG.md, sección 5.
 
   contact:
     name: Repositorio y estado del proyecto
@@ -80,7 +92,9 @@ tags:
     description: Notificaciones entrantes (Paylands → Monetiser) y salientes (Monetiser → merchant).
   - name: S2S
     description: |
-      **EXPERIMENTAL — no integrar.** Ver `x-madurez` y la nota de scope PCI arriba.
+      **BETA — tokens-only.** Pago server-to-server con el `source_uuid` de
+      ProxyFields (nunca el PAN). Contrato cerrado; pendiente de verificación
+      end-to-end contra Paylands real. Ver `x-madurez` y la nota de scope PCI arriba.
   - name: Reglas de routing
     description: Motor de reglas que decide a qué conector va cada transacción.
   - name: Administración
@@ -429,32 +443,35 @@ paths:
   /{merchantId}/payments/server:
     post:
       tags: [S2S]
-      summary: '[EXPERIMENTAL — NO INTEGRAR] Pago server-to-server'
+      summary: '[BETA] Pago server-to-server (tokens-only)'
       operationId: createServerPayment
-      x-madurez: experimental
-      deprecated: true
+      x-madurez: beta
       description: |
-        > **NO INTEGRAR. EL CONTRATO VA A CAMBIAR.**
-        >
-        > Marcado `deprecated: true` para que las herramientas de generación de
-        > clientes lo señalen. No es que vaya a desaparecer: es que hoy **no es
-        > utilizable** y su contrato cambiará.
+        Pago server-to-server **tokens-only** (desde v2.1.0). El merchant envía el
+        `source_uuid` que ProxyFields de Paylands generó al tokenizar la tarjeta.
+        Monetiser se mantiene en scope PCI SAQ A: el PAN nunca entra por aquí.
 
-        Dos razones por las que este endpoint no es integrable hoy:
+        **Cómo se envía el token** (uno de los dos, equivalentes):
+        - Campo raíz `source_uuid` (grafía nativa de Paylands), o
+        - `cardPaymentMethodSpecificInput.token` (grafía Worldline).
 
-        1. **Rompe el scope PCI SAQ A.** Acepta el PAN en crudo en
-           `cardPaymentMethodSpecificInput.card.cardNumber`. Decisión tomada el
-           16 jul 2026: pasará a aceptar **solo tokens** generados vía ProxyFields.
-           Ese cambio romperá este contrato.
+        **Rechazos explícitos:**
+        - `cardNumber` o `cvv` en crudo → `400 card_data_not_accepted` (SAQ A).
+        - Sin token → `400 missing_card_token`.
 
-        2. **No funciona contra Paylands.** `payNoPainConnector.js` no tiene función
-           `authorize()`. Como la política por defecto de un merchant sin reglas es
-           `defaultConnector: 'dummyCard'`, hoy este endpoint solo opera contra el
-           conector simulado. Si una regla enrutase S2S a `payNoPain`, reventaría con
-           `connector.authorize is not a function`.
+        **Comportamiento por conector** (lo decide el rule engine del merchant):
+        - `dummyCard` (política por defecto) → autoriza de inmediato → `authorized`.
+        - `payNoPain` (Paylands real) → `authorize()` reutiliza `chargeWithToken`
+          (operative `DEFERRED`) y devuelve un challenge 3DS tokenizado: la respuesta
+          trae `status: pending_3ds` y `merchantAction.actionType: REDIRECT` con la
+          URL de 3DS. El cardholder se autentica y Paylands cierra la transacción por
+          webhook (`POST /webhooks/paynopain`, que localiza la tx por
+          `processorReference`).
 
-        **No usar con tarjetas reales ni de test.** Para generar transacciones de
-        prueba contra Paylands real, usar Hosted Checkout.
+        > **`beta`:** el contrato ya está cerrado (tokens-only) y `payNoPainConnector`
+        > tiene `authorize()`, pero este flujo **no se ha verificado end-to-end contra
+        > Paylands real** todavía. Para transacciones de prueba fiables contra Paylands,
+        > sigue prefiriéndose Hosted Checkout.
       security:
         - ApiKeySimple: []
           MerchantId: []
@@ -471,14 +488,18 @@ paths:
       responses:
         '200':
           description: |
-            Resultado del pago. Hoy solo llega aquí vía el conector `dummyCard`.
+            Resultado del pago. `status` puede ser `authorized` (dummyCard),
+            `pending_3ds` (payNoPain — con `merchantAction.REDIRECT` a la URL 3DS)
+            o `declined`.
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
         '400':
-          description: Body inválido.
+          description: |
+            Body inválido. Casos propios de tokens-only: `card_data_not_accepted`
+            (llega PAN/cvv en crudo) y `missing_card_token` (falta el source_uuid).
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -1559,15 +1580,17 @@ components:
     Card:
       type: object
       description: |
-        `CardDTO` en `src/dtos/paymentNodeDTOs.js`.
+        `CardDTO` en `src/dtos/paymentNodeDTOs.js`. Nodo estructural compartido.
 
-        > **Solo aplica al flujo S2S experimental.** En Hosted Checkout no se envía:
-        > el PAN se captura en ProxyFields y nunca llega a Monetiser.
+        > **S2S NO lo acepta (tokens-only, v2.1.0):** si llega `cardNumber` o `cvv`
+        > en crudo, `POST /{merchantId}/payments/server` responde
+        > `400 card_data_not_accepted`. En Hosted Checkout la tarjeta tampoco se
+        > envía aquí: se captura en ProxyFields y nunca llega a Monetiser.
       properties:
         cardholderName: { type: string }
         cardNumber:
           type: string
-          description: 'PAN en crudo. **Rompe el scope SAQ A** — ver la nota del endpoint S2S.'
+          description: 'PAN en crudo. **Rechazado por S2S** (SAQ A) — ver el endpoint S2S.'
         expiryDate:
           type: number
           description: 'Numérico en el DTO, no string. Ej: `1234` para 12/34.'
@@ -1577,9 +1600,16 @@ components:
     ServerPaymentRequest:
       type: object
       description: |
-        **EXPERIMENTAL.** `serverPaymentDTO.js`. Este contrato va a cambiar: la
-        decisión tomada es aceptar solo tokens, nunca el PAN.
+        **BETA — tokens-only.** `serverPaymentDTO.js`. Envía el `source_uuid` de
+        ProxyFields, nunca el PAN. El token se acepta en el campo raíz `source_uuid`
+        o en `cardPaymentMethodSpecificInput.token` (equivalentes). `card.cardNumber`
+        y `card.cvv` en crudo se rechazan con `400 card_data_not_accepted`.
       properties:
+        source_uuid:
+          type: string
+          description: |
+            Token de ProxyFields (Paylands `source_uuid`). Alternativa equivalente a
+            `cardPaymentMethodSpecificInput.token`. Uno de los dos es obligatorio.
         order:
           type: object
           required: [amountOfMoney]
@@ -1592,9 +1622,18 @@ components:
         cardPaymentMethodSpecificInput:
           type: object
           properties:
-            card: { $ref: '#/components/schemas/Card' }
-            token: { type: string }
+            card:
+              allOf:
+                - $ref: '#/components/schemas/Card'
+              description: 'No usar en S2S: `cardNumber`/`cvv` se rechazan (SAQ A).'
+            token:
+              type: string
+              description: 'Token de ProxyFields (source_uuid). Alternativa al campo raíz `source_uuid`.'
             paymentProductId: { type: integer }
+            threeDSecure:
+              type: object
+              description: 'Requerido por el DTO. Lleva `redirectionData.returnUrl`.'
+              additionalProperties: true
           additionalProperties: true
         feedbacks:
           type: object

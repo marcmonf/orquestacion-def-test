@@ -13,11 +13,21 @@ const {
 /**
  * DTO raíz para Server-to-Server (CreatePayment-style).
  *
+ * TOKENS-ONLY (decisión ratificada 18 jul 2026, ver DEV-LOG sección 5):
+ * el PAN NUNCA entra por este endpoint. La tarjeta se tokeniza con ProxyFields de
+ * Paylands y el merchant envía el `source_uuid` resultante. Monetiser se mantiene
+ * en scope PCI SAQ A. El rechazo explícito del PAN (cardNumber/cvv) con mensaje
+ * claro lo hace el controller ANTES de esta validación de estructura.
+ *
  * Estructura esperada en el body:
  * {
- *   cardPaymentMethodSpecificInput: { ... },
+ *   source_uuid: "0EA9C363-...",                 // token de ProxyFields (Paylands)
+ *   cardPaymentMethodSpecificInput: {            // token también admitido aquí:
+ *     token: "0EA9C363-...",                     //   cardPaymentMethodSpecificInput.token
+ *     threeDSecure: { redirectionData: { returnUrl } }
+ *   },
  *   fraudFields: { ... },
- *   order: { ... },
+ *   order: { amountOfMoney: { amount, currencyCode }, references: { merchantReference } },
  *   hostedTokenizationId: "string",
  *   hostedFieldsSessionId: "string",
  *   feedbacks: { ... }
@@ -26,6 +36,9 @@ const {
  * El merchantId SE LEE DE LA URL (/:merchantId/...) y no forma parte del body.
  */
 const ServerPaymentRequestDTO = Joi.object({
+  // Token de ProxyFields (Paylands source_uuid). Se acepta a nivel raíz (grafía
+  // nativa de Paylands) o en cardPaymentMethodSpecificInput.token (grafía Worldline).
+  source_uuid: Joi.string().optional(),
   cardPaymentMethodSpecificInput: CardPaymentMethodSpecificInputDTO.required(),
   fraudFields: FraudFieldsDTO.optional(),
   order: OrderDTO.required(),
