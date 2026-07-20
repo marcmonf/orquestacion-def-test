@@ -5,8 +5,9 @@
 //
 // Antes este archivo apuntaba a MerchantHierarchy y NO estaba montado en
 // index.js (estaba huérfano). Ahora usa el modelo Merchant unificado y se monta
-// en '/merchants'. La jerarquía corporativa (MerchantHierarchy) queda en standby;
-// el puente es el campo `hierarchyId` del modelo Merchant.
+// en '/merchants'. La jerarquía de tiendas se reactivó en M6 Fase 2 como árbol
+// por-tenant (modelo HierarchyNode, CRUD en /portal/hierarchy); el campo
+// `hierarchyId` del modelo Merchant es un puntero opcional al nodo raíz.
 //
 'use strict';
 

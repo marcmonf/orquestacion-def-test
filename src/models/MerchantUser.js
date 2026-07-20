@@ -56,11 +56,11 @@ const merchantUserSchema = new mongoose.Schema({
   mustChangePassword: { type: Boolean, default: true },
 
   // ── Puente a jerarquía (Fase 4 — permisos por nodo). Dormido en v1. ──
-  // Mismo patrón que Merchant.hierarchyId: el campo existe para no rehacer el
+  // Apunta a un nodo del árbol (HierarchyNode). El campo existe para no rehacer el
   // modelo cuando se implemente la asignación de usuarios a nodos concretos.
   hierarchyNodeId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'MerchantHierarchy',
+    ref: 'HierarchyNode',
     default: null,
   },
 

@@ -153,6 +153,8 @@ app.use('/backoffice', ensureRouter(require('./src/routes/backofficeRoutes'), 'b
 // Prefijo fijo: debe montarse ANTES del bloque comodín '/:merchantId/...' de abajo.
 // Auth pública del portal (login / cambio de password / logout):
 app.use('/portal/auth', ensureRouter(require('./src/routes/portalAuthRoutes'), 'portalAuthRoutes'));
+// Jerarquía de tiendas (M6 Fase 2) — montada ANTES de '/portal' por ser más específica:
+app.use('/portal/hierarchy', ensureRouter(require('./src/routes/portalHierarchyRoutes'), 'portalHierarchyRoutes'));
 // Endpoints del portal protegidos por la sesión de portal (JWT aud 'portal'):
 app.use('/portal', ensureRouter(require('./src/routes/portalRoutes'), 'portalRoutes'));
 

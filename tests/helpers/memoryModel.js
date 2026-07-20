@@ -81,5 +81,12 @@ module.exports = function makeMemoryModel() {
     async countDocuments(query = {}) {
       return store.filter(d => matches(d, query)).length;
     },
+
+    async deleteOne(query = {}) {
+      const idx = store.findIndex(d => matches(d, query));
+      if (idx === -1) return { deletedCount: 0 };
+      store.splice(idx, 1);
+      return { deletedCount: 1 };
+    },
   };
 };

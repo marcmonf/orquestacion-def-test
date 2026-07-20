@@ -59,11 +59,14 @@ const merchantSchema = new mongoose.Schema({
   serviceUuid:  { type: String },  // → campo `service` de POST /payment
   templateUuid: { type: String },  // → campo `template_uuid` (branding carta de pago)
 
-  // ── Jerarquía corporativa (jerarquía en standby) ───────────
-  // Puente dormido hacia MerchantHierarchy. Vacío por defecto.
+  // ── Jerarquía de tiendas (M6 Fase 2) ───────────────────────
+  // Puntero OPCIONAL al nodo RAÍZ del árbol de este merchant. La pertenencia de
+  // cada nodo va por HierarchyNode.merchantId; este campo es solo un atajo a la
+  // raíz. Vacío por defecto (no obligatorio). Antes referenciaba el modelo plano
+  // MerchantHierarchy (retirado); ahora el árbol vive en HierarchyNode.
   hierarchyId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'MerchantHierarchy',
+    ref: 'HierarchyNode',
     default: null,
   },
 
