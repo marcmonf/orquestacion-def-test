@@ -7,6 +7,9 @@ const Transaction    = require('../models/Transaction');
 const Operation      = require('../models/Operation');
 const BackofficeUser = require('../models/BackofficeUser');
 const Merchant       = require('../models/Merchant');
+const MerchantUser   = require('../models/MerchantUser');
+const { toPublicUser }         = require('../utils/publicUser');
+const { generateTempPassword } = require('../utils/tempPassword');
 const { getConnector } = require('../services/connectorRegistry');
 const { createApiKey, listApiKeys, revokeApiKey } = require('../services/apiKeyService');
 const {
@@ -631,6 +634,83 @@ router.delete('/merchants/:merchantId/api-keys/:keyId', requireRole('superadmin'
     return res.json({ success: true, message: 'key_revoked', keyPrefix: revoked.keyPrefix, revokedAt: revoked.revokedAt });
   } catch (err) {
     console.error('❌ [backoffice/api-keys DELETE]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USUARIOS DE PORTAL DEL MERCHANT (plano merchant) — solo superadmin
+//
+// El superadmin interno crea el PRIMER usuario del merchant (su merchant_admin).
+// A partir de ahí, el merchant_admin gestiona los suyos desde /portal/users.
+//
+// OJO — aquí el :merchantId del param es LEGÍTIMO: el superadmin tiene
+// visibilidad global POR DISEÑO (es el plano interno). La regla dura "el
+// merchantId solo sale de la sesión" aplica al plano /portal (usuarios de
+// merchant), NO a este plano interno. Un merchant_admin nunca llega hasta aquí:
+// /backoffice/* exige un JWT de backoffice, criptográficamente distinto del de
+// portal (secretos separados).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /backoffice/merchants/:merchantId/portal-users
+router.get('/merchants/:merchantId/portal-users', requireRole('superadmin'), async (req, res) => {
+  try {
+    const users = await MerchantUser
+      .find({ merchantId: req.params.merchantId })
+      .select('-passwordHash')
+      .sort({ createdAt: -1 })
+      .lean();
+    return res.json({ success: true, merchantId: req.params.merchantId, users: users.map(toPublicUser) });
+  } catch (err) {
+    console.error('❌ [backoffice/portal-users GET]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/merchants/:merchantId/portal-users — crear (típicamente el 1er merchant_admin)
+// Devuelve la password temporal UNA sola vez (mismo patrón que el rawSecret de las API keys).
+router.post('/merchants/:merchantId/portal-users', requireRole('superadmin'), async (req, res) => {
+  if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
+
+  const { name, email, role = 'merchant_admin' } = req.body || {};
+  if (!name || !email) {
+    return res.status(400).json({ success: false, error: 'name_and_email_required' });
+  }
+  if (!['merchant_admin', 'merchant_operator', 'merchant_viewer'].includes(role)) {
+    return res.status(400).json({ success: false, error: 'invalid_role' });
+  }
+
+  try {
+    // El merchant debe existir: no colgar usuarios de un merchant fantasma.
+    const merchant = await Merchant.findOne({ merchantId: req.params.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+
+    const normEmail = String(email).toLowerCase().trim();
+    const existing = await MerchantUser.findOne({ email: normEmail });
+    if (existing) return res.status(409).json({ success: false, error: 'email_already_exists' });
+
+    const tempPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const user = await MerchantUser.create({
+      merchantId:         req.params.merchantId,
+      email:              normEmail,
+      passwordHash,
+      name,
+      role,
+      active:             true,
+      mustChangePassword: true,
+      createdBy:          req.backofficeUser.email,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Usuario de portal creado. Entrega la password temporal por un canal seguro — no se volverá a mostrar.',
+      tempPassword,                       // visible UNA sola vez
+      user: toPublicUser(user),
+    });
+  } catch (err) {
+    console.error('❌ [backoffice/portal-users POST]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

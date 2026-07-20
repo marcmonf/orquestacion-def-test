@@ -149,6 +149,13 @@ app.use('/backoffice/auth', ensureRouter(require('./src/routes/backofficeAuthRou
 // Backoffice — endpoints protegidos por JWT de sesión
 app.use('/backoffice', ensureRouter(require('./src/routes/backofficeRoutes'), 'backofficeRoutes'));
 
+// Portal del merchant (M6) — plano de usuarios de merchant, AISLADO por sesión.
+// Prefijo fijo: debe montarse ANTES del bloque comodín '/:merchantId/...' de abajo.
+// Auth pública del portal (login / cambio de password / logout):
+app.use('/portal/auth', ensureRouter(require('./src/routes/portalAuthRoutes'), 'portalAuthRoutes'));
+// Endpoints del portal protegidos por la sesión de portal (JWT aud 'portal'):
+app.use('/portal', ensureRouter(require('./src/routes/portalRoutes'), 'portalRoutes'));
+
 // /payment-requests retirado (17 jul 2026): stack legacy que desembocaba en el
 // CRUD antiguo de transacciones. Sin uso desde el front ni desde merchants.
 
