@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 18 julio 2026
+> Última actualización: 20 julio 2026
 
 ---
 
@@ -235,7 +235,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → 119/128 pasan. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **160/169 pasan** (era 119/128 hasta M4, 128/137 tras S2S). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -445,8 +445,99 @@ en `/docs`, y escribir `docs/integration-guide.md`.
 - Documentar que Monetiser cumple SAQ A: el PAN nunca toca los servidores de Monetiser
 - ProxyFields de Paylands como evidencia técnica
 
-### M6 — Onboarding de merchants
-- Flujo completo: registro → creación de cuenta → generación de API keys → configuración de webhook
+### M6 — Gestión multi-tenant de usuarios de merchant y portal
+
+**Alcance definido por Marcos (20 jul 2026):** el onboarding es SIEMPRE operado por
+Monetiser — el cliente NO se autorregistra. El superadmin interno crea el merchant
+(M3) y su primer usuario; el `merchant_admin` gestiona a los suyos. **Fuera de
+alcance en M6:** el aprovisionamiento del *service* en Paylands (depende de la
+decisión agregador-vs-cuenta-por-merchant, aplazada), M7 billing y el envío de emails.
+
+> **Sobre la nota "no empezar M6 sin la decisión agregador vs cuenta-por-merchant"**
+> (sesión 18 jul): esa decisión bloquea el *aprovisionamiento en Paylands* del
+> onboarding, que aquí queda FUERA de alcance. La gestión de usuarios/tenant y el
+> portal (lo de M6) no dependen de ella. Resurgirá cuando el onboarding toque el
+> alta del service en Paylands (fase futura).
+
+**Plan de fases:** Fase 1 = modelo de usuarios + auth del portal + CRUD de usuarios
+por el merchant_admin + aislamiento con tests (hecho). Después: Fase 2 jerarquía de
+tiendas, Fase 3 portal visual, Fase 4 permisos por nodo.
+
+**Decisiones de arquitectura (ratificadas por Marcos):**
+- **Modelo nuevo `MerchantUser`**, colección propia SEPARADA de `BackofficeUser`
+  (no extender). Colecciones distintas = una query del plano merchant nunca puede
+  devolver un usuario interno, ni con un filtro con bug. Garantía dura de "un
+  merchant_admin jamás toca usuarios internos".
+- **Portal con superficie separada** (`/portal/*` + SPA propia en fases posteriores),
+  no reutilizar la SPA de admin con gates. La SPA de admin habla con `/backoffice/*`
+  (cross-merchant); reutilizarla metería código cross-merchant en el navegador del
+  merchant. Los gates de cliente no son seguridad — el aislamiento va en servidor.
+
+#### M6 Fase 1 ✅ COMPLETADO (20 jul 2026) — backend, sin UI
+
+**Modelo y planos separados:**
+- `src/models/MerchantUser.js`: `merchantId` (inmutable), `email` (único en el plano
+  merchant), `role` (enum fijo v1: `merchant_admin`/`merchant_operator`/`merchant_viewer`),
+  `active`, `mustChangePassword`, y campo-puente `hierarchyNodeId` dormido (Fase 4,
+  mismo patrón que `Merchant.hierarchyId`).
+
+**Auth del portal (plano separado del backoffice):**
+- `src/middleware/portalAuth.js`: JWT propio con `PORTAL_JWT_SECRET` + `audience: portal`.
+  Un token de backoffice se rechaza aquí (sin aud), y uno de portal se rechaza en el
+  backoffice **si los secretos son distintos** → `PORTAL_JWT_SECRET` DEBE ser ≠
+  `BACKOFFICE_JWT_SECRET` en producción (es lo que impide que un token de merchant sea
+  aceptado en el backoffice). `requirePortalRole`, `requirePasswordChanged`.
+- `src/middleware/rateLimiterPortalLogin.js`: rate limit del login por IP+email
+  (requisito duro). `RL_PORTAL_LOGIN_MAX` (10) / `RL_PORTAL_LOGIN_WINDOW_MS` (15 min).
+- `src/routes/portalAuthRoutes.js`: `POST /portal/auth/login` (rate-limited) y
+  `POST /portal/auth/change-password`. Password temporal + cambio obligatorio en el
+  primer login (sin infra de email): mientras `mustChangePassword`, el portal bloquea
+  todo salvo el cambio de password (`403 password_change_required`).
+
+**CRUD scoped a la sesión** (`src/routes/portalRoutes.js`):
+- `GET /portal/me`, `GET /portal/users`, `POST /portal/users`, `PATCH /portal/users/:userId`.
+  Escrituras solo `merchant_admin`. **AISLAMIENTO:** el `merchantId` sale SIEMPRE de
+  `req.portalUser.merchantId` (la sesión), nunca del cliente. Todo recurso se resuelve
+  con ese `merchantId` en el filtro → un usuario de otro merchant no existe para la
+  sesión (**404**, no revela existencia). Es la lección del bug cross-tenant del §4:
+  no se repite. Proyección pública explícita (`src/utils/publicUser.js`): nunca se hace
+  spread del doc, el `passwordHash` no puede escaparse. Sin auto-lockout (un admin no
+  se degrada ni desactiva a sí mismo).
+
+**Siembra por el plano interno** (`src/routes/backofficeRoutes.js`):
+- `GET/POST /backoffice/merchants/:merchantId/portal-users` (solo `superadmin`) para
+  crear el primer `merchant_admin`. Devuelve la password temporal UNA sola vez (patrón
+  del rawSecret de las API keys). Aquí el `:merchantId` del param es LEGÍTIMO — el
+  superadmin tiene visibilidad global por diseño; la regla "merchantId solo de la
+  sesión" aplica al plano `/portal`, no a este.
+
+**Tests (32 nuevos, todos verdes):** `tests/integration/portalAuth.test.js`,
+`portalUsers.test.js`, `portalIsolation.test.js`, `portalRateLimit.test.js` +
+helper `tests/helpers/memoryModel.js` (modelo en memoria; no hay mongodb-memory-server).
+Cubren: login + password temporal, CRUD + gates de rol, aislamiento A↔B (404 cross-tenant,
+merchantId falsificado ignorado, separación criptográfica de planos, bloqueo por
+mustChangePassword) y rate limit 429. **Protocolo CLAUDE.md verificado:** app arranca con
+grafo de requires limpio + suite **160/169** (misma línea base — los 9 fallos siguen siendo
+los preexistentes de webhooks.test.js).
+
+**Documentado en `openapi.yaml` v2.2.0:** tag `Portal`, security scheme `PortalBearer`,
+5 rutas `/portal/*` y 7 schemas.
+
+#### M6 Fases siguientes (pendientes)
+- **Fase 2 — Jerarquía de tiendas:** reactivar `MerchantHierarchy`. OJO: hoy es un
+  registro PLANO por tienda (todos los niveles como strings, `merchantId` único global),
+  NO un árbol ni scoped a un merchant. Reactivar = REDISEÑAR a árbol por-tenant
+  (`nodeType` globalGroup/group/branch/region/store + `parentId` + `merchantId` dueño),
+  CRUD scoped al `merchant_admin`. V1 = estructura; sin asignar usuarios a nodos.
+- **Fase 3 — Portal visual:** SPA separada en `public/portal/` consumiendo solo `/portal/*`
+  (login, cambio de password, dashboard tenant-scoped: transacciones/analíticas read-only,
+  usuarios, jerarquía). Requiere endpoints portal read-only de tx/analíticas por sesión.
+- **Fase 4 — Permisos por nodo:** activar el puente `hierarchyNodeId` (asignación de
+  usuarios/permisos a nodos concretos de la jerarquía).
+
+### Onboarding — aprovisionamiento en Paylands (fase futura, fuera de M6)
+- Alta del `service` por merchant en Paylands. Bloqueado por la decisión
+  agregador-vs-cuenta-por-merchant (aplazada, con implicaciones PSD2).
 
 ### M7 — Billing
 - Modelo BillingRecord en MongoDB
@@ -474,6 +565,11 @@ en `/docs`, y escribir `docs/integration-guide.md`.
 | Máscara PAN en logs | `src/utils/cryptoUtils.js` | maskPan() devuelve BIN******last4 |
 | AES-256-GCM | `src/utils/cryptoUtils.js` | IV aleatorio por operación y AAD |
 | Revocación API keys | `src/services/apiKeyService.js` | Marca active: false + revokedAt |
+| Aislamiento de tenant en el portal | `src/routes/portalRoutes.js` | Todo endpoint filtra por `req.portalUser.merchantId` (sesión), nunca por un merchantId del cliente. Cross-tenant → 404. |
+| Separación criptográfica de planos | `src/middleware/portalAuth.js` | Portal firma con `PORTAL_JWT_SECRET` + aud `portal`; backoffice con `BACKOFFICE_JWT_SECRET`. Deben ser DISTINTOS en prod. |
+| Rate limit login del portal | `src/middleware/rateLimiterPortalLogin.js` | Por IP+email. `RL_PORTAL_LOGIN_MAX` (10) / ventana `RL_PORTAL_LOGIN_WINDOW_MS` (15 min). |
+| Password temporal + cambio obligatorio | `src/routes/portalAuthRoutes.js` | Alta sin email: temporal visible una vez; `mustChangePassword` bloquea el portal hasta cambiarla. |
+| Proyección pública de usuarios | `src/utils/publicUser.js` | Allowlist explícita; el `passwordHash` nunca se serializa en una respuesta. |
 
 ### Pendientes
 
@@ -502,6 +598,8 @@ en `/docs`, y escribir `docs/integration-guide.md`.
 | `ADMIN_TOKEN` | Token para endpoints de administración (X-Admin-Token) |
 | `API_KEY_SIMPLE_FALLBACK` | `true` — activa auth simple x-api-key para Postman/testing |
 | `SERVER_URL` | `https://orquestacion-def-test.onrender.com` — para construir URLs de webhook hacia Paylands |
+| `PORTAL_JWT_SECRET` | **(M6)** Secreto de firma del JWT del portal del merchant. **DEBE ser distinto de `BACKOFFICE_JWT_SECRET`** — es lo que impide que un token de merchant sea aceptado en el backoffice. Sin definir usa un fallback de desarrollo (no válido para producción). |
+| `BACKOFFICE_JWT_SECRET` | Secreto de firma del JWT del backoffice (dashboard interno). Ya se usaba; sin definir usa fallback de desarrollo. Distinto de `PORTAL_JWT_SECRET`. |
 
 ### Opcionales / Feature flags
 
@@ -514,6 +612,9 @@ en `/docs`, y escribir `docs/integration-guide.md`.
 | `LOG_LEVEL` | Nivel mínimo de logs: error, warning, info, debug, trace |
 | `ALLOW_PAN_DECRYPT` | `true` solo en desarrollo |
 | `ALLOWED_ORIGINS` | CORS origins permitidos (separados por coma) |
+| `RL_PORTAL_LOGIN_MAX` | **(M6)** Intentos de login del portal por ventana (default: 10) |
+| `RL_PORTAL_LOGIN_WINDOW_MS` | **(M6)** Ventana del rate limit del login del portal (default: 900000 = 15 min) |
+| `PORTAL_JWT_EXPIRES` | **(M6)** Caducidad del JWT del portal (default: `12h`) |
 
 ### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
 
@@ -577,6 +678,27 @@ GET    /rules/:merchantId/audit        → Historial de cambios
 
 Auth: `X-Admin-Token: <ADMIN_TOKEN>`
 
+### Portal del merchant (M6)
+
+```
+POST /portal/auth/login                        → Login del portal (rate-limited) → JWT de portal
+POST /portal/auth/change-password              → Cambiar password (limpia mustChangePassword)
+GET  /portal/me                                → Datos del usuario de sesión
+GET  /portal/users                             → Usuarios del PROPIO merchant (merchant_admin)
+POST /portal/users                             → Crear usuario en el PROPIO merchant (merchant_admin)
+PATCH /portal/users/:userId                    → Editar nombre/rol/estado (merchant_admin)
+```
+
+Auth: `Authorization: Bearer <JWT de portal>` (aud `portal`). El merchantId sale de la
+sesión, nunca del cliente. Siembra del 1er merchant_admin por el superadmin interno:
+
+```
+GET  /backoffice/merchants/:merchantId/portal-users   → Listar (superadmin)
+POST /backoffice/merchants/:merchantId/portal-users   → Crear (superadmin) → devuelve tempPassword una vez
+```
+
+Auth: JWT de backoffice (sesión de `/backoffice/auth/login`, rol `superadmin`).
+
 ### Observabilidad
 
 ```
@@ -631,6 +753,10 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ```
 
 ---
+
+*Sesión 20 julio 2026 (M6 Fase 1 — plano de usuarios de merchant + portal, IMPLEMENTADO) — Arranca M6 con el alcance de Marcos: onboarding SIEMPRE operado por Monetiser (el cliente no se autorregistra). Antes de escribir, propuesta de fases y dos decisiones de arquitectura, ratificadas por Marcos: **(1) modelo nuevo `MerchantUser`** (colección propia, separada de `BackofficeUser`) en vez de extender — colecciones distintas = una query del plano merchant nunca puede devolver un usuario interno; **(2) portal con superficie separada** (`/portal/*` + SPA propia en fases posteriores) en vez de reutilizar la SPA de admin con gates — no meter código cross-merchant en el navegador del merchant. **Fase 1 (backend, sin UI):** modelo `MerchantUser` (merchantId inmutable, roles fijos v1 merchant_admin/operator/viewer, mustChangePassword, puente hierarchyNodeId dormido); auth del portal con JWT propio (`PORTAL_JWT_SECRET`, aud `portal`) — un token de backoffice se rechaza aquí (sin aud) y uno de portal en el backoffice (secretos distintos, requisito de config); rate limit del login por IP+email; password temporal + cambio obligatorio en el primer login (sin infra de email); CRUD `/portal/*` con **aislamiento en servidor** (merchantId SIEMPRE de la sesión, cross-tenant → 404, es la lección del bug §4 sin repetir); siembra del 1er merchant_admin por el superadmin interno en `/backoffice/merchants/:merchantId/portal-users` (devuelve tempPassword una vez). Proyección pública explícita (el passwordHash no se serializa). **Tests: 32 nuevos, todos verdes** (auth+password temporal, CRUD+gates de rol, AISLAMIENTO A↔B, separación de planos, rate limit 429), con helper de modelo en memoria (no hay mongodb-memory-server). **Protocolo CLAUDE.md verificado:** arranque de la app con grafo de requires limpio + suite **160/169** (misma línea base — los 9 fallos siguen siendo los preexistentes de webhooks.test.js). `openapi.yaml` v2.2.0 (tag Portal, `PortalBearer`, 5 rutas, 7 schemas) y DEV-LOG actualizados. **Aclaración sobre la nota "no empezar M6 sin la decisión agregador-vs-cuenta-por-merchant" (18 jul):** esa decisión bloquea el *aprovisionamiento en Paylands*, que Marcos deja FUERA de alcance en M6; la gestión de usuarios/tenant no depende de ella. **Qué desplegar y probar (Marcos, Manual Deploy en Render):** ver el runbook al final de esta nota. Pendiente: Fase 2 (jerarquía — el modelo `MerchantHierarchy` actual es PLANO, hay que rediseñarlo a árbol por-tenant), Fase 3 (portal visual), Fase 4 (permisos por nodo).*
+
+*→ **RUNBOOK M6 FASE 1 — para Marcos (todo contra el servidor Render):** **(0) ENV nuevas en Render antes de desplegar:** `PORTAL_JWT_SECRET=<algo largo y aleatorio, DISTINTO de BACKOFFICE_JWT_SECRET>`. (Opcionales: `RL_PORTAL_LOGIN_MAX`, `RL_PORTAL_LOGIN_WINDOW_MS`.) Luego Manual Deploy → Deploy latest commit → esperar Live. **(1) Sembrar el 1er merchant_admin** (con la sesión de superadmin del dashboard, o su JWT): `POST /backoffice/merchants/demo-merchant/portal-users`, `Authorization: Bearer <JWT superadmin>`, body `{"name":"Admin Demo","email":"admin@demo.com"}` → `201` con `tempPassword` (apúntala, no se repite). **(2) Login del portal:** `POST /portal/auth/login`, body `{"email":"admin@demo.com","password":"<tempPassword>"}` → `200` con `token` y `mustChangePassword:true`. **(3) Comprobar el bloqueo:** `GET /portal/users` con `Authorization: Bearer <token>` → `403 password_change_required`. **(4) Cambiar la password:** `POST /portal/auth/change-password` con ese token, body `{"currentPassword":"<tempPassword>","newPassword":"<nueva de 8+>"}` → `200` con un `token` nuevo. **(5) Ya con el token nuevo:** `GET /portal/users` → `200` (solo usuarios de demo-merchant); `POST /portal/users` body `{"name":"Op","email":"op@demo.com","role":"merchant_operator"}` → `201` con su `tempPassword`. **(6) Aislamiento (si hay un 2º merchant con usuarios):** intentar `PATCH /portal/users/<id de un usuario de OTRO merchant>` → `404`. **Lo que confirma cada paso:** que el plano merchant funciona aislado, que el token de un plano no vale en el otro, y que la password temporal obliga al cambio. NADA de esto toca Paylands.*
 
 *Sesión 18 julio 2026 (Test D — POSPUESTO a una sesión en Mac) — A/B/C ya verificados en producción (ver nota siguiente). Falta el **Test D** (S2S→payNoPain real con 3DS), que es lo único para poder subir S2S de `beta` a `estable`. Marcos está en iPad sin terminal; **decidido hacerlo en una sesión nueva desde el Mac**, donde el runbook de curl es trivial. **RUNBOOK TEST D — listo para ejecutar en Mac (todo Paylands SANDBOX vía el servidor Render, sin dinero real):** **(1) Enrutar S2S a payNoPain** — `PUT /rules/demo-merchant`, header `X-Admin-Token: <ADMIN_TOKEN>`, body `{"version":"v1","defaultConnector":"payNoPain","rules":[],"fallback":{"order":["payNoPain"],"on":["network_error"]}}` → 200. Con `rules:[]` el motor enruta al `defaultConnector` (verificado en `ruleEngineV2.evaluate`: sin reglas devuelve `connector = policy.defaultConnector`). **(2) Conseguir un `source_uuid` real** (lo genera ProxyFields, NUNCA es el PAN): _opción recomendada (NO construida aún)_ = helper solo-lectura `GET /diag/card-token?reference=<paymentId>` que devuelva `pciProxy.getTokenizationResults(reference).token`; _opción manual_ = crear un Hosted Checkout, meter la tarjeta de test `4018810000100036` (12/34, CVV 123) en el iframe, y recuperar el token del Proxy PCI → `POST https://pci-proxy-api.paynopain.com/sandbox/customers` con `{"apiKey":"<PAYNOPAIN_API_KEY>","signature":"<PAYNOPAIN_SIGNATURE>"}` (el JWT viene en `resp.apiKey`), luego `GET https://pci-proxy-api.paynopain.com/sandbox/card/reference/<paymentId>` con `Authorization: Bearer <JWT>` → el campo `token` del primer elemento del array es el `source_uuid`; _opción C_ = portal Paylands sandbox. **(3) Lanzar el S2S** — `POST /demo-merchant/payments/server`, headers `x-api-key: mk_7065b5507c6efae4d1067f2768919154` + `x-merchant-id: demo-merchant`, body `{"source_uuid":"<UUID>","cardPaymentMethodSpecificInput":{"threeDSecure":{"redirectionData":{"returnUrl":"https://example.com/return"}}},"order":{"amountOfMoney":{"amount":1000,"currencyCode":"EUR"}},"feedbacks":{"webhookUrl":"https://webhook.site/<uuid>"}}`. Esperado: `200`, `status:pending_3ds`, `connectorUsed:payNoPain`, `merchantAction.actionType:REDIRECT` con la URL de 3DS. Apuntar el `paymentId`. **(4) Completar el 3DS** abriendo esa URL en el navegador (challenge del sandbox). **(5) Verificar** — `GET /diag/transactions?paymentId=<id>` con `X-Admin-Token` → `status:authorized`, `_diag.webhookReceived:true`, `lastWebhookRaw.status:PENDING_CONFIRMATION` (mapea a authorized en DEFERRED); y en webhook.site un `payment.updated` con header `Monetiser-Signature`. **(6) Revertir el routing** — `PUT /rules/demo-merchant` con `defaultConnector:"dummyCard"` y `fallback.order:["dummyCard"]` (restaura la base de A/B/C). **Incierto, anotar el resultado:** si el mismo `source_uuid` admite dos cobros (el del hosted del paso 2 + el del S2S del paso 3) contra Paylands sandbox — card-on-file dice que sí, pero sin verificar; si Paylands lo rechaza NO es bug de Monetiser (usar entonces un source_uuid fresco sin cobrar antes). **Ofrecido y NO construido (decisión pospuesta al Mac):** (a) el helper `GET /diag/card-token` (colapsa el paso 2 a una sola petición y elimina manejar los secretos `PAYNOPAIN_*`), (b) una colección de Postman con todo el Test D montado (para poder hacerlo desde iPad si hiciera falta). Con D en verde → subir S2S de `beta` a `estable` en `openapi.yaml` y cerrar el último bloqueante técnico previo a M5.*
 

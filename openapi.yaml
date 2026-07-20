@@ -2,12 +2,24 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.1.0
+  version: 2.2.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.2.0 (20 jul 2026)** — M6 Fase 1: **portal del merchant** (plano de
+    usuarios de merchant, separado del backoffice interno). Nuevas rutas
+    `/portal/*`: login con JWT propio (`PortalBearer`, aud `portal`), cambio de
+    password temporal obligatorio en el primer login, y CRUD de usuarios del
+    merchant por el `merchant_admin`. **Aislamiento de tenant en servidor:** todo
+    endpoint del portal filtra por el `merchantId` de la SESIÓN, nunca por uno que
+    venga del cliente; un usuario de otro merchant no existe para la sesión (404).
+    El primer `merchant_admin` lo crea el superadmin interno vía
+    `POST /backoffice/merchants/{merchantId}/portal-users` (plano backoffice, no
+    documentado aquí como el resto de `/backoffice/*`). Roles v1 fijos:
+    `merchant_admin` / `merchant_operator` / `merchant_viewer`.
 
     **v2.1.0 (18 jul 2026)** — S2S pasa a **tokens-only** (decisión ratificada,
     ver DEV-LOG sección 5). `POST /{merchantId}/payments/server` ya **no acepta el
@@ -103,6 +115,16 @@ tags:
     description: Consulta de transacciones y eventos.
   - name: Interno
     description: Endpoints que consume el propio iFrame de Monetiser, no el merchant.
+  - name: Portal
+    description: |
+      **Portal del merchant (M6).** Plano de usuarios de merchant, SEPARADO del
+      backoffice interno de Monetiser. Los usuarios de un comercio entran con un
+      JWT propio (`PortalBearer`, audience `portal`) y solo ven/gestionan SU
+      merchant: el `merchantId` sale siempre de la sesión, nunca del cliente.
+
+      El **primer** `merchant_admin` de un comercio lo crea el superadmin interno
+      (`POST /backoffice/merchants/{merchantId}/portal-users`, plano backoffice).
+      A partir de ahí, el `merchant_admin` gestiona a los suyos desde `/portal/users`.
 
 security:
   - ApiKeySimple: []
@@ -1080,6 +1102,189 @@ paths:
             No hay token PCI para esta transacción — el cardholder no completó el
             formulario.
 
+  # ──────────────────────────────────────────────────────────────────────
+  # PORTAL DEL MERCHANT (M6)
+  # ──────────────────────────────────────────────────────────────────────
+
+  /portal/auth/login:
+    post:
+      tags: [Portal]
+      summary: Login del portal del merchant
+      operationId: portalLogin
+      x-madurez: estable
+      security: []
+      description: |
+        Autentica a un usuario de merchant y devuelve un JWT de portal. **Rate
+        limited** por IP + email (`RL_PORTAL_LOGIN_MAX`, por defecto 10/15 min):
+        superado el límite responde `429`.
+
+        Si `mustChangePassword` es `true`, el token sirve únicamente para
+        `POST /portal/auth/change-password`; el resto del portal responde `403`
+        hasta cambiar la password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalLoginRequest'
+      responses:
+        '200':
+          description: Login correcto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalLoginResponse'
+        '400':
+          description: Faltan credenciales.
+        '401':
+          description: Credenciales inválidas o usuario inactivo (`invalid_credentials`).
+        '429':
+          description: Demasiados intentos (`rate_limit_exceeded`).
+
+  /portal/auth/change-password:
+    post:
+      tags: [Portal]
+      summary: Cambiar la propia password (limpia mustChangePassword)
+      operationId: portalChangePassword
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Cambia la password del usuario de la sesión. Permitido incluso bajo
+        `mustChangePassword` (es como se limpia el flag en el primer login).
+        Devuelve un token fresco con el flag ya a `false`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalChangePasswordRequest'
+      responses:
+        '200':
+          description: Password actualizada. Devuelve un token nuevo.
+        '400':
+          description: Falta algún campo, la nueva es menor de 8 caracteres o igual a la actual.
+        '401':
+          description: Sin token, token inválido, o `currentPassword` incorrecta.
+
+  /portal/me:
+    get:
+      tags: [Portal]
+      summary: Datos del usuario de la sesión
+      operationId: portalMe
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Devuelve el usuario de la sesión (resuelto por `merchantId` de sesión).
+        Accesible aún bajo `mustChangePassword`.
+      responses:
+        '200':
+          description: Usuario de la sesión (proyección pública, sin hash).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  user: { $ref: '#/components/schemas/MerchantUserPublic' }
+        '401':
+          description: Sin token o token inválido.
+
+  /portal/users:
+    get:
+      tags: [Portal]
+      summary: Listar usuarios del PROPIO merchant
+      operationId: portalListUsers
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Lista solo los usuarios del merchant de la sesión (nunca de otro). Solo
+        `merchant_admin`. Un `merchantId` en query/body se ignora.
+      responses:
+        '200':
+          description: Usuarios del merchant de la sesión (sin hash).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/MerchantUserPublic' }
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente (`insufficient_permissions`) o password sin cambiar (`password_change_required`).
+    post:
+      tags: [Portal]
+      summary: Crear un usuario en el PROPIO merchant
+      operationId: portalCreateUser
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Crea un usuario en el merchant de la SESIÓN (cualquier `merchantId` del
+        body se ignora). Solo `merchant_admin`. Genera una **password temporal**
+        que se devuelve UNA sola vez; el nuevo usuario entra con `mustChangePassword`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalUserCreateRequest'
+      responses:
+        '201':
+          description: Usuario creado (incluye `tempPassword`, visible una vez).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalUserCreateResponse'
+        '400':
+          description: Faltan campos o rol inválido.
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente o password sin cambiar.
+        '409':
+          description: Ya existe un usuario con ese email (`email_already_exists`).
+
+  /portal/users/{userId}:
+    patch:
+      tags: [Portal]
+      summary: Editar nombre/rol/estado de un usuario del PROPIO merchant
+      operationId: portalUpdateUser
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Edita un usuario del merchant de la sesión. Se resuelve SIEMPRE con el
+        `merchantId` de sesión: un usuario de otro merchant devuelve `404` (no se
+        revela su existencia — es la garantía de aislamiento). Solo `merchant_admin`.
+        Un admin no puede degradarse ni desactivarse a sí mismo.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Identificador (_id) del usuario de merchant a editar.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalUserUpdateRequest'
+      responses:
+        '200':
+          description: Usuario actualizado (sin hash).
+        '400':
+          description: Rol inválido o nombre vacío.
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente o password sin cambiar.
+        '404':
+          description: No existe en este merchant (`user_not_found`) — incluye el caso cross-tenant.
+        '409':
+          description: Auto-degradación o auto-desactivación (`cannot_demote_yourself` / `cannot_deactivate_yourself`).
+
   /health:
     get:
       tags: [Observabilidad]
@@ -1313,6 +1518,26 @@ components:
       description: |
         Token de administración (`ADMIN_TOKEN` del entorno). Da acceso a la gestión
         de merchants, API keys y reglas de routing de **todos** los merchants.
+
+    PortalBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Sesión del **portal del merchant** (M6). JWT firmado con `PORTAL_JWT_SECRET`
+        y `audience: portal`, obtenido en `POST /portal/auth/login`. Se envía como
+        `Authorization: Bearer <token>`.
+
+        **Plano separado del backoffice interno.** Un token de backoffice NO se
+        acepta aquí (no lleva `aud: portal`), y un token de portal NO se acepta en
+        el backoffice (secretos distintos: `PORTAL_JWT_SECRET` ≠
+        `BACKOFFICE_JWT_SECRET`, requisito de configuración). El `merchantId` va
+        dentro del token: todo el aislamiento se resuelve por la sesión, nunca por
+        un `merchantId` del cliente.
+
+        Mientras el usuario arrastre `mustChangePassword` (password temporal del
+        alta), el portal responde `403 password_change_required` a todo salvo
+        `POST /portal/auth/change-password`.
 
   parameters:
 
@@ -1981,3 +2206,79 @@ components:
         success: { type: boolean, const: false }
         message: { type: string }
         error: { type: string }
+
+    # ── Portal del merchant (M6) ──────────────────────────────────────────
+    MerchantUserPublic:
+      type: object
+      description: Proyección pública de un usuario de merchant (nunca incluye el passwordHash).
+      properties:
+        _id:                { type: string }
+        merchantId:         { type: string }
+        email:              { type: string, format: email }
+        name:               { type: string }
+        role:
+          type: string
+          enum: [merchant_admin, merchant_operator, merchant_viewer]
+        active:             { type: boolean }
+        mustChangePassword: { type: boolean }
+        lastLoginAt:        { type: string, format: date-time, nullable: true }
+        createdAt:          { type: string, format: date-time }
+
+    PortalLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string }
+
+    PortalLoginResponse:
+      type: object
+      properties:
+        success:            { type: boolean, const: true }
+        token:              { type: string, description: JWT de portal (aud portal). }
+        mustChangePassword: { type: boolean }
+        user:
+          type: object
+          properties:
+            email:      { type: string, format: email }
+            name:       { type: string }
+            role:       { type: string }
+            merchantId: { type: string }
+
+    PortalChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string }
+        newPassword:     { type: string, minLength: 8, description: Distinta de la actual. }
+
+    PortalUserCreateRequest:
+      type: object
+      required: [name, email, role]
+      description: |
+        `merchantId` NO se acepta aquí — se toma siempre de la sesión. Si se envía,
+        se ignora.
+      properties:
+        name:  { type: string }
+        email: { type: string, format: email }
+        role:
+          type: string
+          enum: [merchant_admin, merchant_operator, merchant_viewer]
+
+    PortalUserUpdateRequest:
+      type: object
+      description: Todos los campos son opcionales; se aplican los presentes.
+      properties:
+        name: { type: string }
+        role:
+          type: string
+          enum: [merchant_admin, merchant_operator, merchant_viewer]
+        active: { type: boolean }
+
+    PortalUserCreateResponse:
+      type: object
+      properties:
+        success:      { type: boolean, const: true }
+        message:      { type: string }
+        tempPassword: { type: string, description: 'Password temporal; visible una sola vez.' }
+        user:         { $ref: '#/components/schemas/MerchantUserPublic' }
