@@ -235,7 +235,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **160/169 pasan** (era 119/128 hasta M4, 128/137 tras S2S). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **182/191 pasan** (era 119/128 hasta M4, 128/137 tras S2S, 160/169 tras M6 Fase 1). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -273,7 +273,8 @@ reactivación en la cabecera de `src/models/MerchantHierarchy.js`.
   envía aunque no exista el global. Solo marca `no_secret_config` si no hay ninguno.
 - **Fase D** — `src/models/MerchantHierarchy.js` marcado EN STANDBY con nota de
   reactivación en cabecera (el esquema no se tocó). DEV-LOG actualizado a la realidad
-  del repo.
+  del repo. **→ REACTIVADO Y REDISEÑADO en M6 Fase 2 (20 jul 2026):** el modelo plano
+  se retiró y la jerarquía se rehízo como árbol por-tenant (`HierarchyNode`). Ver M6.
 - **Fase E** — Vulnerabilidad `uuid` cerrada: subido de `9.0.0` a `11.1.1`
   (GHSA-w5hq-g745-h8pq). `npm audit` → `found 0 vulnerabilities`. Sin regresión: todos
   los usos del código son `v4()` con import nombrado, que no cambió entre v9 y v11.
@@ -523,12 +524,42 @@ los preexistentes de webhooks.test.js).
 **Documentado en `openapi.yaml` v2.2.0:** tag `Portal`, security scheme `PortalBearer`,
 5 rutas `/portal/*` y 7 schemas.
 
+#### M6 Fase 2 ✅ COMPLETADO (20 jul 2026) — jerarquía de tiendas por tenant
+
+**Reactivada la jerarquía que estaba en standby, pero REHECHA como árbol por-tenant.**
+El modelo viejo (`MerchantHierarchy`) era un registro PLANO por tienda (niveles como
+strings, `merchantId` = id de tienda único global) — no un árbol, y confundía "tenant"
+con "tienda hoja" bajo el mismo nombre `merchantId`. Verificado que NINGÚN código lo
+requería (solo dos punteros dormidos en `Merchant`/`MerchantUser`): reactivar = rediseñar
+sin romper nada vivo.
+
+- `src/models/HierarchyNode.js`: árbol con lista de adyacencia. `merchantId` = TENANT
+  dueño (inmutable, coherente con todo el sistema), `nodeType`
+  (globalGroup/group/branch/region/store), `parentId` (null = raíz). **Colección NUEVA
+  `hierarchynodes`** (distinta de la vieja `merchanthierarchies`) para no colisionar con
+  datos/índices heredados si existieran en la BD — no comprobable desde aquí, así que se
+  neutraliza por diseño.
+- `src/utils/hierarchyLevels.js`: `NODE_TYPES` + `RANK`. El padre debe ser de nivel
+  estrictamente superior (se permite saltar niveles); esa regla hace además IMPOSIBLE
+  un ciclo.
+- `MerchantHierarchy.js` **retirado**; `Merchant.hierarchyId` y `MerchantUser.hierarchyNodeId`
+  pasan a `ref: 'HierarchyNode'`. `Merchant.hierarchyId` queda como puntero opcional al
+  nodo raíz.
+- `src/routes/portalHierarchyRoutes.js` (`/portal/hierarchy`): GET (lectura para cualquier
+  usuario del portal), POST/PATCH/DELETE (solo `merchant_admin`). **Aislamiento:** `merchantId`
+  siempre de la sesión; nodo de otro merchant → 404; `parentId` a otro tenant → 404
+  `parent_not_found` (no se puede colgar el árbol propio de otro tenant). DELETE rechaza
+  nodos con hijos (409). **V1 = estructura**; asignar usuarios a nodos es Fase 4 (puente
+  `hierarchyNodeId`, dormido).
+
+**Tests (22 nuevos, todos verdes):** `tests/integration/portalHierarchy.test.js` — CRUD +
+reglas de nivel del árbol, gates por rol, y AISLAMIENTO (A no ve/edita/borra nodos de B,
+no puede colgar de un nodo de B, merchantId del body ignorado). **Protocolo CLAUDE.md:**
+app arranca con grafo de requires limpio (el modelo borrado no rompe nada, la ruta nueva
+monta) + suite **182/191** (misma línea base — los 9 fallos preexistentes de webhooks.test.js).
+Documentado en `openapi.yaml` v2.3.0 (rutas `/portal/hierarchy` + 3 schemas).
+
 #### M6 Fases siguientes (pendientes)
-- **Fase 2 — Jerarquía de tiendas:** reactivar `MerchantHierarchy`. OJO: hoy es un
-  registro PLANO por tienda (todos los niveles como strings, `merchantId` único global),
-  NO un árbol ni scoped a un merchant. Reactivar = REDISEÑAR a árbol por-tenant
-  (`nodeType` globalGroup/group/branch/region/store + `parentId` + `merchantId` dueño),
-  CRUD scoped al `merchant_admin`. V1 = estructura; sin asignar usuarios a nodos.
 - **Fase 3 — Portal visual:** SPA separada en `public/portal/` consumiendo solo `/portal/*`
   (login, cambio de password, dashboard tenant-scoped: transacciones/analíticas read-only,
   usuarios, jerarquía). Requiere endpoints portal read-only de tx/analíticas por sesión.
@@ -565,7 +596,7 @@ los preexistentes de webhooks.test.js).
 | Máscara PAN en logs | `src/utils/cryptoUtils.js` | maskPan() devuelve BIN******last4 |
 | AES-256-GCM | `src/utils/cryptoUtils.js` | IV aleatorio por operación y AAD |
 | Revocación API keys | `src/services/apiKeyService.js` | Marca active: false + revokedAt |
-| Aislamiento de tenant en el portal | `src/routes/portalRoutes.js` | Todo endpoint filtra por `req.portalUser.merchantId` (sesión), nunca por un merchantId del cliente. Cross-tenant → 404. |
+| Aislamiento de tenant en el portal | `src/routes/portalRoutes.js`, `src/routes/portalHierarchyRoutes.js` | Todo endpoint filtra por `req.portalUser.merchantId` (sesión), nunca por un merchantId del cliente. Cross-tenant → 404 (incluye usar un `parentId` de jerarquía de otro merchant). |
 | Separación criptográfica de planos | `src/middleware/portalAuth.js` | Portal firma con `PORTAL_JWT_SECRET` + aud `portal`; backoffice con `BACKOFFICE_JWT_SECRET`. Deben ser DISTINTOS en prod. |
 | Rate limit login del portal | `src/middleware/rateLimiterPortalLogin.js` | Por IP+email. `RL_PORTAL_LOGIN_MAX` (10) / ventana `RL_PORTAL_LOGIN_WINDOW_MS` (15 min). |
 | Password temporal + cambio obligatorio | `src/routes/portalAuthRoutes.js` | Alta sin email: temporal visible una vez; `mustChangePassword` bloquea el portal hasta cambiarla. |
@@ -687,6 +718,11 @@ GET  /portal/me                                → Datos del usuario de sesión
 GET  /portal/users                             → Usuarios del PROPIO merchant (merchant_admin)
 POST /portal/users                             → Crear usuario en el PROPIO merchant (merchant_admin)
 PATCH /portal/users/:userId                    → Editar nombre/rol/estado (merchant_admin)
+
+GET   /portal/hierarchy                        → Nodos del árbol del PROPIO merchant (lectura: cualquier rol)
+POST  /portal/hierarchy                        → Crear nodo (merchant_admin)
+PATCH /portal/hierarchy/:nodeId                → Editar nombre/código/estado/padre (merchant_admin)
+DELETE /portal/hierarchy/:nodeId               → Borrar nodo, rechaza si tiene hijos (merchant_admin)
 ```
 
 Auth: `Authorization: Bearer <JWT de portal>` (aud `portal`). El merchantId sale de la
@@ -753,6 +789,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ```
 
 ---
+
+*Sesión 20 julio 2026 (M6 Fase 2 — jerarquía de tiendas, IMPLEMENTADO) — Marcos pidió continuar con la jerarquía "si no colisiona con nada crítico". **Análisis de colisiones:** NADA crítico — la jerarquía estaba dormida (ningún `require` la usa; solo dos punteros apagados en Merchant/MerchantUser), no montada, sin tocar nada de Paylands. Único punto no verificable desde aquí: si una versión antigua dejó una colección `merchanthierarchies` con datos/índice único viejos en la BD. **Neutralizado por diseño:** la jerarquía nueva usa una colección NUEVA (`hierarchynodes`), así la vieja (exista o no) queda intacta y aparte — Marcos no tiene que revisar nada. La "colisión" real era conceptual: el modelo viejo usaba `merchantId` para "id de tienda", chocando con el resto del sistema (tenant); resuelto rehaciéndolo como **árbol por-tenant** (`HierarchyNode`: merchantId=tenant dueño inmutable, nodeType, parentId). CRUD en `/portal/hierarchy` con el mismo aislamiento por sesión (nodo de otro merchant → 404; `parentId` a otro tenant → 404). Lectura para cualquier rol; escritura solo merchant_admin. Regla de nivel del padre (impide ciclos). DELETE rechaza nodos con hijos. `MerchantHierarchy.js` retirado (verificado que nadie lo requería) y refs actualizados a `HierarchyNode`. **22 tests nuevos verdes** (CRUD, reglas de árbol, roles, aislamiento). Protocolo CLAUDE.md: arranque limpio + suite **182/191** (misma línea base). `openapi.yaml` v2.3.0 + DEV-LOG. **Qué desplegar/probar (cuando despliegues):** mismo deploy que Fase 1 (no hay ENV nuevas); con un token de portal ya logueado y con la password cambiada — `POST /portal/hierarchy {"nodeType":"globalGroup","name":"Grupo"}` → 201; cuelga hijos con `parentId`; `GET /portal/hierarchy` → solo lo tuyo; intenta `PATCH`/`DELETE` un nodo de otro merchant → 404. Pendiente: Fase 3 (portal visual) y Fase 4 (permisos por nodo).*
 
 *Sesión 20 julio 2026 (M6 Fase 1 — plano de usuarios de merchant + portal, IMPLEMENTADO) — Arranca M6 con el alcance de Marcos: onboarding SIEMPRE operado por Monetiser (el cliente no se autorregistra). Antes de escribir, propuesta de fases y dos decisiones de arquitectura, ratificadas por Marcos: **(1) modelo nuevo `MerchantUser`** (colección propia, separada de `BackofficeUser`) en vez de extender — colecciones distintas = una query del plano merchant nunca puede devolver un usuario interno; **(2) portal con superficie separada** (`/portal/*` + SPA propia en fases posteriores) en vez de reutilizar la SPA de admin con gates — no meter código cross-merchant en el navegador del merchant. **Fase 1 (backend, sin UI):** modelo `MerchantUser` (merchantId inmutable, roles fijos v1 merchant_admin/operator/viewer, mustChangePassword, puente hierarchyNodeId dormido); auth del portal con JWT propio (`PORTAL_JWT_SECRET`, aud `portal`) — un token de backoffice se rechaza aquí (sin aud) y uno de portal en el backoffice (secretos distintos, requisito de config); rate limit del login por IP+email; password temporal + cambio obligatorio en el primer login (sin infra de email); CRUD `/portal/*` con **aislamiento en servidor** (merchantId SIEMPRE de la sesión, cross-tenant → 404, es la lección del bug §4 sin repetir); siembra del 1er merchant_admin por el superadmin interno en `/backoffice/merchants/:merchantId/portal-users` (devuelve tempPassword una vez). Proyección pública explícita (el passwordHash no se serializa). **Tests: 32 nuevos, todos verdes** (auth+password temporal, CRUD+gates de rol, AISLAMIENTO A↔B, separación de planos, rate limit 429), con helper de modelo en memoria (no hay mongodb-memory-server). **Protocolo CLAUDE.md verificado:** arranque de la app con grafo de requires limpio + suite **160/169** (misma línea base — los 9 fallos siguen siendo los preexistentes de webhooks.test.js). `openapi.yaml` v2.2.0 (tag Portal, `PortalBearer`, 5 rutas, 7 schemas) y DEV-LOG actualizados. **Aclaración sobre la nota "no empezar M6 sin la decisión agregador-vs-cuenta-por-merchant" (18 jul):** esa decisión bloquea el *aprovisionamiento en Paylands*, que Marcos deja FUERA de alcance en M6; la gestión de usuarios/tenant no depende de ella. **Qué desplegar y probar (Marcos, Manual Deploy en Render):** ver el runbook al final de esta nota. Pendiente: Fase 2 (jerarquía — el modelo `MerchantHierarchy` actual es PLANO, hay que rediseñarlo a árbol por-tenant), Fase 3 (portal visual), Fase 4 (permisos por nodo).*
 

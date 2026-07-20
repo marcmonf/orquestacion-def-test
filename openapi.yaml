@@ -2,12 +2,22 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.2.0
+  version: 2.3.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.3.0 (20 jul 2026)** — M6 Fase 2: **jerarquía de tiendas** por tenant.
+    Nuevas rutas `/portal/hierarchy` (árbol globalGroup → group → branch → region →
+    store, lista de adyacencia con `parentId`). CRUD scoped a la sesión: el
+    `merchantId` sale de la sesión; los nodos de otro merchant no existen (404), y
+    un `parentId` que apunte a otro tenant tampoco (no se puede colgar el árbol
+    propio de otro merchant). Lectura para cualquier usuario del portal; escritura
+    solo `merchant_admin`. El padre debe ser de nivel superior (regla que además
+    impide ciclos). La jerarquía vieja (registro plano `MerchantHierarchy`) se
+    rehízo como árbol (`HierarchyNode`, colección `hierarchynodes`).
 
     **v2.2.0 (20 jul 2026)** — M6 Fase 1: **portal del merchant** (plano de
     usuarios de merchant, separado del backoffice interno). Nuevas rutas
@@ -1285,6 +1295,131 @@ paths:
         '409':
           description: Auto-degradación o auto-desactivación (`cannot_demote_yourself` / `cannot_deactivate_yourself`).
 
+  /portal/hierarchy:
+    get:
+      tags: [Portal]
+      summary: Listar los nodos de jerarquía del PROPIO merchant
+      operationId: portalListHierarchy
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Lista plana (con `parentId`) de los nodos del árbol del merchant de la
+        sesión. Lectura permitida a cualquier usuario del portal.
+      responses:
+        '200':
+          description: Nodos del merchant de la sesión.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  nodes:
+                    type: array
+                    items: { $ref: '#/components/schemas/HierarchyNode' }
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Password sin cambiar (`password_change_required`).
+    post:
+      tags: [Portal]
+      summary: Crear un nodo de jerarquía en el PROPIO merchant
+      operationId: portalCreateHierarchyNode
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Crea un nodo en el merchant de la SESIÓN (cualquier `merchantId` del body se
+        ignora). Solo `merchant_admin`. Si se indica `parentId`, el padre debe ser
+        del mismo merchant y de un nivel estrictamente superior
+        (globalGroup < group < branch < region < store); se permite saltar niveles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HierarchyNodeCreateRequest'
+      responses:
+        '201':
+          description: Nodo creado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  node: { $ref: '#/components/schemas/HierarchyNode' }
+        '400':
+          description: Faltan campos, `nodeType` inválido o nivel de padre inválido (`invalid_parent_level`).
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente o password sin cambiar.
+        '404':
+          description: El `parentId` no existe en este merchant (`parent_not_found`) — incluye el caso cross-tenant.
+
+  /portal/hierarchy/{nodeId}:
+    patch:
+      tags: [Portal]
+      summary: Editar un nodo de jerarquía del PROPIO merchant
+      operationId: portalUpdateHierarchyNode
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Edita `name`, `code`, `active` o `parentId`. Se resuelve SIEMPRE con el
+        `merchantId` de sesión: un nodo de otro merchant devuelve `404`. Solo
+        `merchant_admin`. Un nodo no puede ser su propio padre, y el nuevo padre
+        debe ser del mismo merchant y de nivel superior.
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          description: Identificador (_id) del nodo a editar.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HierarchyNodeUpdateRequest'
+      responses:
+        '200':
+          description: Nodo actualizado.
+        '400':
+          description: Nombre vacío, nivel de padre inválido o auto-referencia (`node_cannot_be_its_own_parent`).
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente o password sin cambiar.
+        '404':
+          description: No existe en este merchant (`node_not_found` / `parent_not_found`).
+    delete:
+      tags: [Portal]
+      summary: Borrar un nodo de jerarquía del PROPIO merchant
+      operationId: portalDeleteHierarchyNode
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Borra un nodo del merchant de la sesión. Solo `merchant_admin`. Se rechaza
+        si el nodo tiene hijos (`409 node_has_children`): hay que borrar de abajo
+        hacia arriba.
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          description: Identificador (_id) del nodo a borrar.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Nodo borrado.
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Rol insuficiente o password sin cambiar.
+        '404':
+          description: No existe en este merchant (`node_not_found`).
+        '409':
+          description: El nodo tiene hijos (`node_has_children`).
+
   /health:
     get:
       tags: [Observabilidad]
@@ -2282,3 +2417,41 @@ components:
         message:      { type: string }
         tempPassword: { type: string, description: 'Password temporal; visible una sola vez.' }
         user:         { $ref: '#/components/schemas/MerchantUserPublic' }
+
+    # ── Jerarquía de tiendas (M6 Fase 2) ──────────────────────────────────
+    HierarchyNode:
+      type: object
+      description: Nodo del árbol de jerarquía de un merchant.
+      properties:
+        _id:        { type: string }
+        merchantId: { type: string, description: Tenant dueño (sale de la sesión). }
+        nodeType:
+          type: string
+          enum: [globalGroup, group, branch, region, store]
+        name:       { type: string }
+        code:       { type: string, nullable: true, description: Código propio del merchant para el nodo. }
+        parentId:   { type: string, nullable: true, description: Nodo padre; null si es raíz. }
+        active:     { type: boolean }
+        createdAt:  { type: string, format: date-time }
+
+    HierarchyNodeCreateRequest:
+      type: object
+      required: [nodeType, name]
+      description: |
+        `merchantId` NO se acepta aquí — se toma de la sesión. Si se envía, se ignora.
+      properties:
+        nodeType:
+          type: string
+          enum: [globalGroup, group, branch, region, store]
+        name:     { type: string }
+        code:     { type: string, nullable: true }
+        parentId: { type: string, nullable: true, description: 'Padre (mismo merchant, nivel superior); omitir o null para raíz.' }
+
+    HierarchyNodeUpdateRequest:
+      type: object
+      description: Todos los campos son opcionales; se aplican los presentes.
+      properties:
+        name:     { type: string }
+        code:     { type: string, nullable: true }
+        active:   { type: boolean }
+        parentId: { type: string, nullable: true, description: 'Nuevo padre (mismo merchant, nivel superior); null para hacerlo raíz.' }
