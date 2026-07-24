@@ -10,9 +10,13 @@
 // (404 parent_not_found): no se puede colgar el árbol propio de otro tenant.
 //
 // Roles: LECTURA (GET) para cualquier usuario del portal; ESCRITURA (crear/editar/
-// borrar) solo `merchant_admin`. V1 = gestionar la ESTRUCTURA; la asignación de
-// usuarios/permisos a nodos concretos queda para la Fase 4 (campo puente
-// MerchantUser.hierarchyNodeId, hoy dormido).
+// borrar) solo `merchant_admin`.
+//
+// PERMISOS POR NODO (Fase 4): si el usuario está asignado a un nodo
+// (MerchantUser.hierarchyNodeId, que viaja en el JWT), solo ve y gestiona SU
+// SUBÁRBOL; fuera de él los nodos "no existen" (404) y no puede crear/mover ahí
+// (403 outside_your_scope). Sin asignación (null) ve todo su merchant. La
+// asignación la hace un merchant_admin con PATCH /portal/users/:id.
 //
 const express       = require('express');
 const router        = express.Router();
@@ -49,6 +53,39 @@ async function resolveParent(merchantId, parentId, childType) {
   return { ok: true, parent };
 }
 
+// ── Fase 4 — permisos por nodo ──────────────────────────────────────────────
+// Si el usuario está asignado a un nodo (req.portalUser.hierarchyNodeId), solo ve
+// y gestiona SU SUBÁRBOL (ese nodo + descendientes). Sin asignación (null) ve todo
+// su merchant. Nota: el scoping por nodo aplica a la JERARQUÍA; las transacciones
+// no llevan referencia de nodo todavía, así que su visibilidad sigue siendo a
+// nivel de merchant (mejora futura: etiquetar transacciones con un nodo).
+
+// Ids del subárbol que cuelga de rootId (incluido rootId), a partir de la lista
+// completa de nodos del merchant.
+function subtreeIds(nodes, rootId) {
+  const childrenOf = {};
+  nodes.forEach(n => {
+    const p = n.parentId ? String(n.parentId) : 'null';
+    (childrenOf[p] = childrenOf[p] || []).push(String(n._id));
+  });
+  const out = new Set();
+  const stack = [String(rootId)];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (out.has(cur)) continue;
+    out.add(cur);
+    (childrenOf[cur] || []).forEach(c => stack.push(c));
+  }
+  return out;
+}
+
+// null = usuario no restringido (ve todo su merchant). Set = ids de su subárbol.
+async function allowedNodeIds(req) {
+  if (!req.portalUser.hierarchyNodeId) return null;
+  const all = await HierarchyNode.find({ merchantId: req.portalUser.merchantId }).lean();
+  return subtreeIds(all, req.portalUser.hierarchyNodeId);
+}
+
 router.use(portalAuth);
 router.use(requirePasswordChanged);
 
@@ -58,10 +95,16 @@ router.use(requirePasswordChanged);
 // ─────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const nodes = await HierarchyNode
-      .find({ merchantId: req.portalUser.merchantId })   // ← scope de la sesión
+    const all = await HierarchyNode
+      .find({ merchantId: req.portalUser.merchantId })   // ← scope de la sesión (merchant)
       .sort({ nodeType: 1, name: 1 })
       .lean();
+    // Scoping por nodo (Fase 4): si el usuario está asignado a un nodo, solo su subárbol.
+    let nodes = all;
+    if (req.portalUser.hierarchyNodeId) {
+      const ids = subtreeIds(all, req.portalUser.hierarchyNodeId);
+      nodes = all.filter(n => ids.has(String(n._id)));
+    }
     return res.json({ success: true, nodes: nodes.map(toPublicNode) });
   } catch (err) {
     console.error('❌ [portal/hierarchy GET]', err);
@@ -84,6 +127,13 @@ router.post('/', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
     const pr = await resolveParent(req.portalUser.merchantId, parentId, nodeType);
     if (!pr.ok) return res.status(pr.code).json({ success: false, error: pr.error });
+
+    // Fase 4 — un usuario restringido a un nodo solo puede crear DENTRO de su
+    // subárbol: el padre es obligatorio y debe pertenecer a su subárbol.
+    const allowed = await allowedNodeIds(req);
+    if (allowed && (!pr.parent || !allowed.has(String(pr.parent._id)))) {
+      return res.status(403).json({ success: false, error: 'outside_your_scope' });
+    }
 
     const node = await HierarchyNode.create({
       merchantId: req.portalUser.merchantId,   // ← SIEMPRE la sesión; se ignora cualquier merchantId del body
@@ -112,6 +162,13 @@ router.patch('/:nodeId', requirePortalRole('merchant_admin'), async (req, res) =
     });
     if (!node) return res.status(404).json({ success: false, error: 'node_not_found' });
 
+    // Fase 4 — un usuario restringido a un nodo solo toca su subárbol; fuera de él
+    // el nodo "no existe" (404, no se revela).
+    const allowed = await allowedNodeIds(req);
+    if (allowed && !allowed.has(String(node._id))) {
+      return res.status(404).json({ success: false, error: 'node_not_found' });
+    }
+
     if (req.body.name !== undefined) {
       if (!String(req.body.name).trim()) {
         return res.status(400).json({ success: false, error: 'name_cannot_be_empty' });
@@ -127,6 +184,8 @@ router.patch('/:nodeId', requirePortalRole('merchant_admin'), async (req, res) =
     if (req.body.parentId !== undefined) {
       const newParentId = req.body.parentId;
       if (newParentId === null || newParentId === '') {
+        // Sacar el nodo a raíz lo saca del subárbol de un usuario restringido.
+        if (allowed) return res.status(403).json({ success: false, error: 'outside_your_scope' });
         node.parentId = null;
       } else if (String(newParentId) === String(node._id)) {
         return res.status(400).json({ success: false, error: 'node_cannot_be_its_own_parent' });
@@ -135,6 +194,9 @@ router.patch('/:nodeId', requirePortalRole('merchant_admin'), async (req, res) =
         // hace además imposible un ciclo (el padre siempre está por encima).
         const pr = await resolveParent(req.portalUser.merchantId, newParentId, node.nodeType);
         if (!pr.ok) return res.status(pr.code).json({ success: false, error: pr.error });
+        if (allowed && !allowed.has(String(pr.parent._id))) {
+          return res.status(403).json({ success: false, error: 'outside_your_scope' });
+        }
         node.parentId = pr.parent._id;
       }
     }
@@ -157,6 +219,12 @@ router.delete('/:nodeId', requirePortalRole('merchant_admin'), async (req, res) 
       merchantId: req.portalUser.merchantId,
     });
     if (!node) return res.status(404).json({ success: false, error: 'node_not_found' });
+
+    // Fase 4 — fuera de su subárbol, el nodo "no existe" para un usuario restringido.
+    const allowed = await allowedNodeIds(req);
+    if (allowed && !allowed.has(String(node._id))) {
+      return res.status(404).json({ success: false, error: 'node_not_found' });
+    }
 
     const children = await HierarchyNode.countDocuments({
       merchantId: req.portalUser.merchantId,

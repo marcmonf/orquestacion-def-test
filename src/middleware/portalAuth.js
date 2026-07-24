@@ -42,6 +42,9 @@ function portalAuth(req, res, next) {
       role:               decoded.role,
       email:              decoded.email,
       mustChangePassword: !!decoded.mustChangePassword,
+      // Fase 4 — nodo de jerarquía al que está restringido el usuario (o null =
+      // ve todo su merchant). Gobierna el scoping por nodo en /portal/hierarchy.
+      hierarchyNodeId:    decoded.hierarchyNodeId || null,
     };
     return next();
   } catch (err) {

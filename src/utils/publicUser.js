@@ -16,6 +16,7 @@ function toPublicUser(u) {
     role:               u.role,
     active:             u.active,
     mustChangePassword: u.mustChangePassword,
+    hierarchyNodeId:    u.hierarchyNodeId ? String(u.hierarchyNodeId) : null,
     lastLoginAt:        u.lastLoginAt || null,
     createdAt:          u.createdAt,
   };

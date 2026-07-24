@@ -41,13 +41,19 @@ module.exports = function makeMemoryModel() {
   const store = [];
 
   function queryResult(rows) {
+    let _skip = 0, _limit = null;
+    function materialize() {
+      let out = rows.slice(_skip);
+      if (_limit != null) out = out.slice(0, _limit);
+      return out.map(r => ({ ...r }));
+    }
     const q = {
       select() { return q; },
       sort()   { return q; },
-      lean()   { return Promise.resolve(rows.map(r => ({ ...r }))); },
-      then(resolve, reject) {
-        return Promise.resolve(rows.map(r => ({ ...r }))).then(resolve, reject);
-      },
+      skip(n)  { _skip = parseInt(n) || 0; return q; },
+      limit(n) { _limit = (n == null ? null : parseInt(n)); return q; },
+      lean()   { return Promise.resolve(materialize()); },
+      then(resolve, reject) { return Promise.resolve(materialize()).then(resolve, reject); },
     };
     return q;
   }
@@ -87,6 +93,31 @@ module.exports = function makeMemoryModel() {
       if (idx === -1) return { deletedCount: 0 };
       store.splice(idx, 1);
       return { deletedCount: 1 };
+    },
+
+    // aggregate MÍNIMO: soporta $match y $group con _id:null y acumuladores
+    // $sum/$avg sobre un campo (lo que usan las analíticas del portal).
+    async aggregate(pipeline = []) {
+      let rows = store.slice();
+      for (const stage of pipeline) {
+        if (stage.$match) {
+          rows = rows.filter(d => matches(d, stage.$match));
+        } else if (stage.$group) {
+          const acc = { _id: null };
+          for (const [k, spec] of Object.entries(stage.$group)) {
+            if (k === '_id') continue;
+            if (spec && spec.$sum) {
+              const f = String(spec.$sum).replace(/^\$/, '');
+              acc[k] = rows.reduce((s, d) => s + (Number(d[f]) || 0), 0);
+            } else if (spec && spec.$avg) {
+              const f = String(spec.$avg).replace(/^\$/, '');
+              acc[k] = rows.length ? rows.reduce((s, d) => s + (Number(d[f]) || 0), 0) / rows.length : 0;
+            }
+          }
+          rows = [acc];
+        }
+      }
+      return rows;
     },
   };
 };

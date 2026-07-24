@@ -1,22 +1,44 @@
 // src/routes/portalRoutes.js
 'use strict';
 //
-// PORTAL del merchant (M6 Fase 1) — endpoints protegidos por sesión de portal.
+// PORTAL del merchant — endpoints protegidos por sesión de portal.
+//   Fase 1: identidad (me, usuarios). Fase 3: datos read-only (transacciones,
+//   analíticas). Fase 4: asignación de usuario a nodo de jerarquía (hierarchyNodeId).
 //
 // AISLAMIENTO DE TENANT (requisito duro): el merchantId sale SIEMPRE de
 // req.portalUser.merchantId (la sesión JWT), NUNCA del body/param/query. Todo
 // recurso se resuelve con el merchantId de sesión en el filtro, de modo que un
-// usuario de OTRO merchant sencillamente no existe para esta sesión (404, no se
+// recurso de OTRO merchant sencillamente no existe para esta sesión (404, no se
 // revela su existencia). Es la lección del bug cross-tenant de PUT/DELETE
 // /transactions (DEV-LOG §4): ese patrón no se repite.
 //
-const express      = require('express');
-const router       = express.Router();
-const MerchantUser = require('../models/MerchantUser');
-const portalAuth   = require('../middleware/portalAuth');
+const express       = require('express');
+const router        = express.Router();
+const MerchantUser  = require('../models/MerchantUser');
+const HierarchyNode = require('../models/HierarchyNode');
+const Transaction   = require('../models/Transaction');
+const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
-const { toPublicUser }        = require('../utils/publicUser');
+const { toPublicUser }         = require('../utils/publicUser');
 const { generateTempPassword } = require('../utils/tempPassword');
+
+// Proyección de una transacción para el portal (solo campos no sensibles).
+function toPublicTx(t) {
+  if (!t) return null;
+  return {
+    paymentId:         t.paymentId,
+    merchantId:        t.merchantId,
+    amount:            t.amount,          // céntimos
+    currency:          t.currency,
+    status:            t.status,
+    method:            t.method,
+    processor:         t.processor || null,
+    cardBrand:         t.cardBrand || null,
+    issuerCountry:     t.issuerCountry || null,
+    merchantReference: t.merchantReference || null,
+    createdAt:         t.createdAt,
+  };
+}
 
 let bcrypt;
 try { bcrypt = require('bcryptjs'); } catch {
@@ -152,10 +174,104 @@ router.patch('/users/:userId', requirePortalRole('merchant_admin'), async (req, 
       user.name = String(req.body.name).trim();
     }
 
+    // Fase 4 — asignar/desasignar el usuario a un nodo de jerarquía. El nodo debe
+    // ser del PROPIO merchant (se resuelve con el merchantId de sesión); null lo
+    // desasigna. El scoping por nodo se aplica en /portal/hierarchy.
+    if (req.body.hierarchyNodeId !== undefined) {
+      const nid = req.body.hierarchyNodeId;
+      if (nid === null || nid === '') {
+        user.hierarchyNodeId = null;
+      } else {
+        const node = await HierarchyNode.findOne({ _id: nid, merchantId: req.portalUser.merchantId });
+        if (!node) return res.status(400).json({ success: false, error: 'invalid_hierarchy_node' });
+        user.hierarchyNodeId = node._id;
+      }
+    }
+
     await user.save();
     return res.json({ success: true, user: toPublicUser(user) });
   } catch (err) {
     console.error('❌ [portal/users PATCH]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATOS DEL PORTAL (M6 Fase 3) — SOLO LECTURA, scoped a la sesión.
+// Lectura para cualquier usuario del portal (viewer incluido). Todo se filtra
+// por req.portalUser.merchantId; una transacción de otro merchant → 404.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /portal/transactions — listado paginado del PROPIO merchant
+router.get('/transactions', async (req, res) => {
+  try {
+    const { status, method, from, to, q, page = 1, limit = 20 } = req.query;
+    const query = { merchantId: req.portalUser.merchantId };   // ← scope de la sesión
+    if (status) query.status = status;
+    if (method) query.method = method;
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to)   query.createdAt.$lte = new Date(to);
+    }
+    if (q) {
+      const rx = new RegExp(String(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ paymentId: rx }, { merchantReference: rx }, { processorReference: rx }];
+    }
+    const lim  = Math.min(100, Math.max(1, parseInt(limit) || 20));
+    const pg   = Math.max(1, parseInt(page) || 1);
+    const skip = (pg - 1) * lim;
+    const [total, txs] = await Promise.all([
+      Transaction.countDocuments(query),
+      Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(lim).lean(),
+    ]);
+    return res.json({ success: true, page: pg, limit: lim, total, transactions: txs.map(toPublicTx) });
+  } catch (err) {
+    console.error('❌ [portal/transactions]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /portal/transactions/:paymentId — detalle (scoped: otro merchant → 404)
+router.get('/transactions/:paymentId', async (req, res) => {
+  try {
+    const tx = await Transaction.findOne({
+      paymentId:  req.params.paymentId,
+      merchantId: req.portalUser.merchantId,
+    });
+    if (!tx) return res.status(404).json({ success: false, error: 'transaction_not_found' });
+    return res.json({ success: true, transaction: toPublicTx(tx) });
+  } catch (err) {
+    console.error('❌ [portal/transactions/:id]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /portal/analytics/summary — KPIs del PROPIO merchant (importes en céntimos)
+router.get('/analytics/summary', async (req, res) => {
+  try {
+    const scope = { merchantId: req.portalUser.merchantId };
+    const [total, approved, declined, volAgg] = await Promise.all([
+      Transaction.countDocuments(scope),
+      Transaction.countDocuments({ ...scope, status: 'approved' }),
+      Transaction.countDocuments({ ...scope, status: 'declined' }),
+      Transaction.aggregate([
+        { $match: { ...scope, status: 'approved' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]),
+    ]);
+    const volume = (volAgg[0] && volAgg[0].total) || 0;
+    return res.json({
+      success:              true,
+      totalTransactions:    total,
+      approvedTransactions: approved,
+      declinedTransactions: declined,
+      approvalRate:         total ? Number(((approved / total) * 100).toFixed(2)) : 0,
+      totalVolume:          volume,                                   // céntimos
+      averageTicket:        approved ? Math.round(volume / approved) : 0, // céntimos
+    });
+  } catch (err) {
+    console.error('❌ [portal/analytics/summary]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

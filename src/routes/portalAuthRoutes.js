@@ -29,6 +29,8 @@ function tokenClaims(user) {
     email:              user.email,
     role:               user.role,
     mustChangePassword: !!user.mustChangePassword,
+    // Fase 4 — nodo de jerarquía al que está restringido (o ausente = ve todo).
+    hierarchyNodeId:    user.hierarchyNodeId ? String(user.hierarchyNodeId) : null,
   };
 }
 
