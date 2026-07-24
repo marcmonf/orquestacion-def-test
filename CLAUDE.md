@@ -47,6 +47,14 @@ Por que no basta lo de siempre:
   (M7 F2 finalizacion) -> 225/234 (M7 Bloque 1, facturacion real: emisor/IGIC/
   contrato/PDF/email) -> 238/247 (M7 Bloque 2, adquirentes + routing + coste real,
   20 jul). Lo constante son los 9 fallos de webhooks.test.js; el resto en verde.
+- Ni `node --check` ni `jest` prueban el NAVEGADOR. La resolucion de rutas de assets
+  estaticos (p.ej. un `<script src="app.js">` RELATIVO servido en una ruta sin barra
+  final como `/portal-app`) solo se ve abriendo la pagina en un navegador real: en
+  consola sale todo verde. Asi se escapo el bug del portal "Cargando..." (24 jul 2026,
+  ver DEV-LOG seccion 4; fix: ruta absoluta `/portal-app/app.js`). Regla: en cambios de
+  `public/` (las SPAs de `/admin` y `/portal-app`) hay que ABRIR la pagina — el verde de
+  consola no basta. Los estaticos servidos sin barra final referencian assets con ruta
+  ABSOLUTA (`/admin/...`, `/portal-app/...`), nunca relativa.
 
 Y ojo con esto, que es lo que hizo el fallo dificil de ver: `index.js` monta
 varias rutas dentro de `try/catch`. Un MODULE_NOT_FOUND ahi se traga y sale como

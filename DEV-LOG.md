@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 20 julio 2026
+> Última actualización: 24 julio 2026
 
 ---
 
@@ -211,6 +211,7 @@ Merchant backend
 | Template literal corrupto en blob de GitHub | Interpolación de variables en heredoc | Escribir siempre a `/tmp/` y usar `base64 -w 0` para el blob |
 | **`/apms/payments` era un endpoint de pago PÚBLICO, sin validación y con PAN en crudo** (16 jul 2026) | Stack de pago paralelo heredado de una versión antigua, montado en `index.js` y nunca revisado. Tres fallos apilados: (1) su auth era opt-in vía `APMS_REQUIRE_API_KEY`, variable que **no existe en el repo ni en Render** → `apiKeyAuth` quedaba en `(req,res,next)=>next()`; (2) `paymentValidator.js` exporta el schema de Joi y acto seguido le **machaca su `.validate`** con el helper del propio módulo (línea 93), así que `paymentSchema.validate(tx)` devolvía una función en vez de un resultado y `{ error }` era SIEMPRE `undefined` — no rechazaba nada, en silencio, desde que se escribió; (3) aceptaba `cardNumber` en crudo y procesaba contra conectores simulados. | **Retirado por completo** (14 archivos + el montaje). Verificado en vivo antes de borrar: `POST /apms/payments` con body vacío y sin credenciales devolvía `200` en producción, mientras el mismo intento contra `/payments/hosted` devolvía `401`. Aislamiento comprobado (nada fuera de la isla lo requería, ningún test lo tocaba) y suite igual que la línea base: 119/128. **Lección: un endpoint montado y olvidado es peor que código muerto — el código muerto no acepta tarjetas.** Nota: el `.validate` machacado sigue en `paymentValidator.js`; ya no tiene víctima (`routes/payments.js` usa el helper correctamente, destructurando), pero es una trampa para código futuro que haga `require('paymentValidator').validate(obj)` esperando Joi. No se toca por estar en la ruta del ciclo de vida verificado. |
 | **Segunda hornada de endpoints legacy peligrosos, montados y olvidados** (17 jul 2026) | Auditoría de código muerto pedida por Marcos. Cuatro hallazgos en rutas VIVAS: (1) `PUT`/`DELETE /transactions/:paymentId` operaban por `paymentId` **sin comprobar la pertenencia al merchant** — cualquier merchant con API key válida podía modificar o borrar transacciones ajenas (mismo patrón que el bug de `ensureTx` del 16 jul, en otro router); el listado y las analíticas además agregaban TODOS los merchants; (2) `POST /transactions/card-payment` aceptaba el **PAN en crudo** en el body (rule engine V1 + acquirers mock); (3) `POST /tokens` aceptaba PAN+CVV y **guardaba el PAN cifrado en MongoDB** (bóveda propia = scope SAQ D); solo lo frenaba que `TOKEN_API_KEY` no existe en Render → 403 permanente, es decir, a una variable de entorno de activarse; (4) `/initialize` y `/payment-requests`: stack pre-Hosted-Checkout sin ningún consumidor (verificado: ni el front ni los flujos actuales los llaman). | **Retirados los cuatro** (commit `a7bad5e`): `/initialize`, `/tokens` y `/payment-requests` desmontados y eliminados con toda su cadena (16 archivos); `/transactions` reescrito **solo-lectura** con scoping obligatorio por `req.merchantId` en listado, detalle y las cuatro analíticas. La escritura de transacciones ocurre únicamente en los flujos de pago reales. Verificado por tanda: grafo de requires + arranque de la app + suite 119/128. Refuerza la lección del 16 jul: lo montado y olvidado es peor que lo muerto. |
+| **`/portal-app` se quedaba en "Cargando…" para siempre** (24 jul 2026) | `public/portal/index.html` cargaba `<script src="app.js">` (ruta **relativa**). La SPA se sirve en `/portal-app` (sin barra final), así que el navegador resolvía el script contra la raíz → pedía `/app.js` (inexistente) → 404 → `app.js` nunca ejecutaba y `#root` se quedaba con el "Cargando…" inicial. El panel `/admin` no lo sufría porque ya referenciaba sus scripts con ruta absoluta (`/admin/dashboard.js`). | Ruta absoluta `<script src="/portal-app/app.js">` (commit `c4889fe`). **Lección: un estático servido en una ruta SIN barra final debe referenciar sus assets con ruta ABSOLUTA.** Y esta clase de fallo no la detectan `node --check` ni `jest` (validan sintaxis y servidor, no la resolución de rutas del navegador) — solo aparece abriendo la página en un navegador real. Nadie había abierto `/portal-app` en vivo hasta esta sesión: toda la verificación de M6 Fase 3 había sido a nivel de API/tests. |
 
 ---
 
@@ -702,6 +703,51 @@ un 2º conector de adquirente para activar el routing real; base de BINes/interc
 completa que las tablas de arranque. Limitación de M6 Fase 4 relevante: las transacciones no
 llevan referencia de nodo, así que billing y coste son por merchant, no por nodo.
 
+### Sesión 24 jul 2026 — post-M7 (primera prueba en vivo): fix del portal, consola de onboarding en `/admin`, ojito de contraseña
+
+**Contexto:** Marcos desplegó M6+M7 y abrió el portal en un navegador real **por primera
+vez** (toda la verificación previa había sido de API/tests, nunca navegador). Salieron un
+bug y dos carencias de UX/operación; los tres arreglados y desplegados (Marcos confirmó en
+vivo el 24 jul que el portal carga y el ojito aparece). **Solo se tocaron estáticos**
+(`public/portal` y `public/admin`): NO hay cambios de servidor ni de tests → **línea base
+sigue 238/247**, grafo de requires intacto, `node --check` OK en los JS tocados.
+
+- **`c4889fe` — fix: `/portal-app` se quedaba en "Cargando…".** `index.html` cargaba
+  `<script src="app.js">` (relativo); servido en `/portal-app` sin barra final, el navegador
+  pedía `/app.js` → 404 → la SPA no arrancaba. Fix: ruta absoluta `/portal-app/app.js`.
+  Detalle y **lección** en §4 (no lo pillan `node --check` ni jest — solo un navegador real).
+
+- **`0c9744e` — consola de onboarding y facturación en `/admin` (sin terminal).** El alta de
+  comercios y la facturación solo existían como llamadas de API (curl), inasumible para un
+  founder no técnico. Llevado a **clics** en el panel `/admin` (todo sobre endpoints de
+  backoffice que YA existían de M6/M7 — **sin endpoints nuevos**):
+  - Pestaña **Merchants**, botón nuevo **"Portal"**: crea el 1er `merchant_admin` del comercio
+    y muestra la password temporal UNA vez; lista los usuarios de portal existentes. (Reusa
+    `GET/POST /backoffice/merchants/:id/portal-users`.)
+  - Pestaña **Merchants**, botón nuevo **"Tarifa"**: edita el `MerchantContract`. De cara al
+    usuario, importes en EUROS y comisión en % ; se convierte a céntimos/bps al enviar (mismo
+    patrón euros→céntimos que el modal de refund). Precarga la tarifa vigente si existe.
+    (`GET/PUT /backoffice/merchants/:id/contract`.)
+  - Pestaña nueva **"Facturación"** (solo superadmin): datos de la **Sociedad emisora**
+    (`GET/PUT /backoffice/company`) + **emitir factura** de un merchant para un período cerrado
+    (`POST /backoffice/billing/:id/finalize`, con el período por defecto = último mes cerrado);
+    el PDF lo descarga el comercio en su portal.
+  - **Doble propósito:** es además la consola operativa con la que Monetiser dará de alta
+    comercios en producción (el "onboarding operado por Monetiser" de M6), no solo una utilidad
+    de prueba. Implementado en `public/admin/dashboard.html` + `dashboard.js`.
+
+- **`bdbc2e6` — ojito mostrar/ocultar contraseña en el portal.** Botón 👁 en el campo de login
+  y en los tres del cambio de password (`public/portal/`), igual que el que ya tenía `/admin`.
+  Helpers reutilizables `pwField`/`bindEyes` en `app.js` + CSS `.pw`/`.pw-eye` en `index.html`.
+
+**Pendiente de confirmar en el próximo chat:** el 24 jul se detectó que **`PORTAL_JWT_SECRET`
+no estaba puesta en Render** (ver §8) — Marcos avisado de ponerla; confirmar que ya está.
+
+**Nota del entorno de Claude:** desde el sandbox la salida HTTPS a `onrender.com` está
+bloqueada por la política del proxy (403 al CONNECT). NO se puede sondear el servidor en vivo
+desde aquí; "qué hay desplegado" lo confirma Marcos en su navegador, y desde aquí se valida
+leyendo el código + `node --check` + `jest`.
+
 ---
 
 ## 7. Elementos de seguridad
@@ -757,7 +803,7 @@ llevan referencia de nodo, así que billing y coste son por merchant, no por nod
 | `ADMIN_TOKEN` | Token para endpoints de administración (X-Admin-Token) |
 | `API_KEY_SIMPLE_FALLBACK` | `true` — activa auth simple x-api-key para Postman/testing |
 | `SERVER_URL` | `https://orquestacion-def-test.onrender.com` — para construir URLs de webhook hacia Paylands |
-| `PORTAL_JWT_SECRET` | **(M6)** Secreto de firma del JWT del portal del merchant. **DEBE ser distinto de `BACKOFFICE_JWT_SECRET`** — es lo que impide que un token de merchant sea aceptado en el backoffice. Sin definir usa un fallback de desarrollo (no válido para producción). |
+| `PORTAL_JWT_SECRET` | **(M6)** Secreto de firma del JWT del portal del merchant. **DEBE ser distinto de `BACKOFFICE_JWT_SECRET`** — es lo que impide que un token de merchant sea aceptado en el backoffice. Sin definir usa un fallback de desarrollo (no válido para producción). **(24 jul 2026: detectada SIN definir en Render — Marcos avisado de ponerla. El próximo chat debe CONFIRMAR que ya está. Mientras no lo esté, el portal firma con el fallback público del repo → como el repo es público, cualquiera podría falsificar un token de portal.)** |
 | `BACKOFFICE_JWT_SECRET` | Secreto de firma del JWT del backoffice (dashboard interno). Ya se usaba; sin definir usa fallback de desarrollo. Distinto de `PORTAL_JWT_SECRET`. |
 
 ### Opcionales / Feature flags
