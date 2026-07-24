@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monetiser · Portal del comercio</title>
+  <style>
+    :root {
+      --bg: #f4f5f9; --card: #ffffff; --ink: #1f2937; --muted: #6b7280;
+      --line: #e5e7eb; --primary: #4f46e5; --primary-d: #4338ca;
+      --ok: #16a34a; --bad: #dc2626; --warn: #d97706; --chip: #eef2ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--ink); }
+    a { color: var(--primary); }
+    button { font: inherit; cursor: pointer; border: none; border-radius: 8px;
+      padding: 9px 14px; background: var(--primary); color: #fff; }
+    button:hover { background: var(--primary-d); }
+    button.ghost { background: transparent; color: var(--primary); border: 1px solid var(--line); }
+    button.danger { background: var(--bad); }
+    button.small { padding: 5px 9px; font-size: 13px; }
+    input, select { font: inherit; padding: 9px 11px; border: 1px solid var(--line);
+      border-radius: 8px; width: 100%; background: #fff; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+    .muted { color: var(--muted); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .grid { display: grid; gap: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
+      background: var(--chip); color: var(--primary-d); }
+    .status-approved, .status-authorized, .status-captured { color: var(--ok); font-weight: 600; }
+    .status-declined, .status-error, .status-refused { color: var(--bad); font-weight: 600; }
+    .status-pending_3ds, .status-pending, .status-hosted_pending { color: var(--warn); font-weight: 600; }
+    .banner { padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 14px; }
+    .banner.err { background: #fef2f2; color: var(--bad); }
+    .banner.ok  { background: #f0fdf4; color: var(--ok); }
+    /* Layout */
+    #centered { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+    #centered .card { width: 100%; max-width: 380px; }
+    header.topbar { background: #fff; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; }
+    header.topbar img { height: 26px; }
+    nav.tabs { display: flex; gap: 6px; padding: 12px 20px 0; flex-wrap: wrap; }
+    nav.tabs button { background: transparent; color: var(--muted); border-radius: 8px 8px 0 0; }
+    nav.tabs button.active { background: #fff; color: var(--primary-d); border: 1px solid var(--line); border-bottom-color: #fff; }
+    main { padding: 20px; max-width: 1080px; margin: 0 auto; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+    .kpi .n { font-size: 26px; font-weight: 700; }
+    .kpi .l { color: var(--muted); font-size: 13px; }
+    .hidden { display: none !important; }
+    .logo-text { font-weight: 800; letter-spacing: -.02em; color: var(--primary-d); font-size: 18px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }
+    .toolbar > div { min-width: 150px; }
+    ul.tree { list-style: none; padding-left: 0; }
+    ul.tree ul { list-style: none; padding-left: 22px; border-left: 1px dashed var(--line); margin-left: 6px; }
+    ul.tree li { padding: 4px 0; }
+    .node-type { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div id="root"><div id="centered"><div class="card">Cargando…</div></div></div>
+  <script src="app.js"></script>
+</body>
+</html>

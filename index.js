@@ -183,6 +183,14 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/admin/dashboard.html'));
 });
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
+
+// Portal VISUAL del merchant (M6 Fase 3) — SPA separada en /portal-app.
+// Sirve public/portal/ (login, cambio de password, dashboard tenant-scoped).
+// Habla solo con la API /portal/* (que va autenticada); estos estáticos van en
+// /portal-app para NO chocar con ese namespace autenticado.
+app.get('/portal-app', (req, res) => res.sendFile(path.join(__dirname, 'public/portal/index.html')));
+app.use('/portal-app', express.static(path.join(__dirname, 'public/portal')));
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ===== Error handler global ===== */
