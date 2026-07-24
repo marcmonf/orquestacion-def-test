@@ -106,7 +106,7 @@ function renderShell() {
   const tabs = [
     ['resumen', 'Resumen'],
     ['transacciones', 'Transacciones'],
-    ...(isAdmin() ? [['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía']] : []),
+    ...(isAdmin() ? [['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
   ];
   ROOT.innerHTML = `
     <header class="topbar">
@@ -136,6 +136,7 @@ function selectTab(tab) {
   if (tab === 'transacciones') return viewTransacciones();
   if (tab === 'usuarios') return viewUsuarios();
   if (tab === 'jerarquia') return viewJerarquia();
+  if (tab === 'facturacion') return viewFacturacion();
 }
 const view = () => document.getElementById('view');
 
@@ -326,6 +327,43 @@ async function loadTree() {
     if (!r2.ok) alert(r2.body.error === 'node_has_children' ? 'No se puede borrar: tiene nodos hijos. Borra primero los de dentro.' : 'No se pudo borrar.');
     loadTree();
   });
+}
+
+// ── Tab: Facturación (solo admin) ──────────────────────────────────────────────
+function monthLabel(period) {
+  const m = /^(\d{4})-(\d{2})$/.exec(period || '');
+  if (!m) return esc(period);
+  const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  return `${meses[Number(m[2]) - 1]} ${m[1]}`;
+}
+async function viewFacturacion() {
+  view().innerHTML = `<div class="card">Cargando facturación…</div>`;
+  const r = await api('/portal/billing');
+  if (!r.ok) return view().innerHTML = `<div class="banner err">No se pudo cargar la facturación.</div>`;
+  const c = r.body.current, cur = c.currency || 'EUR';
+  const kpi = (n, l) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${esc(l)}</div></div>`;
+  const history = (r.body.history || []).slice().reverse(); // más antiguo → más reciente
+  view().innerHTML = `
+    <div class="banner ok">Plan <strong>${esc(r.body.plan)}</strong> · período <strong>${monthLabel(r.body.period)}</strong>.
+      Importe informativo (aún no se cobra automáticamente).</div>
+    <div class="kpis" style="margin-bottom:14px">
+      ${kpi(money(c.totalDue, cur), 'Total del período')}
+      ${kpi(money(c.subscriptionFee, cur), 'Cuota del plan')}
+      ${kpi(money(c.usageFee, cur), 'Por transacciones')}
+      ${kpi(money(c.volumeFee, cur), 'Por volumen')}
+      ${kpi(c.billableCount, 'Transacciones facturables')}
+      ${kpi(money(c.billableVolume, cur), 'Volumen facturable')}
+    </div>
+    <div class="card">
+      <strong>Historial (últimos 6 meses)</strong>
+      <table style="margin-top:10px"><thead><tr><th>Mes</th><th>Facturables</th><th>Volumen</th><th>Total</th></tr></thead>
+      <tbody>${history.map(h => `<tr>
+        <td>${monthLabel(h.period)}</td>
+        <td>${h.billableCount}</td>
+        <td>${money(h.billableVolume, h.currency || cur)}</td>
+        <td>${money(h.totalDue, h.currency || cur)}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>`;
 }
 
 // ── Utilidades DOM ────────────────────────────────────────────────────────────
