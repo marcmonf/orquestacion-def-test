@@ -339,9 +339,21 @@ function monthLabel(period) {
 let _invoices = [];
 async function viewFacturacion() {
   view().innerHTML = `<div class="card">Cargando facturación…</div>`;
-  const [r, ri] = await Promise.all([api('/portal/billing'), api('/portal/invoices')]);
+  const [r, ri, rc] = await Promise.all([api('/portal/billing'), api('/portal/invoices'), api('/portal/contract')]);
   if (!r.ok) return view().innerHTML = `<div class="banner err">No se pudo cargar la facturación.</div>`;
   const c = r.body.current, cur = c.currency || 'EUR';
+  const contract = (rc.ok && rc.body.contract) ? rc.body.contract : null;
+  const tarifaCard = contract ? `
+    <div class="card" style="margin-bottom:14px">
+      <strong>Tu tarifa</strong>
+      <table style="margin-top:10px">
+        ${contract.monthlyMaintenance ? `<tr><td>Mantenimiento mensual</td><td style="text-align:right">${money(contract.monthlyMaintenance, cur)}</td></tr>` : ''}
+        ${contract.perTransactionFee ? `<tr><td>Por transacción</td><td style="text-align:right">${money(contract.perTransactionFee, cur)}</td></tr>` : ''}
+        ${contract.volumeBps ? `<tr><td>Sobre volumen</td><td style="text-align:right">${(contract.volumeBps / 100).toFixed(2)}%</td></tr>` : ''}
+        ${contract.perUserFee ? `<tr><td>Por usuario adicional (incluidos ${contract.includedUsers || 0})</td><td style="text-align:right">${money(contract.perUserFee, cur)}</td></tr>` : ''}
+        ${(contract.services || []).map(s => `<tr><td>${esc(s.label || s.code)}</td><td style="text-align:right">${money(s.monthlyPrice, cur)}/mes</td></tr>`).join('')}
+      </table>
+    </div>` : '';
   const kpi = (n, l) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${esc(l)}</div></div>`;
   const history = (r.body.history || []).slice().reverse();
   _invoices = (ri.ok && ri.body.invoices) ? ri.body.invoices : [];
@@ -355,7 +367,7 @@ async function viewFacturacion() {
         <td>${monthLabel(inv.period)}</td>
         <td>${money(inv.totalDue, inv.currency || cur)}</td>
         <td><span class="chip">${esc(inv.status)}</span></td>
-        <td><button class="ghost small" data-inv="${i}">Ver factura</button></td>
+        <td class="row"><button class="ghost small" data-inv="${i}">Ver</button><button class="ghost small" data-pdf="${esc(inv._id)}" data-num="${esc(inv.invoiceNumber || '')}">PDF</button></td>
       </tr>`).join('')}</tbody></table>
     </div>` : '';
 
@@ -370,6 +382,7 @@ async function viewFacturacion() {
       ${kpi(c.billableCount, 'Transacciones facturables')}
       ${kpi(money(c.billableVolume, cur), 'Volumen facturable')}
     </div>
+    ${tarifaCard}
     ${invoicesCard}
     <div class="card">
       <strong>Historial (últimos 6 meses)</strong>
@@ -382,6 +395,18 @@ async function viewFacturacion() {
       </tr>`).join('')}</tbody></table>
     </div>`;
   document.querySelectorAll('[data-inv]').forEach(b => b.onclick = () => renderInvoice(_invoices[Number(b.dataset.inv)]));
+  document.querySelectorAll('[data-pdf]').forEach(b => b.onclick = () => downloadInvoicePdf(b.dataset.pdf, b.dataset.num));
+}
+
+async function downloadInvoicePdf(id, number) {
+  const res = await fetch('/portal/invoices/' + id + '/pdf', { headers: { Authorization: 'Bearer ' + token() } });
+  if (!res.ok) return alert('No se pudo descargar el PDF.');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'factura-' + (number || id) + '.pdf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function renderInvoice(inv) {

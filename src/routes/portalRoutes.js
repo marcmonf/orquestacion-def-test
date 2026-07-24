@@ -307,6 +307,27 @@ router.get('/billing', requirePortalRole('merchant_admin'), async (req, res) => 
   }
 });
 
+// GET /portal/contract — la tarifa/rate-card del PROPIO merchant (precargada por Monetiser)
+router.get('/contract', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const merchant = await Merchant.findOne({ merchantId: req.portalUser.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const cfg = await billingService.resolveConfig(merchant);
+    return res.json({
+      success: true,
+      contract: {
+        source: cfg.source, currency: cfg.currency, taxRateCode: cfg.taxRateCode,
+        monthlyMaintenance: cfg.monthlyMaintenance, perTransactionFee: cfg.perTransactionFee,
+        volumeBps: cfg.volumeBps, perUserFee: cfg.perUserFee, includedUsers: cfg.includedUsers,
+        services: cfg.services || [],
+      },
+    });
+  } catch (err) {
+    console.error('❌ [portal/contract]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // GET /portal/invoices — facturas EMITIDAS (finalizadas) del PROPIO merchant
 router.get('/invoices', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
