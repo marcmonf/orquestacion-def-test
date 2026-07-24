@@ -13,6 +13,8 @@ jest.mock('../../src/models/Merchant', () => require('../helpers/memoryModel')()
 jest.mock('../../src/models/Transaction', () => require('../helpers/memoryModel')());
 jest.mock('../../src/models/PricingPlan', () => require('../helpers/memoryModel')());
 jest.mock('../../src/models/BillingRecord', () => require('../helpers/memoryModel')());
+jest.mock('../../src/models/MerchantContract', () => require('../helpers/memoryModel')());
+jest.mock('../../src/models/TaxRate', () => require('../helpers/memoryModel')());
 
 const Merchant      = require('../../src/models/Merchant');
 const Transaction   = require('../../src/models/Transaction');

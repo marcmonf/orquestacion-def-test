@@ -32,11 +32,30 @@ const billingRecordSchema = new mongoose.Schema({
   subscriptionFee:   { type: Number, default: 0 },   // céntimos
   usageFee:          { type: Number, default: 0 },   // céntimos
   volumeFee:         { type: Number, default: 0 },   // céntimos
-  totalDue:          { type: Number, default: 0 },   // céntimos
+  userFee:           { type: Number, default: 0 },   // céntimos (por usuarios extra)
+  servicesFee:       { type: Number, default: 0 },   // céntimos (módulos/servicios)
+  totalDue:          { type: Number, default: 0 },   // céntimos — BASE imponible (sin impuesto)
+
+  // ── Factura oficial (Bloque 1) ─────────────────────────────
+  lines:       { type: [{ label: String, amount: Number, _id: false }], default: [] },
+  subtotal:    { type: Number, default: 0 },   // base imponible (= totalDue)
+  taxCode:     { type: String, default: '' },  // p. ej. IGIC_GENERAL
+  taxLabel:    { type: String, default: '' },
+  taxPercent:  { type: Number, default: 0 },
+  taxNote:     { type: String, default: '' },  // mención legal (no sujeto / ISP…)
+  taxAmount:   { type: Number, default: 0 },   // céntimos
+  total:       { type: Number, default: 0 },   // céntimos — base + impuesto (a pagar)
+
+  // Snapshots inmutables del emisor y del receptor en el momento de emitir.
+  issuer:      { type: mongoose.Schema.Types.Mixed, default: {} },
+  recipient:   { type: mongoose.Schema.Types.Mixed, default: {} },
 
   status:      { type: String, enum: ['finalized', 'paid'], default: 'finalized' },
   finalizedAt: { type: Date, default: Date.now },
   finalizedBy: { type: String, default: null },
+  // Envío por email
+  sentAt:      { type: Date, default: null },
+  sentTo:      { type: String, default: null },
 
   createdAt:   { type: Date, default: Date.now },
   updatedAt:   { type: Date, default: Date.now },

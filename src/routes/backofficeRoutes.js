@@ -9,7 +9,14 @@ const BackofficeUser = require('../models/BackofficeUser');
 const Merchant       = require('../models/Merchant');
 const MerchantUser   = require('../models/MerchantUser');
 const PricingPlan    = require('../models/PricingPlan');
+const CompanyProfile = require('../models/CompanyProfile');
+const TaxRate        = require('../models/TaxRate');
+const MerchantContract = require('../models/MerchantContract');
 const billingService = require('../services/billingService');
+const { getCompany } = require('../services/companyService');
+const { getTaxRates } = require('../services/taxService');
+const { renderInvoicePdf } = require('../services/invoicePdf');
+const mailer = require('../services/mailer');
 const { PLANS, defaultsFor } = require('../utils/pricingDefaults');
 const { toPublicUser }         = require('../utils/publicUser');
 const { generateTempPassword } = require('../utils/tempPassword');
@@ -830,6 +837,150 @@ router.post('/billing/:merchantId/finalize', requireRole('superadmin'), async (r
     console.error('❌ [backoffice/billing finalize]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMISOR (Sociedad), IMPUESTOS (IGIC) y CONTRATOS — solo superadmin (M7 Bloque 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COMPANY_FIELDS = ['legalName', 'tradeName', 'taxId', 'address', 'email', 'phone', 'iban', 'taxRegime', 'invoiceSeries', 'logoDataUrl', 'footerNotes'];
+
+// GET/PUT datos de la Sociedad emisora
+router.get('/company', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, company: await getCompany() }); }
+  catch (err) { console.error('❌ [backoffice/company GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.put('/company', requireRole('superadmin'), async (req, res) => {
+  try {
+    const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+    COMPANY_FIELDS.forEach(k => { if (req.body[k] !== undefined) set[k] = req.body[k]; });
+    const doc = await CompanyProfile.findOneAndUpdate({ key: 'default' }, { $set: set, $setOnInsert: { key: 'default' } }, { new: true, upsert: true });
+    return res.json({ success: true, company: doc });
+  } catch (err) { console.error('❌ [backoffice/company PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET tipos impositivos / PUT uno
+router.get('/tax', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, rates: await getTaxRates() }); }
+  catch (err) { console.error('❌ [backoffice/tax GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.put('/tax/:code', requireRole('superadmin'), async (req, res) => {
+  try {
+    const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+    if (req.body.label !== undefined)     set.label = String(req.body.label);
+    if (req.body.legalNote !== undefined) set.legalNote = String(req.body.legalNote);
+    if (req.body.active !== undefined)    set.active = !!req.body.active;
+    if (req.body.percent !== undefined) {
+      const p = Number(req.body.percent);
+      if (!Number.isFinite(p) || p < 0) return res.status(400).json({ success: false, error: 'invalid_percent' });
+      set.percent = p;
+    }
+    const doc = await TaxRate.findOneAndUpdate({ code: req.params.code }, { $set: set, $setOnInsert: { code: req.params.code } }, { new: true, upsert: true });
+    return res.json({ success: true, rate: doc });
+  } catch (err) { console.error('❌ [backoffice/tax PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET/PUT contrato (rate-card) de un merchant
+router.get('/merchants/:merchantId/contract', requireRole('superadmin'), async (req, res) => {
+  try {
+    const contract = await MerchantContract.findOne({ merchantId: req.params.merchantId }).lean();
+    return res.json({ success: true, merchantId: req.params.merchantId, contract: contract || null });
+  } catch (err) { console.error('❌ [backoffice/contract GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.put('/merchants/:merchantId/contract', requireRole('superadmin'), async (req, res) => {
+  const NUM = ['monthlyMaintenance', 'perTransactionFee', 'volumeBps', 'perUserFee', 'includedUsers'];
+  try {
+    const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+    for (const k of NUM) {
+      if (req.body[k] === undefined) continue;
+      const n = Number(req.body[k]);
+      if (!Number.isFinite(n) || n < 0) return res.status(400).json({ success: false, error: `invalid_${k}` });
+      set[k] = Math.round(n);
+    }
+    if (req.body.currency !== undefined)    set.currency = String(req.body.currency).toUpperCase().slice(0, 3);
+    if (req.body.taxRateCode !== undefined) set.taxRateCode = String(req.body.taxRateCode);
+    if (req.body.active !== undefined)      set.active = !!req.body.active;
+    if (req.body.billing !== undefined && typeof req.body.billing === 'object') set.billing = req.body.billing;
+    if (Array.isArray(req.body.services)) {
+      set.services = req.body.services.map(s => ({ code: String(s.code || ''), label: String(s.label || ''), monthlyPrice: Math.max(0, Math.round(Number(s.monthlyPrice) || 0)), active: s.active !== false }));
+    }
+    const doc = await MerchantContract.findOneAndUpdate({ merchantId: req.params.merchantId }, { $set: set, $setOnInsert: { merchantId: req.params.merchantId } }, { new: true, upsert: true });
+    return res.json({ success: true, contract: doc });
+  } catch (err) { console.error('❌ [backoffice/contract PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET PDF de una factura (cualquier merchant)
+router.get('/invoices/:invoiceId/pdf', requireRole('superadmin'), async (req, res) => {
+  try {
+    const inv = await billingService.getInvoice(req.params.invoiceId);
+    if (!inv) return res.status(404).json({ success: false, error: 'invoice_not_found' });
+    const pdf = await renderInvoicePdf(inv.toObject ? inv.toObject() : inv);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="factura-${inv.invoiceNumber || inv.period}.pdf"`);
+    return res.send(pdf);
+  } catch (err) { console.error('❌ [backoffice/invoice pdf]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// POST enviar por email una factura (al receptor o a un destinatario dado)
+router.post('/invoices/:invoiceId/send', requireRole('superadmin'), async (req, res) => {
+  try {
+    const inv = await billingService.getInvoice(req.params.invoiceId);
+    if (!inv) return res.status(404).json({ success: false, error: 'invoice_not_found' });
+    const plain = inv.toObject ? inv.toObject() : inv;
+    const to = req.body.to || (plain.recipient && plain.recipient.email);
+    if (!to) return res.status(400).json({ success: false, error: 'no_recipient_email' });
+    const pdf = await renderInvoicePdf(plain);
+    const result = await mailer.sendInvoiceEmail({ to, invoice: plain, pdfBuffer: pdf, companyName: (plain.issuer && plain.issuer.legalName) || '' });
+    if (result.sent) await billingService.markSent(inv._id, to);
+    return res.json({ success: true, ...result, to });
+  } catch (err) { console.error('❌ [backoffice/invoice send]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// POST facturación mensual: finalizar (y opcionalmente enviar) todos los merchants de un período cerrado
+router.post('/billing/run', requireRole('superadmin'), async (req, res) => {
+  const period = (req.body && req.body.period) || req.query.period;
+  if (!/^\d{4}-\d{2}$/.test(period || '')) return res.status(400).json({ success: false, error: 'invalid_period' });
+  try {
+    const now = new Date();
+    if (!billingService.isPeriodClosed(period, now)) return res.status(400).json({ success: false, error: 'period_not_closed' });
+    const send = req.body.send === true || req.query.send === 'true';
+    const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
+    let finalized = 0, already = 0, sent = 0;
+    for (const m of merchants) {
+      const existed = await billingService.getFinalized(m.merchantId, period);
+      const inv = existed || await billingService.finalizeBilling(m, period, req.backofficeUser.email, now);
+      if (existed) already++; else finalized++;
+      if (send) {
+        const plain = inv.toObject ? inv.toObject() : inv;
+        const to = plain.recipient && plain.recipient.email;
+        if (to) {
+          const pdf = await renderInvoicePdf(plain);
+          const r = await mailer.sendInvoiceEmail({ to, invoice: plain, pdfBuffer: pdf, companyName: (plain.issuer && plain.issuer.legalName) || '' });
+          if (r.sent) { await billingService.markSent(inv._id || plain._id, to); sent++; }
+        }
+      }
+    }
+    return res.json({ success: true, period, finalized, already, sent, emailConfigured: mailer.isConfigured() });
+  } catch (err) { console.error('❌ [backoffice/billing run]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET export CSV de facturación de un período (para el ERP)
+router.get('/billing/export', requireRole('superadmin'), async (req, res) => {
+  try {
+    const now = new Date();
+    const period = /^\d{4}-\d{2}$/.test(req.query.period || '') ? req.query.period : billingService.periodOf(now);
+    const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
+    const rows = [['merchantId', 'nombre', 'periodo', 'numeroFactura', 'baseImponible', 'impuesto', 'total', 'moneda', 'finalizada']];
+    for (const m of merchants) {
+      const fin = await billingService.getFinalized(m.merchantId, period);
+      const d = fin ? (fin.toObject ? fin.toObject() : fin) : await billingService.billForMerchant(m, period);
+      rows.push([m.merchantId, (m.name || '').replace(/[",\n]/g, ' '), period, (d.invoiceNumber || ''), (d.subtotal || 0) / 100, (d.taxAmount || 0) / 100, (d.total || 0) / 100, d.currency || 'EUR', fin ? 'si' : 'no']);
+    }
+    const csv = rows.map(r => r.join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="facturacion-${period}.csv"`);
+    return res.send(csv);
+  } catch (err) { console.error('❌ [backoffice/billing export]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -114,6 +114,25 @@ module.exports = function makeMemoryModel() {
       return { deletedCount: 1 };
     },
 
+    // findOneAndUpdate MÍNIMO: soporta $set, $setOnInsert, $inc y upsert (lo que
+    // usan la numeración correlativa y markSent). Devuelve el doc (new:true).
+    async findOneAndUpdate(query = {}, update = {}, opts = {}) {
+      let doc = store.find(d => matches(d, query));
+      if (!doc) {
+        if (!opts.upsert) return null;
+        doc = attachSave({ _id: String(_seq++), createdAt: new Date(), updatedAt: new Date() }, store);
+        Object.entries(query).forEach(([k, v]) => { if (v == null || typeof v !== 'object') doc[k] = v; });
+        if (update.$setOnInsert) Object.assign(doc, update.$setOnInsert);
+        store.push(doc);
+      }
+      const hasOps = Object.keys(update).some(k => k.startsWith('$'));
+      const set = update.$set || (hasOps ? {} : update);
+      Object.assign(doc, set);
+      if (update.$inc) Object.entries(update.$inc).forEach(([k, n]) => { doc[k] = (Number(doc[k]) || 0) + n; });
+      doc.updatedAt = new Date();
+      return { ...doc };
+    },
+
     // aggregate MÍNIMO: soporta $match y $group con _id:null y acumuladores
     // $sum/$avg sobre un campo (lo que usan las analíticas del portal).
     async aggregate(pipeline = []) {

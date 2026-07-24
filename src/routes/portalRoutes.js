@@ -19,6 +19,7 @@ const HierarchyNode = require('../models/HierarchyNode');
 const Transaction   = require('../models/Transaction');
 const Merchant      = require('../models/Merchant');
 const billingService = require('../services/billingService');
+const { renderInvoicePdf } = require('../services/invoicePdf');
 const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
 const { toPublicUser }         = require('../utils/publicUser');
@@ -313,6 +314,21 @@ router.get('/invoices', requirePortalRole('merchant_admin'), async (req, res) =>
     return res.json({ success: true, invoices });
   } catch (err) {
     console.error('❌ [portal/invoices]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /portal/invoices/:invoiceId/pdf — descargar el PDF de una factura PROPIA
+router.get('/invoices/:invoiceId/pdf', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const inv = await billingService.getInvoice(req.params.invoiceId, req.portalUser.merchantId);
+    if (!inv) return res.status(404).json({ success: false, error: 'invoice_not_found' });
+    const pdf = await renderInvoicePdf(inv.toObject ? inv.toObject() : inv);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="factura-${inv.invoiceNumber || inv.period}.pdf"`);
+    return res.send(pdf);
+  } catch (err) {
+    console.error('❌ [portal/invoice pdf]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
