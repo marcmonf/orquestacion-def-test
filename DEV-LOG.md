@@ -235,7 +235,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **221/230 pasan** (era 119/128 hasta M4, 128/137 tras S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **225/234 pasan** (era 119/128 hasta M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -644,10 +644,36 @@ la rama de M6 se fusionó a `main`.
   idempotencia, guarda de período no cerrado, inmutabilidad, aislamiento de facturas.
   Suite **221/230**. `openapi.yaml` v2.6.0 (rutas + schema `Invoice`).
 
-**Fase 3 (pendiente):** cobro real — integración con Stripe Billing o Paddle (necesita
-credenciales + decidir proveedor). El `status: 'paid'` del BillingRecord se activará ahí.
-Limitación anotada de M6 Fase 4 relevante aquí: las transacciones no llevan referencia
-de nodo, así que el billing es por merchant, no por nodo.
+**Bloque 1 ✅ COMPLETADO (20 jul 2026) — facturación real (sustituye la idea de Stripe).**
+Decisión de Marcos: **nada de pasarela de cobro** (Stripe/Paddle). Monetiser **emite la
+factura** (solo LO NUESTRO: pasarela + servicios; la adquirencia es informativa — capa
+tecnológica, no payfac), la carga en el perfil del merchant, la envía por email y vosotros
+la descargáis para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA).**
+- **Emisor** (`CompanyProfile`, singleton): NIF, dirección, serie de factura, IGIC, IBAN,
+  logo, pie. `GET/PUT /backoffice/company`.
+- **Impuestos** (`TaxRate` + defaults IGIC 0/3/7/9,5/15%, no sujeto, ISP, exento):
+  `GET /backoffice/tax`, `PUT /backoffice/tax/:code`. Por defecto IGIC general 7% (clientes
+  de Canarias); NO_SUJETO/ISP para Península/UE con mención legal impresa.
+- **Contrato por merchant** (`MerchantContract`): rate-card (mantenimiento, fee/tx, volumen,
+  precio/usuario + incluidos, servicios/módulos) + datos fiscales del receptor + tipo de
+  IGIC. `GET/PUT /backoffice/merchants/:id/contract`. El billing usa el contrato si existe;
+  si no, cae a la tarifa por plan. El merchant ve su tarifa en `GET /portal/contract`.
+- **Factura oficial**: numeración correlativa por serie+año (`InvoiceCounter`, `$inc` atómico,
+  sin huecos), snapshots inmutables de emisor/receptor, IGIC aplicado, **PDF** (`pdfkit`).
+- **Distribución**: email vía **SMTP de Google Workspace** (`nodemailer`, vars `SMTP_*`;
+  sin config hace no-op). Portal: `GET /portal/invoices/:id/pdf`. Backoffice: PDF, enviar
+  email (`POST /invoices/:id/send`), **facturación mensual** (`POST /billing/run` finaliza
+  y opcionalmente envía todos los de un mes cerrado) y **export CSV** para el ERP
+  (`GET /billing/export`).
+- **Deps nuevas**: `pdfkit` + `nodemailer` (node_modules se versiona en este repo — sin
+  `.gitignore`). **Tests nuevos verdes**; suite **225/234**. `openapi.yaml` v2.7.0.
+- **Aviso fiscal**: correcta por construcción, pero la validez legal (campos, **Verifactu/SII**)
+  la confirma el asesor. Configurable para adaptarlo.
+
+**Pendiente (opcional, futuro):** enganche directo con el ERP (si llegara el caso). El
+`status: 'paid'` del BillingRecord queda reservado para cuando el ERP confirme el cobro.
+Limitación de M6 Fase 4 relevante: las transacciones no llevan referencia de nodo, así que
+el billing es por merchant, no por nodo.
 
 ---
 
@@ -721,6 +747,9 @@ de nodo, así que el billing es por merchant, no por nodo.
 | `RL_PORTAL_LOGIN_MAX` | **(M6)** Intentos de login del portal por ventana (default: 10) |
 | `RL_PORTAL_LOGIN_WINDOW_MS` | **(M6)** Ventana del rate limit del login del portal (default: 900000 = 15 min) |
 | `PORTAL_JWT_EXPIRES` | **(M6)** Caducidad del JWT del portal (default: `12h`) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | **(M7 Bloque 1)** SMTP de Google Workspace para enviar facturas (`smtp.gmail.com` / `587` / `false`). Sin configurar, el email hace no-op. |
+| `SMTP_USER` / `SMTP_PASS` | **(M7 Bloque 1)** Cuenta de Workspace + contraseña de aplicación. |
+| `SMTP_FROM` | **(M7 Bloque 1)** Remitente de los emails (por defecto `SMTP_USER`). |
 
 ### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
 
@@ -805,6 +834,8 @@ GET   /portal/analytics/summary                → KPIs del PROPIO merchant (imp
 GET   /portal/billing                          → Factura-borrador del mes + historial (merchant_admin)
 GET   /portal/billing/:period                  → Factura del período: finalizada (inmutable) o borrador (merchant_admin)
 GET   /portal/invoices                         → Facturas emitidas del PROPIO merchant (merchant_admin)
+GET   /portal/invoices/:invoiceId/pdf          → Descargar el PDF de una factura propia (merchant_admin)
+GET   /portal/contract                         → Tarifa (rate-card) precargada del PROPIO merchant (merchant_admin)
 ```
 
 Facturación/precios internos (superadmin, sesión backoffice):
@@ -815,6 +846,14 @@ PUT   /backoffice/pricing/:plan                 → Fijar/editar precios de un p
 GET   /backoffice/billing?period=YYYY-MM         → Factura de todos los merchants (+ finalized por merchant) + gran total
 POST  /backoffice/billing/:merchantId/finalize   → Finalizar (congelar) la factura de un merchant (período cerrado)
 POST  /backoffice/billing/finalize               → Finalizar todos los merchants de un período cerrado
+
+GET/PUT /backoffice/company                      → Datos de la Sociedad emisora (M7 Bloque 1)
+GET   /backoffice/tax  · PUT /backoffice/tax/:code → Tipos de IGIC configurables
+GET/PUT /backoffice/merchants/:id/contract       → Contrato/rate-card por merchant
+GET   /backoffice/invoices/:id/pdf               → Descargar el PDF de cualquier factura
+POST  /backoffice/invoices/:id/send              → Enviar la factura por email + marcar enviada
+POST  /backoffice/billing/run                    → Facturación mensual: finalizar (y opc. enviar) un mes cerrado
+GET   /backoffice/billing/export?period=          → Export CSV de un período para el ERP
 ```
 
 Portal VISUAL (SPA): servido en **`/portal-app`** (`https://.../portal-app`). Consume solo `/portal/*`.
@@ -883,6 +922,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ```
 
 ---
+
+*Sesión 20 julio 2026 (M7 Bloque 1 — facturación real, IMPLEMENTADO de forma autónoma) — Marcos redefinió la Fase 3: **nada de Stripe/Paddle**; Monetiser emite la factura de LO NUESTRO (pasarela + servicios; la adquirencia es informativa, capa tecnológica no payfac), la carga en el perfil del merchant, la envía por email y ellos la descargan para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA)** — modelado con tipos IGIC (7% general por defecto) + no sujeto/ISP para Península/UE. Construido completo y autónomo (Marcos salió de casa): CompanyProfile (emisor), TaxRate (IGIC configurable), MerchantContract (rate-card por merchant: mantenimiento + fee/tx + volumen + usuarios + servicios), factura oficial con numeración correlativa (InvoiceCounter, $inc atómico) + snapshots + PDF (pdfkit) + email (nodemailer sobre SMTP de Google Workspace, vars SMTP_*), y distribución (portal descarga PDF + ve su tarifa; backoffice: PDF, enviar, facturación mensual `POST /billing/run`, export CSV para ERP). El billing usa el contrato o cae a plan. **Tests nuevos verdes** (billing por contrato con IGIC, factura oficial, humo PDF); suite **225/234**. `openapi.yaml` v2.7.0, DEV-LOG y CLAUDE.md. Deps nuevas pdfkit+nodemailer (este repo versiona node_modules, sin .gitignore — el commit del backend fueron ~1020 archivos por eso). **Aviso fiscal**: correcta por construcción; validez legal (Verifactu/SII) la confirma el asesor. **Qué desplegar/probar (cuando despliegues):** ENV `SMTP_HOST/PORT/USER/PASS/FROM` (Google Workspace) para el email; rellena `PUT /backoffice/company` (datos de la Sociedad) y `PUT /backoffice/merchants/:id/contract` (tarifa); luego el portal muestra la tarifa y las facturas con descarga PDF. **Sigue pendiente desplegar M6+M7 (todo en `main`, no es prod).** Siguiente: Bloque 2 (adquirentes + coste real por transacción) — Marcos dijo que continuáramos con él tras el Bloque 1.*
 
 *Sesión 20 julio 2026 (M7 Fase 2 — cierre/finalización de facturas, IMPLEMENTADO) — Continuación de M7 en `main`. Se puede FINALIZAR (congelar) la factura de un período CERRADO: `BillingRecord` persiste nº de factura + snapshot de precios + cifras congeladas; `finalizeBilling` es idempotente (no recalcula ni duplica) y rechaza el mes en curso/futuro (`period_not_closed`). Una factura finalizada es inmutable aunque cambien transacciones antiguas. Portal: `GET /portal/invoices` + `GET /portal/billing/:period` (finalizada o borrador) + sección "Facturas emitidas" con **factura imprimible** (window.print → PDF). Backoffice: finalizar uno o todos los merchants de un período. **9 tests nuevos verdes** (idempotencia, guarda de período, inmutabilidad, aislamiento de facturas); suite **221/230**. `openapi.yaml` v2.6.0 (schema `Invoice`). **Sigue pendiente desplegar/probar M6+M7 en el servidor.** Pendiente M7: Fase 3 (cobro real Stripe/Paddle, activa `status:'paid'`). Marcos comentó que después dirá "unos extras" a hacer.*
 

@@ -2,12 +2,21 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.6.0
+  version: 2.7.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.7.0 (20 jul 2026)** — M7 Bloque 1 (facturación real). Factura solo LO NUESTRO
+    (pasarela + servicios); la adquirencia es informativa (capa tecnológica, no payfac).
+    Sociedad en Canarias ⇒ **IGIC** (no IVA). Facturas oficiales con numeración
+    correlativa por serie+año, snapshots de emisor/receptor y PDF. Portal:
+    `GET /portal/contract` (tarifa precargada) y `GET /portal/invoices/{invoiceId}/pdf`
+    (descarga). El superadmin configura emisor, IGIC y contrato por merchant, y emite/
+    envía facturas por email (Google Workspace) desde `/backoffice/*` (plano backoffice,
+    no en esta spec). El cobro lo hace el ERP; aquí solo se genera y distribuye.
 
     **v2.6.0 (20 jul 2026)** — M7 Fase 2 (cierre/finalización de facturas). Una
     factura de un período CERRADO se puede FINALIZAR (congelar): queda inmutable
@@ -1492,6 +1501,58 @@ paths:
                     items: { $ref: '#/components/schemas/Invoice' }
         '401': { description: Sin token o token inválido. }
         '403': { description: Rol insuficiente o password sin cambiar. }
+
+  /portal/contract:
+    get:
+      tags: [Portal]
+      summary: Tarifa (rate-card) del PROPIO merchant
+      operationId: portalContract
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        La tarifa que Monetiser ha precargado para este merchant (pasarela + servicios).
+        Solo `merchant_admin`. Read-only. La adquirencia NO va aquí (es informativa).
+      responses:
+        '200':
+          description: Rate-card del merchant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  contract:
+                    type: object
+                    properties:
+                      source:             { type: string, enum: [contract, plan] }
+                      currency:           { type: string }
+                      taxRateCode:        { type: string }
+                      monthlyMaintenance: { type: integer, description: Céntimos/mes. }
+                      perTransactionFee:  { type: integer, description: Céntimos por transacción. }
+                      volumeBps:          { type: integer, description: Puntos básicos sobre volumen. }
+                      perUserFee:         { type: integer, description: Céntimos por usuario adicional. }
+                      includedUsers:      { type: integer }
+                      services:           { type: array, items: { type: object } }
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
+
+  /portal/invoices/{invoiceId}/pdf:
+    get:
+      tags: [Portal]
+      summary: Descargar el PDF de una factura PROPIA
+      operationId: portalInvoicePdf
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      parameters:
+        - { name: invoiceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: PDF de la factura.
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { description: Sin token o token inválido. }
+        '404': { description: No existe en este merchant (`invoice_not_found`). }
 
   /portal/hierarchy:
     get:
