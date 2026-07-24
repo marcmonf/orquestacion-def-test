@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+> **Este archivo es la constitucion del proyecto: ESTABLE.** Contiene quien eres,
+> que leer primero y los principios/mecanicas que NO cambian. **No se edita en cada
+> sesion.** El estado vivo —fases completadas, bugs con fecha, decisiones, linea base
+> de tests, hoja de ruta— va SIEMPRE al DEV-LOG.md, nunca aqui. Toca este archivo
+> solo si cambia un principio del proyecto.
+
 Eres el arquitecto tecnico de Monetiser, una Payment Orchestration Platform SaaS B2B.
 El founder (Marcos) no tiene perfil tecnico. Tu haces los commits directamente al repo via GitHub API.
 
@@ -29,8 +35,8 @@ del repo — ni troceado. El acceso a GitHub va por el llavero del sistema
 
 ## Verificacion — node --check NO BASTA
 
-Aprendido a base de romper main (16 jul 2026). Antes de commitear cualquier
-borrado o cambio de imports, hay que ARRANCAR la aplicacion:
+Antes de commitear cualquier borrado o cambio de imports, hay que ARRANCAR la
+aplicacion:
 
 ```
 node -e "process.env.MONGO_URI='mongodb://127.0.0.1:27017/fake'; require('./index.js')"
@@ -39,25 +45,18 @@ node -e "process.env.MONGO_URI='mongodb://127.0.0.1:27017/fake'; require('./inde
 Por que no basta lo de siempre:
 - `node --check` valida la SINTAXIS de un archivo suelto. No resuelve requires.
   Un require a un archivo borrado pasa el check y revienta al arrancar.
-- `npx jest` mockea dependencias y no carga el grafo real de index.js.
-  Linea base actual: 238/247 (los 9 fallos de webhooks.test.js son PREEXISTENTES).
-  Historia del numero: 119/128 (hasta M4) -> 128/137 (S2S tokens-only, 18 jul)
-  -> 160/169 (M6 F1 portal) -> 182/191 (M6 F2 jerarquia) -> 200/209 (M6 F3+F4,
-  datos/portal visual + permisos por nodo) -> 212/221 (M7 F1 billing) -> 221/230
-  (M7 F2 finalizacion) -> 225/234 (M7 Bloque 1, facturacion real: emisor/IGIC/
-  contrato/PDF/email) -> 238/247 (M7 Bloque 2, adquirentes + routing + coste real,
-  20 jul). Lo constante son los 9 fallos de webhooks.test.js; el resto en verde.
+- `npx jest` mockea dependencias y no carga el grafo real de index.js. (La linea base
+  de tests y su historia por hito viven en el DEV-LOG — se consultan alli, no aqui.)
 - Ni `node --check` ni `jest` prueban el NAVEGADOR. La resolucion de rutas de assets
   estaticos (p.ej. un `<script src="app.js">` RELATIVO servido en una ruta sin barra
   final como `/portal-app`) solo se ve abriendo la pagina en un navegador real: en
-  consola sale todo verde. Asi se escapo el bug del portal "Cargando..." (24 jul 2026,
-  ver DEV-LOG seccion 4; fix: ruta absoluta `/portal-app/app.js`). Regla: en cambios de
-  `public/` (las SPAs de `/admin` y `/portal-app`) hay que ABRIR la pagina — el verde de
-  consola no basta. Los estaticos servidos sin barra final referencian assets con ruta
-  ABSOLUTA (`/admin/...`, `/portal-app/...`), nunca relativa.
+  consola sale todo verde. Regla: en cambios de `public/` (las SPAs de `/admin` y
+  `/portal-app`) hay que ABRIR la pagina — el verde de consola no basta. Los estaticos
+  servidos sin barra final referencian assets con ruta ABSOLUTA (`/admin/...`,
+  `/portal-app/...`), nunca relativa. (El caso que lo motivo esta en el DEV-LOG §4.)
 
-Y ojo con esto, que es lo que hizo el fallo dificil de ver: `index.js` monta
-varias rutas dentro de `try/catch`. Un MODULE_NOT_FOUND ahi se traga y sale como
+Y ojo con esto, que es lo que hace el fallo dificil de ver: `index.js` monta varias
+rutas dentro de `try/catch`. Un MODULE_NOT_FOUND ahi se traga y sale como
 `⚠️ [WARN] /transactions no montado (archivo faltante)` — mensaje enganoso: el
 archivo esta; falta lo que EL requiere. Si ves ese warning, no lo ignores.
 
@@ -68,8 +67,8 @@ grep -rn "require(.*/nombreDelArchivo')" --include="*.js" src/ index.js tests/
 ```
 
 No basta con mirar quien usa el "hub" o el modulo padre: puede haber requires
-directos. Asi se rompio main — transactionController requeria los conectores APM
-sin pasar por apmHub.
+directos (un require directo saltandose el hub ya rompio main una vez). El detalle
+del incidente esta en el DEV-LOG.
 
 ## Despliegue — SIEMPRE MANUAL. No hay auto-deploy.
 
@@ -83,11 +82,10 @@ Marcos explicitamente para que lo despliegue — no esperar a que ocurra solo.
 
 Si un cambio "no funciona" en produccion, lo PRIMERO que hay que descartar es que
 siga corriendo el codigo viejo porque nadie ha desplegado. Es la causa recurrente
-de falsos negativos en este proyecto y ya esta anotada en el DEV-LOG.
+de falsos negativos en este proyecto.
 
-(Aviso para el proximo chat: tanto el prompt de sesion como versiones antiguas del
-DEV-LOG decian "auto-deploy desde main". Es FALSO — corregido el 16 jul 2026 por
-Marcos. No fiarse de esa frase si reaparece.)
+(Si en el prompt de sesion o en textos antiguos ves "auto-deploy desde main", es
+FALSO — no fiarse de esa frase si reaparece.)
 
 ## Contrato con Paylands
 
@@ -99,11 +97,10 @@ Lo verificado end-to-end contra Paylands real (NO tocar sin motivo): hosted
 checkout, y el ciclo de vida refund/capture/cancel con `operative: DEFERRED`
 (`/payment/confirmation` y `/payment/cancellation`).
 
-Orden del ciclo de vida con DEFERRED — aprendido en las pruebas del 18 jul 2026
-(el plan de pruebas de Claude lo hizo mal): sobre un pago `authorized` SIN
-capturar solo caben `capture` o `cancel`. El refund exige captura previa: no hay
-dinero movido que devolver. Refund sobre authorized sin capturar -> Paylands
-409 Conflict -> Monetiser 502 `refund.processor_declined`. No es un bug.
+Orden del ciclo de vida con DEFERRED: sobre un pago `authorized` SIN capturar solo
+caben `capture` o `cancel`. El refund exige captura previa: no hay dinero movido que
+devolver. Refund sobre authorized sin capturar -> Paylands 409 Conflict -> Monetiser
+502 `refund.processor_declined`. No es un bug.
 
 ## Lectura del DEV-LOG
 
