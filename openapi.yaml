@@ -2,12 +2,24 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.3.0
+  version: 2.4.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.4.0 (20 jul 2026)** — M6 Fases 3 y 4. **Fase 3 (datos del portal):**
+    `GET /portal/transactions`, `GET /portal/transactions/{paymentId}` y
+    `GET /portal/analytics/summary` — solo lectura, scoped a la sesión (una
+    transacción de otro merchant → 404). Portal visual servido en `/portal-app`
+    (SPA, no forma parte de esta spec de API). **Fase 4 (permisos por nodo):** el
+    JWT del portal lleva ahora `hierarchyNodeId`; un `merchant_admin` asigna un
+    usuario a un nodo con `PATCH /portal/users/{userId}` (`hierarchyNodeId`). Un
+    usuario asignado a un nodo solo ve/gestiona su subárbol en `/portal/hierarchy`
+    (fuera de él: 404 al leer/editar/borrar, 403 `outside_your_scope` al crear/mover).
+    Las transacciones aún NO llevan referencia de nodo, así que su visibilidad
+    sigue siendo a nivel de merchant.
 
     **v2.3.0 (20 jul 2026)** — M6 Fase 2: **jerarquía de tiendas** por tenant.
     Nuevas rutas `/portal/hierarchy` (árbol globalGroup → group → branch → region →
@@ -1295,6 +1307,86 @@ paths:
         '409':
           description: Auto-degradación o auto-desactivación (`cannot_demote_yourself` / `cannot_deactivate_yourself`).
 
+  /portal/transactions:
+    get:
+      tags: [Portal]
+      summary: Listar transacciones del PROPIO merchant (solo lectura)
+      operationId: portalListTransactions
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Listado paginado, scoped a la sesión (nunca de otro merchant). Lectura para
+        cualquier usuario del portal. Filtros por query: `status`, `method`, `from`,
+        `to` (fechas ISO), `q` (busca en paymentId / referencia).
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: method, in: query, schema: { type: string } }
+        - { name: from,   in: query, schema: { type: string, format: date-time } }
+        - { name: to,     in: query, schema: { type: string, format: date-time } }
+        - { name: q,      in: query, schema: { type: string } }
+        - { name: page,   in: query, schema: { type: integer, default: 1 } }
+        - { name: limit,  in: query, schema: { type: integer, default: 20 } }
+      responses:
+        '200':
+          description: Página de transacciones del merchant de la sesión.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  page:    { type: integer }
+                  limit:   { type: integer }
+                  total:   { type: integer }
+                  transactions:
+                    type: array
+                    items: { $ref: '#/components/schemas/PortalTransaction' }
+        '401':
+          description: Sin token o token inválido.
+        '403':
+          description: Password sin cambiar (`password_change_required`).
+
+  /portal/transactions/{paymentId}:
+    get:
+      tags: [Portal]
+      summary: Detalle de una transacción del PROPIO merchant
+      operationId: portalGetTransaction
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Transacción.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  transaction: { $ref: '#/components/schemas/PortalTransaction' }
+        '401':
+          description: Sin token o token inválido.
+        '404':
+          description: No existe en este merchant (`transaction_not_found`) — incluye el caso cross-tenant.
+
+  /portal/analytics/summary:
+    get:
+      tags: [Portal]
+      summary: KPIs del PROPIO merchant
+      operationId: portalAnalyticsSummary
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: Métricas agregadas del merchant de la sesión. Importes en céntimos.
+      responses:
+        '200':
+          description: Resumen de métricas.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalAnalyticsSummary' }
+        '401':
+          description: Sin token o token inválido.
+
   /portal/hierarchy:
     get:
       tags: [Portal]
@@ -1304,7 +1396,9 @@ paths:
       security: [{ PortalBearer: [] }]
       description: |
         Lista plana (con `parentId`) de los nodos del árbol del merchant de la
-        sesión. Lectura permitida a cualquier usuario del portal.
+        sesión. Lectura permitida a cualquier usuario del portal. **Permisos por
+        nodo (Fase 4):** si el usuario está asignado a un nodo (`hierarchyNodeId`),
+        solo se devuelve su subárbol.
       responses:
         '200':
           description: Nodos del merchant de la sesión.
@@ -1354,6 +1448,8 @@ paths:
           description: Sin token o token inválido.
         '403':
           description: Rol insuficiente o password sin cambiar.
+        '403':
+          description: Rol insuficiente, password sin cambiar, o crear fuera del subárbol asignado (`outside_your_scope`).
         '404':
           description: El `parentId` no existe en este merchant (`parent_not_found`) — incluye el caso cross-tenant.
 
@@ -1389,9 +1485,9 @@ paths:
         '401':
           description: Sin token o token inválido.
         '403':
-          description: Rol insuficiente o password sin cambiar.
+          description: Rol insuficiente, password sin cambiar, o mover fuera del subárbol asignado (`outside_your_scope`).
         '404':
-          description: No existe en este merchant (`node_not_found` / `parent_not_found`).
+          description: No existe en este merchant o fuera de tu subárbol (`node_not_found` / `parent_not_found`).
     delete:
       tags: [Portal]
       summary: Borrar un nodo de jerarquía del PROPIO merchant
@@ -1416,7 +1512,7 @@ paths:
         '403':
           description: Rol insuficiente o password sin cambiar.
         '404':
-          description: No existe en este merchant (`node_not_found`).
+          description: No existe en este merchant o fuera de tu subárbol (`node_not_found`).
         '409':
           description: El nodo tiene hijos (`node_has_children`).
 
@@ -2356,6 +2452,7 @@ components:
           enum: [merchant_admin, merchant_operator, merchant_viewer]
         active:             { type: boolean }
         mustChangePassword: { type: boolean }
+        hierarchyNodeId:    { type: string, nullable: true, description: Nodo de jerarquía al que está restringido (Fase 4); null = ve todo su merchant. }
         lastLoginAt:        { type: string, format: date-time, nullable: true }
         createdAt:          { type: string, format: date-time }
 
@@ -2409,6 +2506,12 @@ components:
           type: string
           enum: [merchant_admin, merchant_operator, merchant_viewer]
         active: { type: boolean }
+        hierarchyNodeId:
+          type: string
+          nullable: true
+          description: |
+            (Fase 4) Asigna el usuario a un nodo de jerarquía del PROPIO merchant
+            (debe existir; si no, `400 invalid_hierarchy_node`). null lo desasigna.
 
     PortalUserCreateResponse:
       type: object
@@ -2455,3 +2558,32 @@ components:
         code:     { type: string, nullable: true }
         active:   { type: boolean }
         parentId: { type: string, nullable: true, description: 'Nuevo padre (mismo merchant, nivel superior); null para hacerlo raíz.' }
+
+    # ── Datos del portal (M6 Fase 3) ──────────────────────────────────────
+    PortalTransaction:
+      type: object
+      description: Proyección de una transacción para el portal (solo campos no sensibles).
+      properties:
+        paymentId:         { type: string }
+        merchantId:        { type: string }
+        amount:            { type: integer, description: Importe en céntimos. }
+        currency:          { type: string }
+        status:            { type: string }
+        method:            { type: string }
+        processor:         { type: string, nullable: true }
+        cardBrand:         { type: string, nullable: true }
+        issuerCountry:     { type: string, nullable: true }
+        merchantReference: { type: string, nullable: true }
+        createdAt:         { type: string, format: date-time }
+
+    PortalAnalyticsSummary:
+      type: object
+      description: KPIs del merchant de la sesión. Importes en céntimos.
+      properties:
+        success:              { type: boolean, const: true }
+        totalTransactions:    { type: integer }
+        approvedTransactions: { type: integer }
+        declinedTransactions: { type: integer }
+        approvalRate:         { type: number, description: Porcentaje 0–100. }
+        totalVolume:          { type: integer, description: Volumen aprobado en céntimos. }
+        averageTicket:        { type: integer, description: Ticket medio aprobado en céntimos. }
