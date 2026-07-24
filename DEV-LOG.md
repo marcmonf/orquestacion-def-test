@@ -235,7 +235,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **225/234 pasan** (era 119/128 hasta M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **238/247 pasan** (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -670,10 +670,37 @@ la descargáis para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA).**
 - **Aviso fiscal**: correcta por construcción, pero la validez legal (campos, **Verifactu/SII**)
   la confirma el asesor. Configurable para adaptarlo.
 
-**Pendiente (opcional, futuro):** enganche directo con el ERP (si llegara el caso). El
-`status: 'paid'` del BillingRecord queda reservado para cuando el ERP confirme el cobro.
-Limitación de M6 Fase 4 relevante: las transacciones no llevan referencia de nodo, así que
-el billing es por merchant, no por nodo.
+**Bloque 2 ✅ COMPLETADO (20 jul 2026) — adquirentes + routing multi-adquirente + coste real.**
+Multi-adquirente preparado para N (hoy solo Paylands en vivo). **La adquirencia es INFORMATIVA
+— no se factura** (Bloque 1 factura solo lo nuestro).
+- **Modelos**: `Acquirer` (catálogo global + scheme fees/CSF por tipo de tarjeta que pasa el
+  adquirente), `MerchantAcquirer` (ficha por merchant con margen ICH++ negociado —
+  markup+fixed, on-us reservado, isDefault/priority), `MerchantRoutingRule` (routing estático:
+  BIN routing + criterios en AND), `InterchangeRate` (tablas VISA/MC; defaults EEA consumer con
+  topes regulados reales 0,20%/0,30% + placeholders comercial/intl). `cardContext` normaliza
+  scheme/cardType/región desde la metadata de Paylands.
+- **Servicios**: `acquirerService` (catálogo, fichas, `resolveRouting`: 1ª regla que casa → si
+  ninguna, adquirente por defecto). `costService` (coste efectivo = interchange + scheme fees +
+  margen adquirente + fee pasarela; media del período — el "número grande" — con **disclaimer**:
+  aproximado, lo fijan las marcas).
+- **Endpoints**: portal (`merchant_admin`): `GET/PUT/DELETE /portal/acquirers[/:code]`,
+  `GET/PUT /portal/routing`, `POST /portal/routing/simulate`, `GET /portal/costs`. Backoffice
+  (superadmin): `GET/PUT /backoffice/acquirers[/:code]` (catálogo + CSF), `GET/PUT
+  /backoffice/interchange[...]` (tablas VISA/MC). El merchant pone su margen y su routing; el
+  superadmin mantiene CSF e interchange.
+- **Portal visual**: pestañas **Adquirentes** (fichas + margen + routing + simulador) y
+  **Coste real** (el número grande + tasa efectiva + desglose por transacción + disclaimer).
+- **Tests (13 nuevos verdes)**: coste, routing, endpoints con aislamiento A/B. Suite **238/247**.
+  `openapi.yaml` v2.8.0.
+- **Limitación v1 anotada**: el routing a N adquirentes en el flujo de pago VIVO llega cuando
+  exista un 2º conector real (hoy Paylands procesa todo); la detección de on-us necesita datos
+  que aún no tenemos con fiabilidad (el campo queda listo).
+
+**M7 COMPLETO** (Fases 1-2 + Bloques 1-2). **Pendiente (opcional, futuro):** enganche directo
+con el ERP; `status: 'paid'` del BillingRecord reservado para cuando el ERP confirme el cobro;
+un 2º conector de adquirente para activar el routing real; base de BINes/interchange más
+completa que las tablas de arranque. Limitación de M6 Fase 4 relevante: las transacciones no
+llevan referencia de nodo, así que billing y coste son por merchant, no por nodo.
 
 ---
 
@@ -836,6 +863,12 @@ GET   /portal/billing/:period                  → Factura del período: finaliz
 GET   /portal/invoices                         → Facturas emitidas del PROPIO merchant (merchant_admin)
 GET   /portal/invoices/:invoiceId/pdf          → Descargar el PDF de una factura propia (merchant_admin)
 GET   /portal/contract                         → Tarifa (rate-card) precargada del PROPIO merchant (merchant_admin)
+
+GET   /portal/acquirers                         → Catálogo + fichas de adquirente del merchant (merchant_admin)
+PUT/DELETE /portal/acquirers/:code              → Crear/editar (margen ICH++) / borrar ficha (merchant_admin)
+GET/PUT /portal/routing                         → Reglas de routing estático (BIN routing) (merchant_admin)
+POST  /portal/routing/simulate                  → ¿A qué adquirente iría esta tarjeta? (merchant_admin)
+GET   /portal/costs                             → Coste real estimado por transacción + disclaimer (merchant_admin)
 ```
 
 Facturación/precios internos (superadmin, sesión backoffice):
@@ -854,6 +887,9 @@ GET   /backoffice/invoices/:id/pdf               → Descargar el PDF de cualqui
 POST  /backoffice/invoices/:id/send              → Enviar la factura por email + marcar enviada
 POST  /backoffice/billing/run                    → Facturación mensual: finalizar (y opc. enviar) un mes cerrado
 GET   /backoffice/billing/export?period=          → Export CSV de un período para el ERP
+
+GET/PUT /backoffice/acquirers[/:code]            → Catálogo de adquirentes + scheme fees (CSF) (M7 Bloque 2)
+GET/PUT /backoffice/interchange[/:scheme/:cardType/:region] → Tablas de interchange VISA/MC
 ```
 
 Portal VISUAL (SPA): servido en **`/portal-app`** (`https://.../portal-app`). Consume solo `/portal/*`.
@@ -922,6 +958,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ```
 
 ---
+
+*Sesión 20 julio 2026 (M7 Bloque 2 — adquirentes + coste real, IMPLEMENTADO de forma autónoma) — Continuación en `main`. Multi-adquirente preparado para N (hoy solo Paylands vivo). La adquirencia es INFORMATIVA (no se factura). Construido: catálogo `Acquirer` (+ scheme fees/CSF que pasa el adquirente), ficha `MerchantAcquirer` (margen ICH++ negociado por merchant), routing estático `MerchantRoutingRule` (BIN routing) con resolver (1ª regla que casa → si ninguna, default), tablas `InterchangeRate` (defaults EEA regulados reales + placeholders), y el **motor de coste real** (`costService`): interchange + scheme fees + margen adquirente + fee pasarela = coste efectivo por transacción, con **disclaimer** (aproximado, lo fijan las marcas VISA/MC). Portal (merchant_admin): pestañas Adquirentes (fichas + margen + routing + simulador) y **Coste real** (el "número grande" + tasa efectiva + desglose). Backoffice (superadmin): catálogo+CSF e interchange. **13 tests nuevos verdes** (coste, routing, endpoints + aislamiento); suite **238/247**. `openapi.yaml` v2.8.0. **M7 COMPLETO** (Fases 1-2 + Bloques 1-2). **Limitación v1**: routing a N en el flujo vivo cuando haya 2º conector; on-us cuando haya datos. **Sigue pendiente desplegar M6+M7** (todo en `main`, no es prod). Pendientes de fondo: 2º adquirente real, base de BINes/interchange más completa, enganche ERP.*
 
 *Sesión 20 julio 2026 (M7 Bloque 1 — facturación real, IMPLEMENTADO de forma autónoma) — Marcos redefinió la Fase 3: **nada de Stripe/Paddle**; Monetiser emite la factura de LO NUESTRO (pasarela + servicios; la adquirencia es informativa, capa tecnológica no payfac), la carga en el perfil del merchant, la envía por email y ellos la descargan para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA)** — modelado con tipos IGIC (7% general por defecto) + no sujeto/ISP para Península/UE. Construido completo y autónomo (Marcos salió de casa): CompanyProfile (emisor), TaxRate (IGIC configurable), MerchantContract (rate-card por merchant: mantenimiento + fee/tx + volumen + usuarios + servicios), factura oficial con numeración correlativa (InvoiceCounter, $inc atómico) + snapshots + PDF (pdfkit) + email (nodemailer sobre SMTP de Google Workspace, vars SMTP_*), y distribución (portal descarga PDF + ve su tarifa; backoffice: PDF, enviar, facturación mensual `POST /billing/run`, export CSV para ERP). El billing usa el contrato o cae a plan. **Tests nuevos verdes** (billing por contrato con IGIC, factura oficial, humo PDF); suite **225/234**. `openapi.yaml` v2.7.0, DEV-LOG y CLAUDE.md. Deps nuevas pdfkit+nodemailer (este repo versiona node_modules, sin .gitignore — el commit del backend fueron ~1020 archivos por eso). **Aviso fiscal**: correcta por construcción; validez legal (Verifactu/SII) la confirma el asesor. **Qué desplegar/probar (cuando despliegues):** ENV `SMTP_HOST/PORT/USER/PASS/FROM` (Google Workspace) para el email; rellena `PUT /backoffice/company` (datos de la Sociedad) y `PUT /backoffice/merchants/:id/contract` (tarifa); luego el portal muestra la tarifa y las facturas con descarga PDF. **Sigue pendiente desplegar M6+M7 (todo en `main`, no es prod).** Siguiente: Bloque 2 (adquirentes + coste real por transacción) — Marcos dijo que continuáramos con él tras el Bloque 1.*
 

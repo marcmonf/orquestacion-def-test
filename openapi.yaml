@@ -2,12 +2,21 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.7.0
+  version: 2.8.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.8.0 (20 jul 2026)** — M7 Bloque 2 (adquirentes + coste real). Multi-adquirente
+    (N; hoy solo Paylands en vivo). El merchant gestiona sus **fichas de adquirente**
+    con su margen ICH++ (`GET/PUT/DELETE /portal/acquirers`), su **routing estático**
+    (`GET/PUT /portal/routing`, `POST /portal/routing/simulate`) y ve su **coste real
+    por transacción** (`GET /portal/costs`: interchange + scheme fees + margen adquirente
+    + pasarela, con disclaimer — aproximado, lo fijan las marcas). El superadmin mantiene
+    el catálogo de adquirentes + scheme fees y las tablas de interchange desde `/backoffice/*`
+    (no en esta spec). La adquirencia es INFORMATIVA: no se factura.
 
     **v2.7.0 (20 jul 2026)** — M7 Bloque 1 (facturación real). Factura solo LO NUESTRO
     (pasarela + servicios); la adquirencia es informativa (capa tecnológica, no payfac).
@@ -1553,6 +1562,134 @@ paths:
               schema: { type: string, format: binary }
         '401': { description: Sin token o token inválido. }
         '404': { description: No existe en este merchant (`invoice_not_found`). }
+
+  /portal/acquirers:
+    get:
+      tags: [Portal]
+      summary: Catálogo de adquirentes + fichas del PROPIO merchant
+      operationId: portalAcquirers
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: Multi-adquirente (N). Solo `merchant_admin`. La adquirencia es informativa (no se factura).
+      responses:
+        '200': { description: Catálogo disponible + fichas del merchant. }
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
+
+  /portal/acquirers/{code}:
+    put:
+      tags: [Portal]
+      summary: Crear/editar la ficha de un adquirente (incluye margen ICH++)
+      operationId: portalPutAcquirer
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                markupBps:     { type: integer, description: Margen del adquirente en puntos básicos (45 = 0,45%). }
+                onUsMarkupBps: { type: integer }
+                fixedFee:      { type: integer, description: Céntimos por operación. }
+                isDefault:     { type: boolean }
+                priority:      { type: integer }
+                active:        { type: boolean }
+      responses:
+        '200': { description: Ficha guardada. }
+        '400': { description: Adquirente desconocido (`unknown_acquirer`) o valor inválido. }
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
+    delete:
+      tags: [Portal]
+      summary: Eliminar la ficha de un adquirente
+      operationId: portalDeleteAcquirer
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Eliminada. }
+        '401': { description: Sin token o token inválido. }
+
+  /portal/routing:
+    get:
+      tags: [Portal]
+      summary: Reglas de routing estático del PROPIO merchant
+      operationId: portalRouting
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      responses:
+        '200': { description: Reglas ordenadas por prioridad. }
+        '401': { description: Sin token o token inválido. }
+    put:
+      tags: [Portal]
+      summary: Reemplazar el conjunto de reglas de routing (BIN routing…)
+      operationId: portalPutRouting
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rules:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      acquirerCode:  { type: string }
+                      priority:      { type: integer }
+                      binPrefix:     { type: string }
+                      scheme:        { type: string }
+                      cardType:      { type: string }
+                      issuerCountry: { type: string }
+                      amountMin:     { type: integer, nullable: true }
+                      amountMax:     { type: integer, nullable: true }
+      responses:
+        '200': { description: Reglas guardadas. }
+        '400': { description: Una regla no indica adquirente (`rule_missing_acquirer`). }
+        '401': { description: Sin token o token inválido. }
+
+  /portal/routing/simulate:
+    post:
+      tags: [Portal]
+      summary: Simular a qué adquirente iría una tarjeta
+      operationId: portalRoutingSimulate
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bin:           { type: string }
+                scheme:        { type: string }
+                cardType:      { type: string }
+                issuerCountry: { type: string }
+                amount:        { type: integer, description: Céntimos. }
+      responses:
+        '200': { description: '`{ acquirerCode, matchedRuleId, reason, context }`.' }
+        '401': { description: Sin token o token inválido. }
+
+  /portal/costs:
+    get:
+      tags: [Portal]
+      summary: Coste real estimado por transacción del PROPIO merchant
+      operationId: portalCosts
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Coste efectivo = interchange + scheme fees + margen del adquirente (ICH++) +
+        fee de pasarela. **APROXIMADO** (lo fijan las marcas VISA/MC). Incluye `disclaimer`.
+      parameters: [{ name: period, in: query, schema: { type: string } }]
+      responses:
+        '200':
+          description: Coste del período (media efectiva + muestra por transacción + disclaimer).
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
 
   /portal/hierarchy:
     get:
