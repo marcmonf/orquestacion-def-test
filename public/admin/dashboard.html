@@ -217,6 +217,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <button class="tab-btn" id="tabBtnUsers" style="display:none">Usuarios</button>
     <button class="tab-btn" id="tabBtnMerchants" style="display:none">Merchants</button>
     <button class="tab-btn" id="tabBtnRules" style="display:none">Reglas</button>
+    <button class="tab-btn" id="tabBtnBilling" style="display:none">Facturación</button>
   </div>
 
   <!-- DASHBOARD TAB -->
@@ -315,6 +316,39 @@ main{padding:24px;max-width:1600px;margin:0 auto}
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- BILLING / SOCIEDAD TAB -->
+  <div id="tabBilling" style="display:none;padding:24px;max-width:1000px;margin:0 auto">
+    <div class="users-header">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Datos de tu Sociedad · emisor de las facturas</h2>
+      <button class="btn btn-primary" id="saveCompanyBtn">Guardar datos</button>
+    </div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">Estos datos salen impresos en cada factura que emite Monetiser. Sociedad en Canarias → impuesto IGIC.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="form-field"><label>Razón social</label><input type="text" id="coLegalName" placeholder="Monetiser SL"/></div>
+      <div class="form-field"><label>Nombre comercial</label><input type="text" id="coTradeName" placeholder="Monetiser"/></div>
+      <div class="form-field"><label>CIF / NIF</label><input type="text" id="coTaxId" placeholder="B12345678"/></div>
+      <div class="form-field"><label>Serie de factura</label><input type="text" id="coInvoiceSeries" placeholder="A"/></div>
+      <div class="form-field" style="grid-column:span 2"><label>Dirección</label><input type="text" id="coAddress" placeholder="Calle, nº — Las Palmas de Gran Canaria"/></div>
+      <div class="form-field"><label>Email de facturación</label><input type="email" id="coEmail" placeholder="facturacion@monetiser.com"/></div>
+      <div class="form-field"><label>Teléfono</label><input type="text" id="coPhone" placeholder="+34 …"/></div>
+      <div class="form-field"><label>IBAN</label><input type="text" id="coIban" placeholder="ES…"/></div>
+      <div class="form-field"><label>Régimen fiscal</label><input type="text" id="coTaxRegime" placeholder="IGIC (Canarias)"/></div>
+      <div class="form-field" style="grid-column:span 2"><label>Notas al pie (opcional)</label><input type="text" id="coFooterNotes" placeholder="Texto legal al pie de la factura"/></div>
+    </div>
+    <div id="companyStatus" style="font-size:12px;color:var(--text3);min-height:18px;margin:6px 0 28px"></div>
+
+    <div class="users-header" style="border-top:1px solid var(--border);padding-top:20px">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Emitir factura de un período</h2>
+    </div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Solo se puede emitir sobre un mes ya cerrado. La factura queda numerada y el comercio se la descarga en su portal (pestaña Facturación).</div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div class="form-field" style="margin-bottom:0;min-width:200px"><label>Merchant ID</label><input type="text" id="billMerchantId" placeholder="demo-merchant"/></div>
+      <div class="form-field" style="margin-bottom:0;width:140px"><label>Período (AAAA-MM)</label><input type="text" id="billPeriod" placeholder="2026-06"/></div>
+      <button class="btn btn-primary" id="finalizeInvoiceBtn">Emitir factura</button>
+    </div>
+    <div id="billStatus" style="font-size:13px;margin-top:14px;min-height:18px;color:var(--text3)"></div>
   </div>
 </div>
 
@@ -479,6 +513,58 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <thead><tr><th>Prefix</th><th>Etiqueta</th><th>Estado</th><th>Último uso</th><th>Acciones</th></tr></thead>
       <tbody id="apiKeysTableBody"><tr><td colspan="5" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<!-- PORTAL USERS (ONBOARDING) MODAL -->
+<div class="modal-overlay" id="portalUsersModal">
+  <div class="modal">
+    <button class="modal-close" id="portalUsersModalClose">×</button>
+    <h3>Acceso al portal · <span id="portalUsersMerchantId" style="font-family:monospace"></span></h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Crea el primer usuario del comercio (rol Administrador). Recibirá una contraseña temporal que deberá cambiar al entrar en el portal.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-field" style="margin-bottom:0"><label>Nombre</label><input type="text" id="puName" placeholder="Nombre y apellidos"/></div>
+      <div class="form-field" style="margin-bottom:0"><label>Email</label><input type="email" id="puEmail" placeholder="admin@comercio.com"/></div>
+      <div class="form-field" style="margin-bottom:0"><label>Rol</label>
+        <select id="puRole">
+          <option value="merchant_admin">Administrador (merchant_admin)</option>
+          <option value="merchant_operator">Operador (merchant_operator)</option>
+          <option value="merchant_viewer">Solo lectura (merchant_viewer)</option>
+        </select>
+      </div>
+      <div class="form-field" style="margin-bottom:0;display:flex;align-items:flex-end"><button class="btn btn-primary" id="createPortalUserBtn" style="width:100%">Crear acceso</button></div>
+    </div>
+    <div id="puReveal" style="display:none;background:var(--surface2);border:1px solid var(--purple);border-radius:8px;padding:12px;margin:14px 0;font-size:13px">
+      <div style="color:var(--amber);font-weight:500;margin-bottom:8px">⚠ Apunta esto ahora — no se volverá a mostrar</div>
+      <div>Email: <span id="puRevealEmail" style="font-family:monospace;color:var(--green)"></span></div>
+      <div>Contraseña temporal: <span id="puRevealPass" style="font-family:monospace;color:var(--green);font-size:15px"></span></div>
+      <div style="margin-top:8px;color:var(--text3)">Entra en <span style="color:var(--purple2)">/portal-app</span> con estos datos.</div>
+    </div>
+    <div id="puErr" class="modal-err"></div>
+    <table class="users-table" style="margin-top:10px">
+      <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th></tr></thead>
+      <tbody id="puTableBody"><tr><td colspan="4" style="color:var(--text3);padding:12px">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- CONTRATO / TARIFA MODAL -->
+<div class="modal-overlay" id="contractModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="contractModalClose">×</button>
+    <h3>Tarifa · <span id="contractMerchantId" style="font-family:monospace"></span></h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Lo que Monetiser factura a este comercio. Importes en euros y comisiones en %.</div>
+    <div class="form-field"><label>Moneda</label><input type="text" id="ctCurrency" value="EUR"/></div>
+    <div class="form-field"><label>Mantenimiento mensual (€)</label><input type="number" id="ctMonthly" step="0.01" min="0" placeholder="50.00"/></div>
+    <div class="form-field"><label>Comisión por transacción (€)</label><input type="number" id="ctPerTx" step="0.01" min="0" placeholder="0.10"/></div>
+    <div class="form-field"><label>Comisión sobre volumen (%)</label><input type="number" id="ctVolume" step="0.01" min="0" placeholder="0.25"/></div>
+    <div class="form-field"><label>Precio por usuario (€)</label><input type="number" id="ctPerUser" step="0.01" min="0" placeholder="5.00"/></div>
+    <div class="form-field"><label>Usuarios incluidos (sin coste)</label><input type="number" id="ctIncludedUsers" step="1" min="0" placeholder="3"/></div>
+    <div class="form-field"><label>Impuesto (código)</label><input type="text" id="ctTaxCode" value="IGIC_GENERAL"/></div>
+    <div id="contractErr" class="modal-err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveContractBtn">Guardar tarifa</button>
+    </div>
   </div>
 </div>
 

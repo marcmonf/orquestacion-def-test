@@ -95,6 +95,8 @@
     if (merchantsTab) merchantsTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
     var rulesTab = document.getElementById('tabBtnRules');
     if (rulesTab) rulesTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
+    var billingTab = document.getElementById('tabBtnBilling');
+    if (billingTab) billingTab.style.display = u.role === 'superadmin' ? 'inline-flex' : 'none';
     renderWidgetPicker();
     renderGrid();
     loadAll();
@@ -834,6 +836,8 @@
         '<td>'+statusBadge(statusKey)+'</td>'+
         '<td style="display:flex;gap:6px">'+
           '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="edit">Editar</button>'+
+          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="portal">Portal</button>'+
+          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="contract">Tarifa</button>'+
           '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="keys">API Keys</button>'+
         '</td></tr>';
     }).join('');
@@ -843,6 +847,8 @@
         var id = this.dataset.id; var action = this.dataset.action;
         var m = merchants.filter(function(x){return x.merchantId===id;})[0];
         if(action==='edit') openEditMerchant(m);
+        if(action==='portal') openPortalUsersModal(id);
+        if(action==='contract') openContractModal(id);
         if(action==='keys') openApiKeysModal(id);
       });
     });
@@ -1125,14 +1131,196 @@
     });
   }
 
+  /* ── ONBOARDING / FACTURACIÓN (M6/M7) ──
+     Consola con la que Monetiser da de alta comercios y su facturación, sin
+     terminal. Importes de cara al usuario en EUROS y % ; el servidor trabaja en
+     céntimos y puntos básicos, así que se convierte al enviar/recibir. */
+  function val(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+  function eurToCents(v){ var n = parseFloat(v); return isNaN(n) ? 0 : Math.round(n * 100); }
+  function centsToEur(c){ return (c === null || c === undefined || c === '') ? '' : (Number(c) / 100); }
+  function pctToBps(v){ var n = parseFloat(v); return isNaN(n) ? 0 : Math.round(n * 100); } // 1% = 100 bps
+  function bpsToPct(b){ return (b === null || b === undefined || b === '') ? '' : (Number(b) / 100); }
+  function lastClosedPeriod(){ var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2); }
+
+  /* Datos de la Sociedad emisora */
+  function loadCompany() {
+    var st = document.getElementById('companyStatus');
+    st.textContent = 'Cargando…';
+    api('/backoffice/company').then(function(r){
+      var c = r.company || {};
+      document.getElementById('coLegalName').value     = c.legalName     || '';
+      document.getElementById('coTradeName').value     = c.tradeName     || '';
+      document.getElementById('coTaxId').value         = c.taxId         || '';
+      document.getElementById('coInvoiceSeries').value = c.invoiceSeries || 'A';
+      document.getElementById('coAddress').value       = c.address       || '';
+      document.getElementById('coEmail').value         = c.email         || '';
+      document.getElementById('coPhone').value         = c.phone         || '';
+      document.getElementById('coIban').value          = c.iban          || '';
+      document.getElementById('coTaxRegime').value     = c.taxRegime     || '';
+      document.getElementById('coFooterNotes').value   = c.footerNotes   || '';
+      st.textContent = '';
+    }).catch(function(e){ st.style.color = 'var(--red)'; st.textContent = 'Error: ' + e.message; });
+  }
+
+  function saveCompany() {
+    var st = document.getElementById('companyStatus');
+    var btn = document.getElementById('saveCompanyBtn');
+    var body = {
+      legalName: val('coLegalName'), tradeName: val('coTradeName'), taxId: val('coTaxId'),
+      invoiceSeries: val('coInvoiceSeries'), address: val('coAddress'), email: val('coEmail'),
+      phone: val('coPhone'), iban: val('coIban'), taxRegime: val('coTaxRegime'), footerNotes: val('coFooterNotes')
+    };
+    btn.disabled = true; st.style.color = 'var(--text3)'; st.textContent = 'Guardando…';
+    api('/backoffice/company', { method:'PUT', body: JSON.stringify(body) })
+      .then(function(){ btn.disabled = false; st.style.color = 'var(--green)'; st.textContent = '✅ Datos guardados'; })
+      .catch(function(e){ btn.disabled = false; st.style.color = 'var(--red)'; st.textContent = 'Error: ' + e.message; });
+  }
+
+  /* Emitir (finalizar) la factura de un merchant para un período cerrado */
+  function finalizeInvoice() {
+    var mid = val('billMerchantId');
+    var period = val('billPeriod');
+    var st = document.getElementById('billStatus');
+    var btn = document.getElementById('finalizeInvoiceBtn');
+    if (!mid) { st.style.color = 'var(--red)'; st.textContent = 'Indica el Merchant ID'; return; }
+    if (!/^\d{4}-\d{2}$/.test(period)) { st.style.color = 'var(--red)'; st.textContent = 'Período con formato AAAA-MM (ej. 2026-06)'; return; }
+    btn.disabled = true; st.style.color = 'var(--text3)'; st.textContent = 'Emitiendo…';
+    api('/backoffice/billing/' + encodeURIComponent(mid) + '/finalize', { method:'POST', body: JSON.stringify({ period: period }) })
+      .then(function(r){
+        btn.disabled = false;
+        var inv = r.invoice || {};
+        st.style.color = 'var(--green)';
+        st.innerHTML = '✅ Factura emitida: <b>' + (inv.invoiceNumber || '–') + '</b> · total ' + fmt(inv.total) + '. El comercio la ve en su portal → Facturación.';
+      })
+      .catch(function(e){
+        btn.disabled = false; st.style.color = 'var(--red)';
+        var msg = e.message === 'HTTP 400' ? 'Ese mes aún no está cerrado (elige un mes anterior) o el período es inválido.'
+                : e.message === 'HTTP 404' ? 'Ese Merchant ID no existe.'
+                : e.message;
+        st.textContent = 'Error: ' + msg;
+      });
+  }
+
+  /* Onboarding: usuarios de portal de un merchant (crear el 1er admin) */
+  var currentPortalMerchant = null;
+
+  function openPortalUsersModal(mid) {
+    currentPortalMerchant = mid;
+    document.getElementById('portalUsersMerchantId').textContent = mid;
+    document.getElementById('puName').value = '';
+    document.getElementById('puEmail').value = '';
+    document.getElementById('puRole').value = 'merchant_admin';
+    document.getElementById('puReveal').style.display = 'none';
+    document.getElementById('puErr').textContent = '';
+    document.getElementById('portalUsersModal').classList.add('open');
+    loadPortalUsers(mid);
+  }
+
+  function loadPortalUsers(mid) {
+    document.getElementById('puTableBody').innerHTML = '<tr><td colspan="4" style="color:var(--text3);padding:12px">Cargando…</td></tr>';
+    api('/backoffice/merchants/' + encodeURIComponent(mid) + '/portal-users').then(function(r){
+      renderPortalUsersTable(r.users || []);
+    }).catch(function(e){
+      document.getElementById('puTableBody').innerHTML = '<tr><td colspan="4" style="color:var(--red);padding:12px">' + e.message + '</td></tr>';
+    });
+  }
+
+  function renderPortalUsersTable(users) {
+    var tbody = document.getElementById('puTableBody');
+    if (!users.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3);padding:12px">Sin usuarios todavía</td></tr>'; return; }
+    tbody.innerHTML = users.map(function(u){
+      return '<tr><td>' + (u.name||'–') + '</td><td>' + (u.email||'–') + '</td><td>' + (u.role||'–') + '</td><td>' + statusBadge(u.active?'approved':'cancelled') + '</td></tr>';
+    }).join('');
+  }
+
+  function createPortalUser() {
+    if (!currentPortalMerchant) return;
+    var name = val('puName'), email = val('puEmail'), role = document.getElementById('puRole').value;
+    var err = document.getElementById('puErr');
+    var btn = document.getElementById('createPortalUserBtn');
+    err.textContent = '';
+    if (!name || !email) { err.textContent = 'Nombre y email requeridos'; return; }
+    btn.disabled = true;
+    api('/backoffice/merchants/' + encodeURIComponent(currentPortalMerchant) + '/portal-users', { method:'POST', body: JSON.stringify({ name:name, email:email, role:role }) })
+      .then(function(r){
+        btn.disabled = false;
+        document.getElementById('puRevealEmail').textContent = (r.user && r.user.email) || email;
+        document.getElementById('puRevealPass').textContent = r.tempPassword || '(revisar respuesta)';
+        document.getElementById('puReveal').style.display = 'block';
+        document.getElementById('puName').value = ''; document.getElementById('puEmail').value = '';
+        loadPortalUsers(currentPortalMerchant);
+      })
+      .catch(function(e){
+        btn.disabled = false;
+        err.textContent = e.message === 'HTTP 409' ? 'Ese email ya existe.' : 'Error: ' + e.message;
+      });
+  }
+
+  /* Tarifa (contrato) de un merchant */
+  var currentContractMerchant = null;
+
+  function openContractModal(mid) {
+    currentContractMerchant = mid;
+    document.getElementById('contractMerchantId').textContent = mid;
+    document.getElementById('contractErr').textContent = '';
+    document.getElementById('ctCurrency').value = 'EUR';
+    document.getElementById('ctMonthly').value = '';
+    document.getElementById('ctPerTx').value = '';
+    document.getElementById('ctVolume').value = '';
+    document.getElementById('ctPerUser').value = '';
+    document.getElementById('ctIncludedUsers').value = '';
+    document.getElementById('ctTaxCode').value = 'IGIC_GENERAL';
+    document.getElementById('contractModal').classList.add('open');
+    api('/backoffice/merchants/' + encodeURIComponent(mid) + '/contract').then(function(r){
+      var c = r.contract;
+      if (!c) return; // aún sin tarifa → formulario en blanco
+      document.getElementById('ctCurrency').value      = c.currency || 'EUR';
+      document.getElementById('ctMonthly').value       = centsToEur(c.monthlyMaintenance);
+      document.getElementById('ctPerTx').value         = centsToEur(c.perTransactionFee);
+      document.getElementById('ctVolume').value        = bpsToPct(c.volumeBps);
+      document.getElementById('ctPerUser').value       = centsToEur(c.perUserFee);
+      document.getElementById('ctIncludedUsers').value = (c.includedUsers != null ? c.includedUsers : '');
+      document.getElementById('ctTaxCode').value       = c.taxRateCode || 'IGIC_GENERAL';
+    }).catch(function(){ /* sin contrato: se deja en blanco */ });
+  }
+
+  function saveContract() {
+    if (!currentContractMerchant) return;
+    var err = document.getElementById('contractErr');
+    var btn = document.getElementById('saveContractBtn');
+    err.textContent = '';
+    var body = {
+      currency: (val('ctCurrency') || 'EUR').toUpperCase(),
+      monthlyMaintenance: eurToCents(val('ctMonthly')),
+      perTransactionFee:  eurToCents(val('ctPerTx')),
+      volumeBps:          pctToBps(val('ctVolume')),
+      perUserFee:         eurToCents(val('ctPerUser')),
+      includedUsers:      Math.max(0, Math.round(Number(val('ctIncludedUsers')) || 0)),
+      taxRateCode:        val('ctTaxCode') || 'IGIC_GENERAL',
+      active: true
+    };
+    btn.disabled = true;
+    api('/backoffice/merchants/' + encodeURIComponent(currentContractMerchant) + '/contract', { method:'PUT', body: JSON.stringify(body) })
+      .then(function(){ btn.disabled = false; document.getElementById('contractModal').classList.remove('open'); })
+      .catch(function(e){ btn.disabled = false; err.textContent = 'Error: ' + e.message; });
+  }
+
   /* ── TABS ── */
   function showTab(tab) {
     document.getElementById('tabDashboard').style.display  = tab==='dashboard'?'block':'none';
     document.getElementById('tabUsers').style.display      = tab==='users'?'block':'none';
     document.getElementById('tabMerchants').style.display  = tab==='merchants'?'block':'none';
     document.getElementById('tabRules').style.display      = tab==='rules'?'block':'none';
+    document.getElementById('tabBilling').style.display    = tab==='billing'?'block':'none';
+    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling' };
+    Object.keys(map).forEach(function(k){ var b = document.getElementById(map[k]); if (b) b.classList.toggle('active', k === tab); });
     if(tab==='users') loadUsers();
     if(tab==='merchants') loadMerchants();
+    if(tab==='billing') {
+      loadCompany();
+      var bp = document.getElementById('billPeriod');
+      if (bp && !bp.value) bp.value = lastClosedPeriod();
+    }
   }
 
   /* ── SEARCH ── */
@@ -1215,6 +1403,14 @@
     if(tabUsr)  tabUsr.addEventListener('click',function(){showTab('users');});
     if(tabMer)  tabMer.addEventListener('click',function(){showTab('merchants');});
     if(tabRul)  tabRul.addEventListener('click',function(){showTab('rules');});
+    var tabBil = document.getElementById('tabBtnBilling');
+    if(tabBil)  tabBil.addEventListener('click',function(){showTab('billing');});
+    document.getElementById('saveCompanyBtn').addEventListener('click', saveCompany);
+    document.getElementById('finalizeInvoiceBtn').addEventListener('click', finalizeInvoice);
+    document.getElementById('portalUsersModalClose').addEventListener('click',function(){document.getElementById('portalUsersModal').classList.remove('open');});
+    document.getElementById('createPortalUserBtn').addEventListener('click', createPortalUser);
+    document.getElementById('contractModalClose').addEventListener('click',function(){document.getElementById('contractModal').classList.remove('open');});
+    document.getElementById('saveContractBtn').addEventListener('click', saveContract);
     bindPasswordToggle('loginPass','toggleLoginPass');
     bindPasswordToggle('newUserPassword','toggleNewUserPass');
   }
