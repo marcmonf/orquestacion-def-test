@@ -740,8 +740,9 @@ sigue 238/247**, grafo de requires intacto, `node --check` OK en los JS tocados.
   y en los tres del cambio de password (`public/portal/`), igual que el que ya tenía `/admin`.
   Helpers reutilizables `pwField`/`bindEyes` en `app.js` + CSS `.pw`/`.pw-eye` en `index.html`.
 
-**Pendiente de confirmar en el próximo chat:** el 24 jul se detectó que **`PORTAL_JWT_SECRET`
-no estaba puesta en Render** (ver §8) — Marcos avisado de ponerla; confirmar que ya está.
+**`PORTAL_JWT_SECRET`:** el 24 jul se detectó sin definir en Render; **Marcos la puso ese
+mismo día (✅ confirmado)** — el portal ya firma con secreto propio, distinto de
+`BACKOFFICE_JWT_SECRET`. (ver §8)
 
 **Nota del entorno de Claude:** desde el sandbox la salida HTTPS a `onrender.com` está
 bloqueada por la política del proxy (403 al CONNECT). NO se puede sondear el servidor en vivo
@@ -803,7 +804,7 @@ leyendo el código + `node --check` + `jest`.
 | `ADMIN_TOKEN` | Token para endpoints de administración (X-Admin-Token) |
 | `API_KEY_SIMPLE_FALLBACK` | `true` — activa auth simple x-api-key para Postman/testing |
 | `SERVER_URL` | `https://orquestacion-def-test.onrender.com` — para construir URLs de webhook hacia Paylands |
-| `PORTAL_JWT_SECRET` | **(M6)** Secreto de firma del JWT del portal del merchant. **DEBE ser distinto de `BACKOFFICE_JWT_SECRET`** — es lo que impide que un token de merchant sea aceptado en el backoffice. Sin definir usa un fallback de desarrollo (no válido para producción). **(24 jul 2026: detectada SIN definir en Render — Marcos avisado de ponerla. El próximo chat debe CONFIRMAR que ya está. Mientras no lo esté, el portal firma con el fallback público del repo → como el repo es público, cualquiera podría falsificar un token de portal.)** |
+| `PORTAL_JWT_SECRET` | **(M6)** Secreto de firma del JWT del portal del merchant. **DEBE ser distinto de `BACKOFFICE_JWT_SECRET`** — es lo que impide que un token de merchant sea aceptado en el backoffice. Sin definir usa un fallback de desarrollo (no válido para producción). **(24 jul 2026: ✅ CONFIRMADA puesta en Render por Marcos, distinta de `BACKOFFICE_JWT_SECRET`. El portal ya firma con secreto propio.)** |
 | `BACKOFFICE_JWT_SECRET` | Secreto de firma del JWT del backoffice (dashboard interno). Ya se usaba; sin definir usa fallback de desarrollo. Distinto de `PORTAL_JWT_SECRET`. |
 
 ### Opcionales / Feature flags
