@@ -306,16 +306,33 @@ router.get('/billing', requirePortalRole('merchant_admin'), async (req, res) => 
   }
 });
 
-// GET /portal/billing/:period — factura de un período concreto ('YYYY-MM')
+// GET /portal/invoices — facturas EMITIDAS (finalizadas) del PROPIO merchant
+router.get('/invoices', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const invoices = await billingService.listInvoices(req.portalUser.merchantId);
+    return res.json({ success: true, invoices });
+  } catch (err) {
+    console.error('❌ [portal/invoices]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /portal/billing/:period — factura de un período concreto ('YYYY-MM').
+// Si el período ya está FINALIZADO devuelve la factura congelada (inmutable);
+// si no, un borrador calculado al vuelo.
 router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
     if (!/^\d{4}-\d{2}$/.test(req.params.period)) {
       return res.status(400).json({ success: false, error: 'invalid_period' });
     }
+    const finalized = await billingService.getFinalized(req.portalUser.merchantId, req.params.period);
+    if (finalized) {
+      return res.json({ success: true, finalized: true, record: finalized });
+    }
     const merchant = await Merchant.findOne({ merchantId: req.portalUser.merchantId }).lean();
     if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
     const record = await billingService.billForMerchant(merchant, req.params.period);
-    return res.json({ success: true, record });
+    return res.json({ success: true, finalized: false, record });
   } catch (err) {
     console.error('❌ [portal/billing/:period]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });

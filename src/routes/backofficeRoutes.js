@@ -778,12 +778,56 @@ router.get('/billing', requireRole('superadmin'), async (req, res) => {
     const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
     const records = [];
     for (const m of merchants) {
-      records.push({ name: m.name || m.merchantId, ...(await billingService.billForMerchant(m, period)) });
+      const fin  = await billingService.getFinalized(m.merchantId, period);
+      const data = fin ? (fin.toObject ? fin.toObject() : fin) : await billingService.billForMerchant(m, period);
+      records.push({
+        merchantId: m.merchantId, name: m.name || m.merchantId, period,
+        finalized: !!fin, plan: data.plan,
+        billableCount: data.billableCount, billableVolume: data.billableVolume, totalDue: data.totalDue,
+      });
     }
     const grandTotal = records.reduce((s, r) => s + (r.totalDue || 0), 0);
     return res.json({ success: true, period, grandTotal, records });
   } catch (err) {
     console.error('❌ [backoffice/billing GET]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/billing/finalize — finalizar TODOS los merchants de un período cerrado
+router.post('/billing/finalize', requireRole('superadmin'), async (req, res) => {
+  const period = (req.body && req.body.period) || req.query.period;
+  if (!/^\d{4}-\d{2}$/.test(period || '')) return res.status(400).json({ success: false, error: 'invalid_period' });
+  try {
+    const now = new Date();
+    if (!billingService.isPeriodClosed(period, now)) return res.status(400).json({ success: false, error: 'period_not_closed' });
+    const merchants = await Merchant.find({}, { merchantId: 1, plan: 1 }).lean();
+    let finalized = 0, already = 0;
+    for (const m of merchants) {
+      if (await billingService.getFinalized(m.merchantId, period)) { already++; continue; }
+      await billingService.finalizeBilling(m, period, req.backofficeUser.email, now);
+      finalized++;
+    }
+    return res.json({ success: true, period, finalized, already });
+  } catch (err) {
+    console.error('❌ [backoffice/billing finalize all]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/billing/:merchantId/finalize — finalizar la factura de un merchant
+router.post('/billing/:merchantId/finalize', requireRole('superadmin'), async (req, res) => {
+  const period = (req.body && req.body.period) || req.query.period;
+  if (!/^\d{4}-\d{2}$/.test(period || '')) return res.status(400).json({ success: false, error: 'invalid_period' });
+  try {
+    const merchant = await Merchant.findOne({ merchantId: req.params.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const invoice = await billingService.finalizeBilling(merchant, period, req.backofficeUser.email);
+    return res.json({ success: true, invoice });
+  } catch (err) {
+    if (err.code === 'period_not_closed') return res.status(400).json({ success: false, error: 'period_not_closed' });
+    if (err.code === 'invalid_period')    return res.status(400).json({ success: false, error: 'invalid_period' });
+    console.error('❌ [backoffice/billing finalize]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

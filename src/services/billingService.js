@@ -8,8 +8,9 @@
 // representan procesamiento con éxito); las declinadas/canceladas/reembolsadas no
 // se cobran en v1. Importes en CÉNTIMOS.
 //
-const Transaction = require('../models/Transaction');
-const PricingPlan = require('../models/PricingPlan');
+const Transaction   = require('../models/Transaction');
+const PricingPlan   = require('../models/PricingPlan');
+const BillingRecord = require('../models/BillingRecord');
 const { defaultsFor } = require('../utils/pricingDefaults');
 
 // Estados que se facturan (procesamiento con éxito).
@@ -84,6 +85,64 @@ async function billForMerchant(merchant, period) {
   return computeBilling(merchant.merchantId, period, pricing);
 }
 
+// ── Fase 2 — cierre/finalización ────────────────────────────────────────────
+function invoiceNumber(merchantId, period) {
+  return `INV-${period}-${merchantId}`;
+}
+
+// ¿el período está CERRADO? (estrictamente anterior al mes de `now`). No se
+// finaliza un mes en curso: cerraría una factura incompleta.
+function isPeriodClosed(period, now) {
+  const range = periodRange(period);
+  if (!range) return false;
+  const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return range.end <= currentMonthStart;
+}
+
+async function getFinalized(merchantId, period) {
+  return BillingRecord.findOne({ merchantId, period });
+}
+
+// Finaliza (congela) la factura de un período cerrado. IDEMPOTENTE: si ya existe,
+// devuelve la existente sin recalcular. `now` lo pasa el caller (test determinista).
+async function finalizeBilling(merchant, period, actor, now) {
+  if (!periodRange(period)) { const e = new Error('invalid_period'); e.code = 'invalid_period'; throw e; }
+  if (!isPeriodClosed(period, now || new Date())) {
+    const e = new Error('period_not_closed'); e.code = 'period_not_closed'; throw e;
+  }
+  const existing = await BillingRecord.findOne({ merchantId: merchant.merchantId, period });
+  if (existing) return existing;
+
+  const pricing = await getPricing((merchant && merchant.plan) || 'free');
+  const b = await computeBilling(merchant.merchantId, period, pricing);
+  return BillingRecord.create({
+    merchantId:    merchant.merchantId,
+    period,
+    invoiceNumber: invoiceNumber(merchant.merchantId, period),
+    plan:          b.plan,
+    currency:      b.currency,
+    pricingSnapshot: {
+      monthlyBase:       pricing.monthlyBase || 0,
+      perTransactionFee: pricing.perTransactionFee || 0,
+      volumeBps:         pricing.volumeBps || 0,
+    },
+    transactionsCount: b.transactionsCount,
+    billableCount:     b.billableCount,
+    billableVolume:    b.billableVolume,
+    subscriptionFee:   b.subscriptionFee,
+    usageFee:          b.usageFee,
+    volumeFee:         b.volumeFee,
+    totalDue:          b.totalDue,
+    status:            'finalized',
+    finalizedBy:       actor || null,
+  });
+}
+
+async function listInvoices(merchantId, limit = 24) {
+  return BillingRecord.find({ merchantId }).sort({ period: -1 }).limit(limit).lean();
+}
+
 module.exports = {
   BILLABLE_STATUSES, periodRange, periodOf, getPricing, computeBilling, billForMerchant,
+  invoiceNumber, isPeriodClosed, getFinalized, finalizeBilling, listInvoices,
 };
