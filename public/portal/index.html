@@ -59,6 +59,16 @@
     ul.tree ul { list-style: none; padding-left: 22px; border-left: 1px dashed var(--line); margin-left: 6px; }
     ul.tree li { padding: 4px 0; }
     .node-type { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    /* Factura imprimible */
+    .inv { max-width: 640px; }
+    .inv h2 { margin: 0 0 4px; }
+    .inv .tot { font-size: 22px; font-weight: 800; }
+    .inv table td { padding: 6px 8px; }
+    @media print {
+      header.topbar, nav.tabs, .no-print { display: none !important; }
+      main { padding: 0; max-width: none; }
+      .card { border: none; }
+    }
   </style>
 </head>
 <body>

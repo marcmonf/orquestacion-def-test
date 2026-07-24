@@ -336,15 +336,31 @@ function monthLabel(period) {
   const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   return `${meses[Number(m[2]) - 1]} ${m[1]}`;
 }
+let _invoices = [];
 async function viewFacturacion() {
   view().innerHTML = `<div class="card">Cargando facturación…</div>`;
-  const r = await api('/portal/billing');
+  const [r, ri] = await Promise.all([api('/portal/billing'), api('/portal/invoices')]);
   if (!r.ok) return view().innerHTML = `<div class="banner err">No se pudo cargar la facturación.</div>`;
   const c = r.body.current, cur = c.currency || 'EUR';
   const kpi = (n, l) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${esc(l)}</div></div>`;
-  const history = (r.body.history || []).slice().reverse(); // más antiguo → más reciente
+  const history = (r.body.history || []).slice().reverse();
+  _invoices = (ri.ok && ri.body.invoices) ? ri.body.invoices : [];
+
+  const invoicesCard = _invoices.length ? `
+    <div class="card" style="margin-bottom:14px">
+      <strong>Facturas emitidas</strong>
+      <table style="margin-top:10px"><thead><tr><th>Nº</th><th>Mes</th><th>Total</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${_invoices.map((inv, i) => `<tr>
+        <td><code>${esc(inv.invoiceNumber)}</code></td>
+        <td>${monthLabel(inv.period)}</td>
+        <td>${money(inv.totalDue, inv.currency || cur)}</td>
+        <td><span class="chip">${esc(inv.status)}</span></td>
+        <td><button class="ghost small" data-inv="${i}">Ver factura</button></td>
+      </tr>`).join('')}</tbody></table>
+    </div>` : '';
+
   view().innerHTML = `
-    <div class="banner ok">Plan <strong>${esc(r.body.plan)}</strong> · período <strong>${monthLabel(r.body.period)}</strong>.
+    <div class="banner ok">Plan <strong>${esc(r.body.plan)}</strong> · período en curso <strong>${monthLabel(r.body.period)}</strong>.
       Importe informativo (aún no se cobra automáticamente).</div>
     <div class="kpis" style="margin-bottom:14px">
       ${kpi(money(c.totalDue, cur), 'Total del período')}
@@ -354,6 +370,7 @@ async function viewFacturacion() {
       ${kpi(c.billableCount, 'Transacciones facturables')}
       ${kpi(money(c.billableVolume, cur), 'Volumen facturable')}
     </div>
+    ${invoicesCard}
     <div class="card">
       <strong>Historial (últimos 6 meses)</strong>
       <table style="margin-top:10px"><thead><tr><th>Mes</th><th>Facturables</th><th>Volumen</th><th>Total</th></tr></thead>
@@ -364,6 +381,31 @@ async function viewFacturacion() {
         <td>${money(h.totalDue, h.currency || cur)}</td>
       </tr>`).join('')}</tbody></table>
     </div>`;
+  document.querySelectorAll('[data-inv]').forEach(b => b.onclick = () => renderInvoice(_invoices[Number(b.dataset.inv)]));
+}
+
+function renderInvoice(inv) {
+  if (!inv) return;
+  const cur = inv.currency || 'EUR';
+  const line = (l, v) => `<tr><td>${esc(l)}</td><td style="text-align:right">${money(v, cur)}</td></tr>`;
+  view().innerHTML = `
+    <div class="row no-print" style="margin-bottom:12px">
+      <button class="ghost small" id="invBack">‹ Volver</button>
+      <button class="small" id="invPrint">Imprimir / Guardar PDF</button>
+    </div>
+    <div class="card inv">
+      <h2>Factura ${esc(inv.invoiceNumber)}</h2>
+      <div class="muted">Monetiser · ${esc(state.me.merchantId)} · Período ${monthLabel(inv.period)} · Plan ${esc(inv.plan || '')}</div>
+      <table style="margin-top:16px">
+        ${line('Cuota del plan', inv.subscriptionFee)}
+        ${line(`Transacciones facturables (${inv.billableCount})`, inv.usageFee)}
+        ${line('Comisión por volumen', inv.volumeFee)}
+        <tr><td class="tot">Total</td><td class="tot" style="text-align:right">${money(inv.totalDue, cur)}</td></tr>
+      </table>
+      <div class="muted" style="margin-top:14px">Volumen facturable: ${money(inv.billableVolume, cur)} · ${esc(inv.status)}</div>
+    </div>`;
+  document.getElementById('invBack').onclick = () => viewFacturacion();
+  document.getElementById('invPrint').onclick = () => window.print();
 }
 
 // ── Utilidades DOM ────────────────────────────────────────────────────────────
