@@ -2,12 +2,20 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.4.0
+  version: 2.5.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.5.0 (20 jul 2026)** — M7 Fase 1 (billing, MEDICIÓN — sin cobro real todavía).
+    `GET /portal/billing` y `GET /portal/billing/{period}`: la factura-borrador del
+    merchant de la sesión (solo `merchant_admin`, scoped). Modelo de precios flexible
+    (cuota mensual + fee por transacción + % de volumen, en céntimos); factura sobre
+    transacciones facturables (approved/authorized/captured). El superadmin fija los
+    precios con `GET/PUT /backoffice/pricing` (plano backoffice, no en esta spec, como
+    el resto de `/backoffice/*`). El cobro real (Stripe/Paddle) es la Fase 3.
 
     **v2.4.0 (20 jul 2026)** — M6 Fases 3 y 4. **Fase 3 (datos del portal):**
     `GET /portal/transactions`, `GET /portal/transactions/{paymentId}` y
@@ -1387,6 +1395,66 @@ paths:
         '401':
           description: Sin token o token inválido.
 
+  /portal/billing:
+    get:
+      tags: [Portal]
+      summary: Factura-borrador del mes actual + historial (solo merchant_admin)
+      operationId: portalBilling
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Factura informativa del merchant de la sesión (M7 Fase 1 — **no se cobra
+        dinero real todavía**). Solo `merchant_admin`. Importes en céntimos.
+      parameters:
+        - name: period
+          in: query
+          description: Período 'YYYY-MM'. Por defecto, el mes actual.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Factura del período + historial de 6 meses.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  period:  { type: string }
+                  plan:    { type: string }
+                  current: { $ref: '#/components/schemas/BillingBreakdown' }
+                  history:
+                    type: array
+                    items: { $ref: '#/components/schemas/BillingBreakdown' }
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
+
+  /portal/billing/{period}:
+    get:
+      tags: [Portal]
+      summary: Factura-borrador de un período concreto (solo merchant_admin)
+      operationId: portalBillingPeriod
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      parameters:
+        - name: period
+          in: path
+          required: true
+          description: Período 'YYYY-MM'.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Factura del período.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  record:  { $ref: '#/components/schemas/BillingBreakdown' }
+        '400': { description: Período con formato inválido (`invalid_period`). }
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Rol insuficiente o password sin cambiar. }
+
   /portal/hierarchy:
     get:
       tags: [Portal]
@@ -2587,3 +2655,22 @@ components:
         approvalRate:         { type: number, description: Porcentaje 0–100. }
         totalVolume:          { type: integer, description: Volumen aprobado en céntimos. }
         averageTicket:        { type: integer, description: Ticket medio aprobado en céntimos. }
+
+    # ── Facturación (M7 Fase 1) ───────────────────────────────────────────
+    BillingBreakdown:
+      type: object
+      description: |
+        Factura-borrador de un merchant para un período. Importes en CÉNTIMOS.
+        En Fase 1 es informativa (no se cobra dinero real).
+      properties:
+        merchantId:        { type: string }
+        period:            { type: string, description: "'YYYY-MM'." }
+        plan:              { type: string }
+        currency:          { type: string }
+        transactionsCount: { type: integer, description: Total de transacciones del período. }
+        billableCount:     { type: integer, description: Transacciones facturables (approved/authorized/captured). }
+        billableVolume:    { type: integer, description: Volumen facturable en céntimos. }
+        subscriptionFee:   { type: integer, description: Cuota del plan (céntimos). }
+        usageFee:          { type: integer, description: Fee por transacción × facturables (céntimos). }
+        volumeFee:         { type: integer, description: Fee por volumen (céntimos). }
+        totalDue:          { type: integer, description: Total a pagar (céntimos). }

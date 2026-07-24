@@ -235,7 +235,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **200/209 pasan** (era 119/128 hasta M4, 128/137 tras S2S, 160/169 tras M6 F1, 182/191 tras M6 F2). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **212/221 pasan** (era 119/128 hasta M4, 128/137 tras S2S, 160/169 tras M6 F1, 182/191 tras M6 F2, 200/209 tras M6 F3+F4). Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -603,9 +603,33 @@ la rama de M6 se fusionó a `main`.
   agregador-vs-cuenta-por-merchant (aplazada, con implicaciones PSD2).
 
 ### M7 — Billing
-- Modelo BillingRecord en MongoDB
-- Tracking de transacciones por merchant y período
-- Integración con Stripe Billing o Paddle
+
+**Fase 1 ✅ COMPLETADO (20 jul 2026) — medición y cálculo (sin cobro real).**
+- **Modelo de precios FLEXIBLE** (`src/utils/pricingDefaults.js` + `src/models/PricingPlan.js`):
+  tres dimensiones combinables en céntimos — cuota mensual (`monthlyBase`) + fee por
+  transacción facturable (`perTransactionFee`) + % de volumen (`volumeBps`). Una fila
+  por plan; si no existe, se usan placeholders. **Marcos edita los precios sin desplegar**
+  (`PUT /backoffice/pricing/:plan`). **En Fase 1 NO se mueve dinero real.**
+- **Cálculo** (`src/services/billingService.js`): `computeBilling(merchantId, period, pricing)`
+  agrega las transacciones FACTURABLES (`approved`/`authorized`/`captured`) del mes y aplica
+  las tres dimensiones. Las declinadas/canceladas/reembolsadas NO se facturan en v1.
+- **Endpoints:** portal `GET /portal/billing` (mes actual + historial 6 meses) y
+  `GET /portal/billing/:period` — solo `merchant_admin`, **scoped a la sesión** (cada
+  merchant ve solo SU factura). Backoffice (superadmin): `GET/PUT /backoffice/pricing[/:plan]`
+  y `GET /backoffice/billing?period=` (todos los merchants + gran total).
+- **Portal visual:** pestaña **"Facturación"** (admin) con el desglose del mes + historial.
+- **Tests: 12 nuevos verdes** (`billingService.test.js`, `portalBilling.test.js`) — cálculo,
+  exclusión de otro período/merchant, aislamiento A/B, gate por rol. Suite **212/221**
+  (misma línea base). `openapi.yaml` v2.5.0.
+- **Decisión pendiente para Fase 1→producción:** los precios por defecto son PLACEHOLDERS;
+  Marcos pone los reales. Rol: la facturación del portal es solo `merchant_admin` (info de
+  cuenta) — ajustable si se quiere abrir a viewer.
+
+**Fase 2 (pendiente):** persistir/finalizar la factura al cerrar el período (modelo
+`BillingRecord`, bloqueo, representación de factura, export).
+**Fase 3 (pendiente):** cobro real — integración con Stripe Billing o Paddle (necesita
+credenciales + decidir proveedor). Limitación anotada de M6 Fase 4 relevante aquí: las
+transacciones no llevan referencia de nodo, así que el billing es por merchant, no por nodo.
 
 ---
 
@@ -760,6 +784,16 @@ DELETE /portal/hierarchy/:nodeId               → Borrar nodo, rechaza si tiene
 GET   /portal/transactions                     → Transacciones del PROPIO merchant (read-only, paginado + filtros)
 GET   /portal/transactions/:paymentId          → Detalle de una transacción propia (otro merchant → 404)
 GET   /portal/analytics/summary                → KPIs del PROPIO merchant (importes en céntimos)
+GET   /portal/billing                          → Factura-borrador del mes + historial (merchant_admin)
+GET   /portal/billing/:period                  → Factura-borrador de un período 'YYYY-MM' (merchant_admin)
+```
+
+Facturación/precios internos (superadmin, sesión backoffice):
+
+```
+GET   /backoffice/pricing                       → Precios de todos los planes
+PUT   /backoffice/pricing/:plan                 → Fijar/editar precios de un plan (sin desplegar)
+GET   /backoffice/billing?period=YYYY-MM         → Factura de todos los merchants + gran total
 ```
 
 Portal VISUAL (SPA): servido en **`/portal-app`** (`https://.../portal-app`). Consume solo `/portal/*`.
@@ -828,6 +862,8 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 ```
 
 ---
+
+*Sesión 20 julio 2026 (M7 Fase 1 — billing: medición y cálculo, IMPLEMENTADO) — Tras cerrar M6, Marcos eligió arrancar M7 (billing) directamente en `main`. **Fase 1 = medir y calcular lo que debe cada merchant; NO se cobra dinero real** (eso es Fase 3). Modelo de precios FLEXIBLE (cuota mensual + fee por transacción + % de volumen, en céntimos, editable sin desplegar vía `PUT /backoffice/pricing/:plan`; defaults = placeholders). `billingService.computeBilling` agrega las transacciones facturables (approved/authorized/captured) del mes y aplica las tres dimensiones. Portal: `GET /portal/billing` (+`/:period`), solo `merchant_admin`, scoped a la sesión (cada merchant ve solo lo suyo) + pestaña "Facturación" en la SPA. Backoffice: pricing GET/PUT + billing global (superadmin). **12 tests nuevos verdes** (cálculo + aislamiento); suite **212/221** (misma línea base). `openapi.yaml` v2.5.0. **Nota:** el modelo elegido es el flexible (recomendado) — cubre suscripción/por-uso/híbrido; Marcos pone los números reales cuando quiera. **Recordatorio importante: M6 y M7 siguen SIN desplegar/probar en el servidor** (todo en `main`, que no es producción). **Qué desplegar/probar (cuando despliegues):** mismo deploy; pon precios reales con `PUT /backoffice/pricing/:plan` y mira la pestaña "Facturación" del portal. Pendiente M7: Fase 2 (persistir/finalizar factura) y Fase 3 (cobro real Stripe/Paddle).*
 
 *Sesión 20 julio 2026 (M6 Fases 3 y 4 — portal visual + permisos por nodo, IMPLEMENTADO; M6 COMPLETO) — Marcos pidió hacer Fase 3 y 4, y que **todo el desarrollo vaya en `main`** (sin ramas nuevas). Hecho: la rama `claude/m6-merchant-users-tenant-g75zhd` (Fases 1-2) se fusionó a `main` por fast-forward, y Fases 3-4 se desarrollaron directamente en `main`. **Fase 3 (datos + visual):** endpoints read-only scoped a la sesión (`GET /portal/transactions`, `/portal/transactions/:id`, `/portal/analytics/summary`; una tx de otro merchant → 404) + SPA vanilla en `public/portal/` servida en `/portal-app`, que habla solo con `/portal/*` (login → cambio de password → dashboard: Resumen/Transacciones/Usuarios/Jerarquía). **Fase 4 (permisos por nodo):** el JWT del portal lleva `hierarchyNodeId`; un admin asigna usuario→nodo con `PATCH /portal/users/:id`; un usuario asignado a un nodo solo ve/gestiona su subárbol (fuera → 404 / `403 outside_your_scope`). **Limitación anotada:** las transacciones no llevan referencia de nodo, así que el node-scoping aplica a la jerarquía, no a transacciones (mejora futura). **18 tests nuevos verdes** (portalData, portalNodePerms); suite **200/209** (misma línea base). `openapi.yaml` v2.4.0, DEV-LOG y CLAUDE.md actualizados. **Qué desplegar/probar (cuando despliegues):** el deploy es el mismo (la ENV `PORTAL_JWT_SECRET` de Fase 1 basta); tras Manual Deploy, entra en `https://<servidor>/portal-app`, haz login con el merchant_admin sembrado, cambia la password, y verás las 4 pestañas con datos SOLO de tu merchant. **M6 cerrado** (Fases 1-4). Siguiente hito real: aprovisionamiento en Paylands (bloqueado por la decisión agregador-vs-cuenta-por-merchant) y M7 billing.*
 

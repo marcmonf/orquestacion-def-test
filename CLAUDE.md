@@ -40,11 +40,11 @@ Por que no basta lo de siempre:
 - `node --check` valida la SINTAXIS de un archivo suelto. No resuelve requires.
   Un require a un archivo borrado pasa el check y revienta al arrancar.
 - `npx jest` mockea dependencias y no carga el grafo real de index.js.
-  Linea base actual: 200/209 (los 9 fallos de webhooks.test.js son PREEXISTENTES).
+  Linea base actual: 212/221 (los 9 fallos de webhooks.test.js son PREEXISTENTES).
   Historia del numero: 119/128 (hasta M4) -> 128/137 (S2S tokens-only, 18 jul)
   -> 160/169 (M6 F1 portal) -> 182/191 (M6 F2 jerarquia) -> 200/209 (M6 F3+F4,
-  datos/portal visual + permisos por nodo, 20 jul). Lo constante son los 9 fallos
-  de webhooks.test.js; el resto siempre en verde.
+  datos/portal visual + permisos por nodo) -> 212/221 (M7 F1 billing, 20 jul).
+  Lo constante son los 9 fallos de webhooks.test.js; el resto siempre en verde.
 
 Y ojo con esto, que es lo que hizo el fallo dificil de ver: `index.js` monta
 varias rutas dentro de `try/catch`. Un MODULE_NOT_FOUND ahi se traga y sale como
