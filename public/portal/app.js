@@ -106,7 +106,7 @@ function renderShell() {
   const tabs = [
     ['resumen', 'Resumen'],
     ['transacciones', 'Transacciones'],
-    ...(isAdmin() ? [['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
+    ...(isAdmin() ? [['adquirentes', 'Adquirentes'], ['costes', 'Coste real'], ['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
   ];
   ROOT.innerHTML = `
     <header class="topbar">
@@ -137,6 +137,8 @@ function selectTab(tab) {
   if (tab === 'usuarios') return viewUsuarios();
   if (tab === 'jerarquia') return viewJerarquia();
   if (tab === 'facturacion') return viewFacturacion();
+  if (tab === 'adquirentes') return viewAdquirentes();
+  if (tab === 'costes') return viewCostes();
 }
 const view = () => document.getElementById('view');
 
@@ -431,6 +433,113 @@ function renderInvoice(inv) {
     </div>`;
   document.getElementById('invBack').onclick = () => viewFacturacion();
   document.getElementById('invPrint').onclick = () => window.print();
+}
+
+// ── Tab: Adquirentes + Routing (solo admin) ────────────────────────────────────
+let _acq = { catalog: [], acquirers: [], rules: [] };
+async function viewAdquirentes() {
+  view().innerHTML = `<div class="card">Cargando adquirentes…</div>`;
+  const [ra, rr] = await Promise.all([api('/portal/acquirers'), api('/portal/routing')]);
+  if (!ra.ok) return view().innerHTML = `<div class="banner err">No se pudieron cargar los adquirentes.</div>`;
+  _acq.catalog = ra.body.catalog || [];
+  _acq.acquirers = ra.body.acquirers || [];
+  _acq.rules = (rr.ok && rr.body.rules) ? rr.body.rules : [];
+  const opts = _acq.catalog.map(c => `<option value="${esc(c.code)}">${esc(c.name || c.code)}</option>`).join('');
+  const fichas = _acq.acquirers.map(a => `<tr>
+    <td>${esc(a.acquirerCode)}</td>
+    <td>${((a.markupBps || 0) / 100).toFixed(2)}%${a.fixedFee ? ' + ' + money(a.fixedFee, 'EUR') : ''}</td>
+    <td>${a.isDefault ? '<span class="chip">por defecto</span>' : ''}</td>
+    <td><button class="ghost small" data-delacq="${esc(a.acquirerCode)}">Borrar</button></td>
+  </tr>`).join('');
+  const rules = _acq.rules.map((r, i) => `<tr>
+    <td>${r.priority}</td><td>${esc(r.acquirerCode)}</td><td>${esc(r.binPrefix || '*')}</td>
+    <td>${esc(r.scheme || '*')}</td><td>${esc(r.cardType || '*')}</td>
+    <td><button class="ghost small" data-delrule="${i}">Borrar</button></td>
+  </tr>`).join('');
+  view().innerHTML = `
+    <div class="card" style="margin-bottom:14px">
+      <strong>Tus adquirentes</strong>
+      <p class="muted">Da de alta con quién trabajas y tu margen negociado (ICH++).</p>
+      <div class="row" style="align-items:end; margin:10px 0">
+        <div style="min-width:150px"><label>Adquirente</label><select id="acqCode">${opts}</select></div>
+        <div style="min-width:120px"><label>Margen ICH++ (%)</label><input id="acqMarkup" type="number" step="0.01" placeholder="0.45"/></div>
+        <label class="row" style="gap:6px"><input id="acqDefault" type="checkbox" style="width:auto"/> Por defecto</label>
+        <button id="acqSave">Guardar</button>
+      </div>
+      <table><thead><tr><th>Adquirente</th><th>Margen</th><th></th><th></th></tr></thead><tbody>${fichas || '<tr><td colspan="4" class="muted">Sin adquirentes todavía.</td></tr>'}</tbody></table>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <strong>Routing (BIN routing)</strong>
+      <p class="muted">La primera regla que casa gana; si ninguna, el adquirente por defecto.</p>
+      <div class="row" style="align-items:end; margin:10px 0">
+        <div style="min-width:140px"><label>A adquirente</label><select id="rAcq">${opts}</select></div>
+        <div style="min-width:110px"><label>BIN empieza por</label><input id="rBin" placeholder="454617"/></div>
+        <div style="min-width:90px"><label>Scheme</label><input id="rScheme" placeholder="visa"/></div>
+        <div style="min-width:90px"><label>Tipo</label><input id="rType" placeholder="credit"/></div>
+        <button id="rAdd">Añadir</button>
+      </div>
+      <table><thead><tr><th>Prio</th><th>Adquirente</th><th>BIN</th><th>Scheme</th><th>Tipo</th><th></th></tr></thead><tbody>${rules || '<tr><td colspan="6" class="muted">Sin reglas.</td></tr>'}</tbody></table>
+    </div>
+    <div class="card">
+      <strong>Simular</strong>
+      <div class="row" style="align-items:end; margin-top:10px">
+        <div style="min-width:120px"><label>BIN</label><input id="sBin" placeholder="454617"/></div>
+        <div style="min-width:90px"><label>Scheme</label><input id="sScheme" placeholder="visa"/></div>
+        <div style="min-width:110px"><label>Importe (€)</label><input id="sAmt" type="number" placeholder="50"/></div>
+        <button id="sGo">Simular</button>
+      </div>
+      <div id="simOut" style="margin-top:10px" class="muted"></div>
+    </div>`;
+  document.getElementById('acqSave').onclick = async () => {
+    const body = { markupBps: Math.round(parseFloat(val('acqMarkup') || '0') * 100), isDefault: document.getElementById('acqDefault').checked, active: true };
+    const r = await api('/portal/acquirers/' + val('acqCode'), { method: 'PUT', body: JSON.stringify(body) });
+    if (!r.ok) return alert('No se pudo guardar.');
+    viewAdquirentes();
+  };
+  document.querySelectorAll('[data-delacq]').forEach(b => b.onclick = async () => { await api('/portal/acquirers/' + b.dataset.delacq, { method: 'DELETE' }); viewAdquirentes(); });
+  document.getElementById('rAdd').onclick = async () => {
+    _acq.rules.push({ acquirerCode: val('rAcq'), binPrefix: val('rBin'), scheme: val('rScheme'), cardType: val('rType'), priority: (_acq.rules.length + 1) * 10 });
+    await api('/portal/routing', { method: 'PUT', body: JSON.stringify({ rules: _acq.rules }) }); viewAdquirentes();
+  };
+  document.querySelectorAll('[data-delrule]').forEach(b => b.onclick = async () => {
+    _acq.rules.splice(Number(b.dataset.delrule), 1);
+    await api('/portal/routing', { method: 'PUT', body: JSON.stringify({ rules: _acq.rules }) }); viewAdquirentes();
+  });
+  document.getElementById('sGo').onclick = async () => {
+    const r = await api('/portal/routing/simulate', { method: 'POST', body: JSON.stringify({ bin: val('sBin'), scheme: val('sScheme'), amount: Math.round(parseFloat(val('sAmt') || '0') * 100) }) });
+    const el = document.getElementById('simOut');
+    el.innerHTML = r.ok ? `→ Adquirente: <strong>${esc(r.body.acquirerCode || '—')}</strong> (${esc(r.body.reason)})` : 'Error.';
+  };
+}
+
+// ── Tab: Coste real (solo admin) ───────────────────────────────────────────────
+async function viewCostes() {
+  view().innerHTML = `<div class="card">Calculando coste…</div>`;
+  const r = await api('/portal/costs');
+  if (!r.ok) return view().innerHTML = `<div class="banner err">No se pudo calcular el coste.</div>`;
+  const cur = r.body.currency || 'EUR';
+  const sample = (r.body.sample || []).map(s => `<tr>
+    <td><code>${esc((s.paymentId || '').slice(0, 10))}…</code></td>
+    <td>${money(s.amount, cur)}</td><td>${money(s.interchange, cur)}</td><td>${money(s.schemeFee, cur)}</td>
+    <td>${money(s.acquirerMarkup, cur)}</td><td>${money(s.gatewayFee, cur)}</td>
+    <td><strong>${money(s.total, cur)}</strong></td><td>${s.effectiveRatePct}%</td>
+  </tr>`).join('');
+  view().innerHTML = `
+    <div class="card" style="text-align:center; margin-bottom:14px">
+      <div class="muted">Coste real medio por transacción</div>
+      <div style="font-size:44px; font-weight:800; color:var(--primary-d)">${money(r.body.avgCostPerTx, cur)}</div>
+      <div class="muted">Tasa efectiva <strong>${r.body.effectiveRatePct}%</strong> · ${r.body.transactions} transacciones · adquirente ${esc(r.body.acquirerCode || '—')}</div>
+    </div>
+    <div class="banner" style="background:#fffbeb; color:#92400e">${esc(r.body.disclaimer || '')}</div>
+    <div class="kpis" style="margin:14px 0">
+      <div class="card kpi"><div class="n">${money(r.body.totalVolume, cur)}</div><div class="l">Volumen</div></div>
+      <div class="card kpi"><div class="n">${money(r.body.totalCost, cur)}</div><div class="l">Coste total estimado</div></div>
+    </div>
+    <div class="card">
+      <strong>Desglose por transacción (muestra)</strong>
+      <table style="margin-top:10px"><thead><tr><th>Pago</th><th>Importe</th><th>Interchange</th><th>Scheme</th><th>Adquirente</th><th>Pasarela</th><th>Total</th><th>%</th></tr></thead>
+      <tbody>${sample || '<tr><td colspan="8" class="muted">Sin transacciones en el período.</td></tr>'}</tbody></table>
+    </div>`;
 }
 
 // ── Utilidades DOM ────────────────────────────────────────────────────────────
