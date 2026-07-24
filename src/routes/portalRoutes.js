@@ -17,6 +17,8 @@ const router        = express.Router();
 const MerchantUser  = require('../models/MerchantUser');
 const HierarchyNode = require('../models/HierarchyNode');
 const Transaction   = require('../models/Transaction');
+const Merchant      = require('../models/Merchant');
+const billingService = require('../services/billingService');
 const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
 const { toPublicUser }         = require('../utils/publicUser');
@@ -272,6 +274,50 @@ router.get('/analytics/summary', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [portal/analytics/summary]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FACTURACIÓN (M7 Fase 1) — informativa, scoped a la sesión. Solo merchant_admin
+// (es información de cuenta/finanzas). En Fase 1 NO se cobra dinero real.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /portal/billing — factura del período (por defecto el mes actual) + historial
+router.get('/billing', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const merchant = await Merchant.findOne({ merchantId: req.portalUser.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+
+    const now = new Date();
+    const period = /^\d{4}-\d{2}$/.test(req.query.period || '') ? req.query.period : billingService.periodOf(now);
+    const current = await billingService.billForMerchant(merchant, period);
+
+    // Historial: los últimos 6 meses (incluye el período pedido si es reciente).
+    const history = [];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      history.push(await billingService.billForMerchant(merchant, billingService.periodOf(d)));
+    }
+    return res.json({ success: true, period, plan: merchant.plan || 'free', current, history });
+  } catch (err) {
+    console.error('❌ [portal/billing]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /portal/billing/:period — factura de un período concreto ('YYYY-MM')
+router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    if (!/^\d{4}-\d{2}$/.test(req.params.period)) {
+      return res.status(400).json({ success: false, error: 'invalid_period' });
+    }
+    const merchant = await Merchant.findOne({ merchantId: req.portalUser.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const record = await billingService.billForMerchant(merchant, req.params.period);
+    return res.json({ success: true, record });
+  } catch (err) {
+    console.error('❌ [portal/billing/:period]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

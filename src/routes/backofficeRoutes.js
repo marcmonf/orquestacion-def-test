@@ -8,6 +8,9 @@ const Operation      = require('../models/Operation');
 const BackofficeUser = require('../models/BackofficeUser');
 const Merchant       = require('../models/Merchant');
 const MerchantUser   = require('../models/MerchantUser');
+const PricingPlan    = require('../models/PricingPlan');
+const billingService = require('../services/billingService');
+const { PLANS, defaultsFor } = require('../utils/pricingDefaults');
 const { toPublicUser }         = require('../utils/publicUser');
 const { generateTempPassword } = require('../utils/tempPassword');
 const { getConnector } = require('../services/connectorRegistry');
@@ -711,6 +714,76 @@ router.post('/merchants/:merchantId/portal-users', requireRole('superadmin'), as
     });
   } catch (err) {
     console.error('❌ [backoffice/portal-users POST]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FACTURACIÓN Y PRECIOS (M7 Fase 1) — solo superadmin
+// Precios por plan editables sin desplegar; facturación (borrador) de todos los
+// merchants para un período. En Fase 1 NO se cobra dinero real.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /backoffice/pricing — precios de todos los planes (fila guardada o placeholder)
+router.get('/pricing', requireRole('superadmin'), async (req, res) => {
+  try {
+    const docs = await PricingPlan.find({}).lean();
+    const byPlan = {};
+    docs.forEach(d => { byPlan[d.plan] = d; });
+    const pricing = PLANS.map(plan => {
+      const d = byPlan[plan];
+      return d
+        ? { plan, currency: d.currency || 'EUR', monthlyBase: d.monthlyBase || 0, perTransactionFee: d.perTransactionFee || 0, volumeBps: d.volumeBps || 0, source: 'saved', updatedAt: d.updatedAt, updatedBy: d.updatedBy || null }
+        : { ...defaultsFor(plan), source: 'default' };
+    });
+    return res.json({ success: true, pricing });
+  } catch (err) {
+    console.error('❌ [backoffice/pricing GET]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// PUT /backoffice/pricing/:plan — fijar/editar los precios de un plan
+router.put('/pricing/:plan', requireRole('superadmin'), async (req, res) => {
+  const { plan } = req.params;
+  if (!PLANS.includes(plan)) return res.status(400).json({ success: false, error: 'invalid_plan' });
+
+  const update = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+  for (const k of ['monthlyBase', 'perTransactionFee', 'volumeBps']) {
+    if (req.body[k] === undefined) continue;
+    const n = Number(req.body[k]);
+    if (!Number.isFinite(n) || n < 0) return res.status(400).json({ success: false, error: `invalid_${k}` });
+    update[k] = Math.round(n);
+  }
+  if (req.body.currency !== undefined) update.currency = String(req.body.currency).toUpperCase().slice(0, 3);
+
+  try {
+    const doc = await PricingPlan.findOneAndUpdate(
+      { plan },
+      { $set: update, $setOnInsert: { plan } },
+      { new: true, upsert: true }
+    );
+    return res.json({ success: true, plan: { plan: doc.plan, currency: doc.currency, monthlyBase: doc.monthlyBase, perTransactionFee: doc.perTransactionFee, volumeBps: doc.volumeBps } });
+  } catch (err) {
+    console.error('❌ [backoffice/pricing PUT]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// GET /backoffice/billing?period=YYYY-MM — factura (borrador) de todos los merchants
+router.get('/billing', requireRole('superadmin'), async (req, res) => {
+  try {
+    const now = new Date();
+    const period = /^\d{4}-\d{2}$/.test(req.query.period || '') ? req.query.period : billingService.periodOf(now);
+    const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
+    const records = [];
+    for (const m of merchants) {
+      records.push({ name: m.name || m.merchantId, ...(await billingService.billForMerchant(m, period)) });
+    }
+    const grandTotal = records.reduce((s, r) => s + (r.totalDue || 0), 0);
+    return res.json({ success: true, period, grandTotal, records });
+  } catch (err) {
+    console.error('❌ [backoffice/billing GET]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

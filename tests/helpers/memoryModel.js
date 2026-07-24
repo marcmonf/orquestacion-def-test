@@ -17,9 +17,20 @@ let _seq = 1;
 
 function matches(doc, query) {
   return Object.entries(query || {}).every(([k, v]) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      if ('$ne' in v) return doc[k] !== v.$ne;
-      if ('$in' in v) return v.$in.includes(doc[k]);
+    // Objeto de operadores ({ $gte, $lt, $in, ... }) — pero NO una Date (también es objeto).
+    if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      return Object.entries(v).every(([op, operand]) => {
+        switch (op) {
+          case '$ne':  return doc[k] !== operand;
+          case '$in':  return Array.isArray(operand) && operand.includes(doc[k]);
+          case '$nin': return Array.isArray(operand) && !operand.includes(doc[k]);
+          case '$gte': return doc[k] >= operand;
+          case '$lte': return doc[k] <= operand;
+          case '$gt':  return doc[k] >  operand;
+          case '$lt':  return doc[k] <  operand;
+          default:     return doc[k] === v;   // operador desconocido → igualdad literal
+        }
+      });
     }
     return doc[k] === v;
   });
@@ -71,9 +82,17 @@ module.exports = function makeMemoryModel() {
       return doc;
     },
 
-    // findOne se AWAITEA directamente y su resultado puede llamar .save() → doc real.
-    async findOne(query = {}) {
-      return store.find(d => matches(d, query)) || null;
+    // findOne admite dos usos, como en Mongoose:
+    //   - `await Model.findOne(q)`      → doc REAL (con .save())
+    //   - `await Model.findOne(q).lean()` → copia plana (solo lectura)
+    findOne(query = {}) {
+      const doc = store.find(d => matches(d, query)) || null;
+      const thenable = {
+        select() { return thenable; },
+        lean()   { return Promise.resolve(doc ? { ...doc } : null); },
+        then(resolve, reject) { return Promise.resolve(doc).then(resolve, reject); },
+      };
+      return thenable;
     },
 
     async findById(id) {
