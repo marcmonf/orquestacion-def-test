@@ -18,8 +18,13 @@ const MerchantUser  = require('../models/MerchantUser');
 const HierarchyNode = require('../models/HierarchyNode');
 const Transaction   = require('../models/Transaction');
 const Merchant      = require('../models/Merchant');
+const MerchantAcquirer    = require('../models/MerchantAcquirer');
+const MerchantRoutingRule = require('../models/MerchantRoutingRule');
 const billingService = require('../services/billingService');
+const acquirerService = require('../services/acquirerService');
+const costService    = require('../services/costService');
 const { renderInvoicePdf } = require('../services/invoicePdf');
+const { fromTransaction } = require('../utils/cardContext');
 const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
 const { toPublicUser }         = require('../utils/publicUser');
@@ -374,6 +379,116 @@ router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, 
     console.error('❌ [portal/billing/:period]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADQUIRENTES + ROUTING + COSTE REAL (M7 Bloque 2) — merchant_admin, scoped.
+// La adquirencia aquí es INFORMATIVA/operativa; no se factura (Bloque 1 factura
+// solo lo nuestro). Multi-adquirente preparado para N; hoy Paylands en vivo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /portal/acquirers — catálogo disponible + fichas del merchant
+router.get('/acquirers', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const [catalog, mine] = await Promise.all([
+      acquirerService.getCatalog(),
+      acquirerService.getMerchantAcquirers(req.portalUser.merchantId),
+    ]);
+    return res.json({ success: true, catalog: catalog.map(c => ({ code: c.code, name: c.name, active: c.active !== false })), acquirers: mine });
+  } catch (err) { console.error('❌ [portal/acquirers]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// PUT /portal/acquirers/:code — crear/editar la ficha (incluye pricing ICH++)
+router.put('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const acq = await acquirerService.getAcquirer(req.params.code);
+    if (!acq) return res.status(400).json({ success: false, error: 'unknown_acquirer' });
+    const set = { updatedBy: req.portalUser.email, updatedAt: new Date() };
+    for (const k of ['markupBps', 'onUsMarkupBps', 'fixedFee', 'priority']) {
+      if (req.body[k] === undefined) continue;
+      const n = Number(req.body[k]);
+      if (!Number.isFinite(n) || n < 0) return res.status(400).json({ success: false, error: `invalid_${k}` });
+      set[k] = Math.round(n);
+    }
+    if (req.body.active !== undefined) set.active = !!req.body.active;
+    if (req.body.isDefault === true) {
+      set.isDefault = true;
+      const others = await acquirerService.getMerchantAcquirers(req.portalUser.merchantId);
+      for (const o of others) {
+        if (o.acquirerCode !== req.params.code && o.isDefault) {
+          await MerchantAcquirer.findOneAndUpdate({ merchantId: req.portalUser.merchantId, acquirerCode: o.acquirerCode }, { $set: { isDefault: false } }, { new: true });
+        }
+      }
+    } else if (req.body.isDefault === false) set.isDefault = false;
+
+    const doc = await MerchantAcquirer.findOneAndUpdate(
+      { merchantId: req.portalUser.merchantId, acquirerCode: req.params.code },
+      { $set: set, $setOnInsert: { merchantId: req.portalUser.merchantId, acquirerCode: req.params.code } },
+      { new: true, upsert: true }
+    );
+    return res.json({ success: true, acquirer: doc });
+  } catch (err) { console.error('❌ [portal/acquirers PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// DELETE /portal/acquirers/:code
+router.delete('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    await MerchantAcquirer.deleteOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code });
+    return res.json({ success: true });
+  } catch (err) { console.error('❌ [portal/acquirers DELETE]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET /portal/routing — reglas de routing estático del merchant
+router.get('/routing', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    return res.json({ success: true, rules: await acquirerService.getMerchantRules(req.portalUser.merchantId) });
+  } catch (err) { console.error('❌ [portal/routing]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// PUT /portal/routing — reemplaza el conjunto de reglas (BIN routing, etc.)
+router.put('/routing', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const rules = Array.isArray(req.body.rules) ? req.body.rules : [];
+    for (const r of rules) if (!r.acquirerCode) return res.status(400).json({ success: false, error: 'rule_missing_acquirer' });
+    await MerchantRoutingRule.deleteMany({ merchantId: req.portalUser.merchantId });
+    const created = [];
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i];
+      created.push(await MerchantRoutingRule.create({
+        merchantId: req.portalUser.merchantId,
+        priority: Number(r.priority) || (i + 1) * 10,
+        acquirerCode: String(r.acquirerCode),
+        binPrefix: String(r.binPrefix || ''), scheme: String(r.scheme || ''),
+        cardType: String(r.cardType || ''), issuerCountry: String(r.issuerCountry || ''),
+        amountMin: r.amountMin != null ? Math.round(Number(r.amountMin)) : null,
+        amountMax: r.amountMax != null ? Math.round(Number(r.amountMax)) : null,
+        active: r.active !== false, updatedBy: req.portalUser.email,
+      }));
+    }
+    return res.json({ success: true, rules: created });
+  } catch (err) { console.error('❌ [portal/routing PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// POST /portal/routing/simulate — ¿a qué adquirente iría esta tarjeta?
+router.post('/routing/simulate', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = fromTransaction({ cardBrand: b.scheme || b.cardBrand, cardType: b.cardType, cardLevel: b.cardLevel, issuerCountry: b.issuerCountry, bin: b.bin, amount: b.amount });
+    const r = await acquirerService.resolveRouting(req.portalUser.merchantId, ctx);
+    return res.json({ success: true, context: ctx, ...r });
+  } catch (err) { console.error('❌ [portal/routing simulate]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET /portal/costs?period= — coste real estimado del período (el "número grande")
+router.get('/costs', requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const merchant = await Merchant.findOne({ merchantId: req.portalUser.merchantId }).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const now = new Date();
+    const period = /^\d{4}-\d{2}$/.test(req.query.period || '') ? req.query.period : billingService.periodOf(now);
+    const est = await costService.estimateForMerchant(merchant, period);
+    return res.json({ success: true, ...est });
+  } catch (err) { console.error('❌ [portal/costs]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
 module.exports = router;

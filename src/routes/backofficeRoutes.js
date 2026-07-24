@@ -12,7 +12,11 @@ const PricingPlan    = require('../models/PricingPlan');
 const CompanyProfile = require('../models/CompanyProfile');
 const TaxRate        = require('../models/TaxRate');
 const MerchantContract = require('../models/MerchantContract');
+const Acquirer       = require('../models/Acquirer');
+const InterchangeRate = require('../models/InterchangeRate');
 const billingService = require('../services/billingService');
+const acquirerService = require('../services/acquirerService');
+const costService    = require('../services/costService');
 const { getCompany } = require('../services/companyService');
 const { getTaxRates } = require('../services/taxService');
 const { renderInvoicePdf } = require('../services/invoicePdf');
@@ -981,6 +985,52 @@ router.get('/billing/export', requireRole('superadmin'), async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="facturacion-${period}.csv"`);
     return res.send(csv);
   } catch (err) { console.error('❌ [backoffice/billing export]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADQUIRENTES (catálogo + scheme fees) e INTERCHANGE — solo superadmin (M7 Bloque 2)
+// El scheme fee (CSF) lo pasa el adquirente; el interchange, las tablas VISA/MC.
+// El margen ICH++ y el routing los pone el MERCHANT desde su portal.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET catálogo de adquirentes
+router.get('/acquirers', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, acquirers: await acquirerService.getCatalog() }); }
+  catch (err) { console.error('❌ [backoffice/acquirers GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// PUT un adquirente del catálogo (nombre, conector, scheme fees/CSF, activo)
+router.put('/acquirers/:code', requireRole('superadmin'), async (req, res) => {
+  try {
+    const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+    if (req.body.name !== undefined)         set.name = String(req.body.name);
+    if (req.body.connectorKey !== undefined) set.connectorKey = String(req.body.connectorKey);
+    if (req.body.active !== undefined)       set.active = !!req.body.active;
+    if (Array.isArray(req.body.schemeFees)) {
+      set.schemeFees = req.body.schemeFees.map(s => ({ cardType: String(s.cardType || ''), bps: Math.max(0, Number(s.bps) || 0), fixed: Math.max(0, Math.round(Number(s.fixed) || 0)) }));
+    }
+    const doc = await Acquirer.findOneAndUpdate({ code: req.params.code }, { $set: set, $setOnInsert: { code: req.params.code } }, { new: true, upsert: true });
+    return res.json({ success: true, acquirer: doc });
+  } catch (err) { console.error('❌ [backoffice/acquirers PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// GET tablas de interchange
+router.get('/interchange', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, rates: await costService.getInterchangeTable() }); }
+  catch (err) { console.error('❌ [backoffice/interchange GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// PUT una fila de interchange (scheme/cardType/region → bps/fixed)
+router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), async (req, res) => {
+  try {
+    const key = { scheme: req.params.scheme.toLowerCase(), cardType: req.params.cardType.toLowerCase(), region: req.params.region.toLowerCase() };
+    const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
+    if (req.body.bps !== undefined)    { const n = Number(req.body.bps);   if (!Number.isFinite(n) || n < 0) return res.status(400).json({ success: false, error: 'invalid_bps' });   set.bps = n; }
+    if (req.body.fixed !== undefined)  { const n = Number(req.body.fixed); if (!Number.isFinite(n) || n < 0) return res.status(400).json({ success: false, error: 'invalid_fixed' }); set.fixed = Math.round(n); }
+    if (req.body.active !== undefined) set.active = !!req.body.active;
+    const doc = await InterchangeRate.findOneAndUpdate(key, { $set: set, $setOnInsert: key }, { new: true, upsert: true });
+    return res.json({ success: true, rate: doc });
+  } catch (err) { console.error('❌ [backoffice/interchange PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

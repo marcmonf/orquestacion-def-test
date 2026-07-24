@@ -114,6 +114,12 @@ module.exports = function makeMemoryModel() {
       return { deletedCount: 1 };
     },
 
+    async deleteMany(query = {}) {
+      const before = store.length;
+      for (let i = store.length - 1; i >= 0; i--) { if (matches(store[i], query)) store.splice(i, 1); }
+      return { deletedCount: before - store.length };
+    },
+
     // findOneAndUpdate MÍNIMO: soporta $set, $setOnInsert, $inc y upsert (lo que
     // usan la numeración correlativa y markSent). Devuelve el doc (new:true).
     async findOneAndUpdate(query = {}, update = {}, opts = {}) {
