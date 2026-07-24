@@ -22,6 +22,12 @@
     button.small { padding: 5px 9px; font-size: 13px; }
     input, select { font: inherit; padding: 9px 11px; border: 1px solid var(--line);
       border-radius: 8px; width: 100%; background: #fff; }
+    .pw { position: relative; }
+    .pw input { padding-right: 42px; }
+    .pw-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      width: auto; background: transparent; color: var(--muted); border: none;
+      padding: 4px 8px; font-size: 17px; line-height: 1; border-radius: 6px; }
+    .pw-eye:hover { background: transparent; color: var(--ink); }
     label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
     .muted { color: var(--muted); }

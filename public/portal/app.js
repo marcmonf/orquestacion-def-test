@@ -25,6 +25,27 @@ function money(cents, currency) {
 }
 function fmtDate(d) { try { return new Date(d).toLocaleString('es-ES'); } catch { return esc(d); } }
 
+// Campo de contraseña con botón de mostrar/ocultar (ojito). Mismo patrón que /admin:
+// pwField() pinta el label + input + botón; bindEyes() engancha el toggle tras render.
+function pwField(id, label, autocomplete) {
+  return `<label>${esc(label)}</label>
+      <div class="pw">
+        <input id="${id}" type="password"${autocomplete ? ` autocomplete="${autocomplete}"` : ''} />
+        <button type="button" class="pw-eye" data-eye="${id}" title="Mostrar / ocultar contraseña" aria-label="Mostrar u ocultar contraseña">👁</button>
+      </div>`;
+}
+function bindEyes() {
+  document.querySelectorAll('[data-eye]').forEach(btn => {
+    btn.onclick = () => {
+      const inp = document.getElementById(btn.dataset.eye);
+      if (!inp) return;
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      btn.textContent = show ? '🙈' : '👁';
+    };
+  });
+}
+
 // ── API ────────────────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
   const res = await fetch(API + path, {
@@ -51,7 +72,7 @@ function renderLogin(msg) {
       ${msg ? `<div class="banner err">${esc(msg)}</div>` : ''}
       <div id="loginErr"></div>
       <label>Email</label><input id="email" type="email" autocomplete="username" />
-      <label>Contraseña</label><input id="password" type="password" autocomplete="current-password" />
+      ${pwField('password', 'Contraseña', 'current-password')}
       <button id="loginBtn" style="width:100%; margin-top:16px">Entrar</button>
     </div></div>`;
   const submit = async () => {
@@ -66,6 +87,7 @@ function renderLogin(msg) {
   };
   document.getElementById('loginBtn').onclick = submit;
   document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  bindEyes();
 }
 
 function renderChangePassword() {
@@ -74,9 +96,9 @@ function renderChangePassword() {
       <div class="logo-text">Cambia tu contraseña</div>
       <p class="muted" style="margin-top:4px">Tu contraseña es temporal. Debes cambiarla para continuar.</p>
       <div id="cpErr"></div>
-      <label>Contraseña temporal actual</label><input id="cur" type="password" />
-      <label>Nueva contraseña (mínimo 8 caracteres)</label><input id="np1" type="password" />
-      <label>Repite la nueva contraseña</label><input id="np2" type="password" />
+      ${pwField('cur', 'Contraseña temporal actual', 'current-password')}
+      ${pwField('np1', 'Nueva contraseña (mínimo 8 caracteres)', 'new-password')}
+      ${pwField('np2', 'Repite la nueva contraseña', 'new-password')}
       <button id="cpBtn" style="width:100%; margin-top:16px">Guardar y entrar</button>
     </div></div>`;
   document.getElementById('cpBtn').onclick = async () => {
@@ -88,6 +110,7 @@ function renderChangePassword() {
     setToken(r.body.token);
     loadDashboard();
   };
+  bindEyes();
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
