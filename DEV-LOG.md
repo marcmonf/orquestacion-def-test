@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 24 julio 2026
+> Última actualización: 4 agosto 2026
 
 ---
 
@@ -212,6 +212,7 @@ Merchant backend
 | **`/apms/payments` era un endpoint de pago PÚBLICO, sin validación y con PAN en crudo** (16 jul 2026) | Stack de pago paralelo heredado de una versión antigua, montado en `index.js` y nunca revisado. Tres fallos apilados: (1) su auth era opt-in vía `APMS_REQUIRE_API_KEY`, variable que **no existe en el repo ni en Render** → `apiKeyAuth` quedaba en `(req,res,next)=>next()`; (2) `paymentValidator.js` exporta el schema de Joi y acto seguido le **machaca su `.validate`** con el helper del propio módulo (línea 93), así que `paymentSchema.validate(tx)` devolvía una función en vez de un resultado y `{ error }` era SIEMPRE `undefined` — no rechazaba nada, en silencio, desde que se escribió; (3) aceptaba `cardNumber` en crudo y procesaba contra conectores simulados. | **Retirado por completo** (14 archivos + el montaje). Verificado en vivo antes de borrar: `POST /apms/payments` con body vacío y sin credenciales devolvía `200` en producción, mientras el mismo intento contra `/payments/hosted` devolvía `401`. Aislamiento comprobado (nada fuera de la isla lo requería, ningún test lo tocaba) y suite igual que la línea base: 119/128. **Lección: un endpoint montado y olvidado es peor que código muerto — el código muerto no acepta tarjetas.** Nota: el `.validate` machacado sigue en `paymentValidator.js`; ya no tiene víctima (`routes/payments.js` usa el helper correctamente, destructurando), pero es una trampa para código futuro que haga `require('paymentValidator').validate(obj)` esperando Joi. No se toca por estar en la ruta del ciclo de vida verificado. |
 | **Segunda hornada de endpoints legacy peligrosos, montados y olvidados** (17 jul 2026) | Auditoría de código muerto pedida por Marcos. Cuatro hallazgos en rutas VIVAS: (1) `PUT`/`DELETE /transactions/:paymentId` operaban por `paymentId` **sin comprobar la pertenencia al merchant** — cualquier merchant con API key válida podía modificar o borrar transacciones ajenas (mismo patrón que el bug de `ensureTx` del 16 jul, en otro router); el listado y las analíticas además agregaban TODOS los merchants; (2) `POST /transactions/card-payment` aceptaba el **PAN en crudo** en el body (rule engine V1 + acquirers mock); (3) `POST /tokens` aceptaba PAN+CVV y **guardaba el PAN cifrado en MongoDB** (bóveda propia = scope SAQ D); solo lo frenaba que `TOKEN_API_KEY` no existe en Render → 403 permanente, es decir, a una variable de entorno de activarse; (4) `/initialize` y `/payment-requests`: stack pre-Hosted-Checkout sin ningún consumidor (verificado: ni el front ni los flujos actuales los llaman). | **Retirados los cuatro** (commit `a7bad5e`): `/initialize`, `/tokens` y `/payment-requests` desmontados y eliminados con toda su cadena (16 archivos); `/transactions` reescrito **solo-lectura** con scoping obligatorio por `req.merchantId` en listado, detalle y las cuatro analíticas. La escritura de transacciones ocurre únicamente en los flujos de pago reales. Verificado por tanda: grafo de requires + arranque de la app + suite 119/128. Refuerza la lección del 16 jul: lo montado y olvidado es peor que lo muerto. |
 | **`/portal-app` se quedaba en "Cargando…" para siempre** (24 jul 2026) | `public/portal/index.html` cargaba `<script src="app.js">` (ruta **relativa**). La SPA se sirve en `/portal-app` (sin barra final), así que el navegador resolvía el script contra la raíz → pedía `/app.js` (inexistente) → 404 → `app.js` nunca ejecutaba y `#root` se quedaba con el "Cargando…" inicial. El panel `/admin` no lo sufría porque ya referenciaba sus scripts con ruta absoluta (`/admin/dashboard.js`). | Ruta absoluta `<script src="/portal-app/app.js">` (commit `c4889fe`). **Lección: un estático servido en una ruta SIN barra final debe referenciar sus assets con ruta ABSOLUTA.** Y esta clase de fallo no la detectan `node --check` ni `jest` (validan sintaxis y servidor, no la resolución de rutas del navegador) — solo aparece abriendo la página en un navegador real. Nadie había abierto `/portal-app` en vivo hasta esta sesión: toda la verificación de M6 Fase 3 había sido a nivel de API/tests. |
+| **`openapi.yaml` llevaba roto sin que nadie lo supiera** (4 ago 2026) | Clave `'403'` DUPLICADA en `/portal/hierarchy` (línea 1755): al añadir el caso `outside_your_scope` en **M6 Fase 4** se metió un segundo bloque `'403':` en vez de fusionarlo con el que ya estaba. En YAML una clave duplicada en el mismo mapa es **error de parseo**, no un aviso: `js-yaml` lanza `duplicated mapping key` y el documento entero deja de cargar. | **Fusionadas las dos descripciones en un solo `'403'`.** Verificado que el fallo era PREEXISTENTE parseando `git show HEAD:openapi.yaml` — no lo introdujo esta sesión. **Lo grave no es el fallo, es cuánto duró:** el DEV-LOG afirmaba desde M4 *"validado con `js-yaml`, 0 refs rotas"*, cierto en v1.0.0 y **falso desde M6 Fase 4** — la spec pasó por v2.4.0, v2.5.0, v2.6.0, v2.7.0 y v2.8.0 sin que nadie la volviera a parsear. Tras el arreglo: 42 rutas · 35 schemas · 4 webhooks · **0 refs rotas**. **Lección: un artefacto que se declara "validado" y no tiene un test que lo valide, deja de estarlo en silencio.** Aquí además tenía consecuencia directa: Swagger UI (`/docs`, montado en esta misma sesión) no habría podido cargar la spec nunca. **No se ha podido escribir el test de regresión** porque `js-yaml` no está trackeado en git — ver la fila de la suite de tests en §5. |
 
 ---
 
@@ -230,13 +231,13 @@ Merchant backend
 | ~~**Webhooks salientes: DOS emisores con firmas incompatibles**~~ | ✅ **RESUELTO — 17 jul 2026** | **Unificado: `sendWebhookIfAny()` (paymentsController) delega ahora en `webhookDispatcher.enqueue()`.** Un único contrato para TODOS los webhooks salientes: header `Monetiser-Signature: t=<ts>, v1=<hex>`, secreto por-merchant con fallback a `WEBHOOK_SECRET`, reintentos con backoff y registro en `webhooklogs`. De propina: el evento `payment.canceled` pasó a `payment.cancelled` (grafía Paylands, cerrando el "pendiente cosmético" de la fila siguiente) y su flag `data.canceled`→`data.cancelled`. Cambio de contrato asumible: no hay merchants integrados. Documentado en `openapi.yaml` v2.0.0. **Descripción original del problema:** Descubierto al escribir el OpenAPI (M4). **Eran tres; el tercero (`src/core/webhookService.js`, vía `/apms`) desapareció al retirar ese stack** — ver sección 4. Quedan dos, y siguen siendo incompatibles entre sí. **No depende del entorno**: los nombres de cabecera son literales escritos a fuego, sin ningún `if` sobre `NODE_ENV`/`PAYNOPAIN_ENV`; en producción pasaría igual. <br><br>**(1) `src/services/webhookDispatcher.js`** — evento `payment.updated`. Usado por `routes/webhooks.js` y `transactionController.js`. Header `Monetiser-Signature: t=<ts>, v1=<hex>` (CON espacio tras la coma). Secreto: `signingSecret` del merchant → fallback `WEBHOOK_SECRET`. Reintentos con backoff. Registro en `webhooklogs`. <br>**(2) `sendWebhookIfAny()` en `src/controllers/paymentsController.js`** — eventos `payment.captured`/`refunded`/`canceled`. Header **`x-monetiser-signature: t=<ts>,v1=<hex>`** (nombre DISTINTO, SIN espacio) + `x-monetiser-timestamp`. Secreto: **solo `WEBHOOK_SECRET` global** (ignora el del merchant). **Sin reintentos. Sin registro** (fallo = un `warn`). <br><br>**Consecuencias reales:** (a) un merchant que verifique `Monetiser-Signature` fallará **en silencio** los eventos de ciclo de vida, que van por `x-monetiser-signature`; (b) si el merchant tiene `signingSecret` propio y no hay `WEBHOOK_SECRET` global, el emisor 2 envía **sin firmar** — no se omite, sale igual sin el header; (c) contradice lo que este DEV-LOG afirma de M2 Fase C ("el dispatcher firma por-merchant"): cierto solo para 1 de los 2. <br><br>Hoy no ha explotado solo porque no hay ningún merchant real verificando firmas. **Documentado tal cual en `openapi.yaml`. Pendiente de decidir:** que `sendWebhookIfAny` use `webhookDispatcher.enqueue()` (gana secreto por-merchant, reintentos y registro gratis, y queda una sola firma). Es cambio de contrato de cara al merchant — momento barato de hacerlo, precisamente por estar en test y sin nadie integrado. |
 | ~~**`canceled` vs `cancelled`**~~ | ✅ **RESUELTO — 16 jul 2026** (`3153984`) | **Arreglado alineando a `cancelled` (dos L), que es la grafía de Paylands** — criterio marcado por Marcos y verificado en su contrato: endpoint `POST /payment/cancellation` y status de webhook `CANCELLED`/`USER_CANCELLED`, ambos con dos L. Dos cambios, no uno: (1) `paymentsController.js:532` `'canceled'`→`'cancelled'`; (2) `dashboard.js:525`, el desplegable de filtro por estado ofrecía `value="canceled"` — **ese filtro ya estaba roto antes**: no encontraba las tx canceladas desde el propio dashboard (que se guardan con dos L), solo las de la API. **Cambio de contrato:** `POST /payments/{id}/cancel` ahora responde `{"status":"cancelled"}`. Aceptable: no hay merchants integrados. **Datos existentes:** las tx de prueba con `canceled` se quedan así y seguirán dando `completed:false`; son de test, no se migró nada. **Pendiente cosmético — CERRADO 17 jul 2026:** el evento saliente ya se llama `payment.cancelled` (dos L), alineado al unificar los emisores de webhook. Descripción original del bug abajo. |
 | *(histórico del bug anterior)* | *resuelto* | Descubierto verificando el deploy del 16 jul 2026. **Coexisten las dos grafías y no las escribe el mismo sitio:** `POST /payments/{id}/cancel` guarda `canceled` (una `l`, `paymentsController.js:532`); el botón Cancelar del dashboard guarda `cancelled` (dos `l`, `backofficeRoutes.js:303`); y el webhook de Paylands mapea `CANCELLED` → `cancelled` (dos `l`, `webhooks.js:129`). Cuando se cancela por API, el webhook escribe `cancelled` y ~100 ms después el controlador lo **pisa** con `canceled`. **Consecuencia:** `hostedCheckoutController.js:260` calcula `completed` con `['approved','authorized','declined','refused','cancelled'].includes(tx.status)` — solo la grafía de dos `l`. Un pago cancelado por API devuelve **`completed: false` para siempre**; un merchant que sondee el estado, sondea eternamente. **EVIDENCIA REAL** (tx `a0408ee0-ba65-4dc7-bccb-6c3a778f8c83`, la que se verificó el 16 jul): en Mongo figura `"status":"canceled"` con `"lastWebhookRaw":{"status":"CANCELLED"}`, y su endpoint de status devuelve `{"status":"canceled","completed":false}`. El `cancel` está correctamente ejecutado contra Paylands — lo que falla es cómo queda registrado. Nota: `Transaction.status` es `{type:String, required:true}` **sin `enum`**, así que Mongoose no detecta la divergencia. **Arreglo propuesto (1 carácter, pendiente de decisión de Marcos):** `paymentsController.js:532` → `'cancelled'`. Cambia la respuesta documentada de `/cancel` (hoy `canceled`) y habría que revisar las tx ya guardadas con la grafía vieja. Ya arreglado — ver fila de arriba. |
-| Contrato inconsistente capture vs refund | Media | `captureSchema` usa `amount` plano (entero, céntimos); `refundSchema` y `cancelSchema` usan `amountOfMoney: { amount, currencyCode }`. Mismo concepto, dos formas, en endpoints hermanos. Documentado tal cual en `openapi.yaml`. No rompe nada hoy (lo verificado fue con body vacío) pero confundirá a quien integre. |
-| `x-api-key` transporta el keyId, no el secreto | Media | En modo simple (`API_KEY_SIMPLE_FALLBACK=true`), `validateApiKey()` busca por `keyId: rawKey` — es decir, el header lleva el `rawKeyId` (`mk_...`) y **el `rawSecret` no interviene**: el identificador actúa como credencial. Aceptable para Postman, no para producción. Es el motivo de que exista el modo HMAC. Documentado en `openapi.yaml` (securityScheme `ApiKeySimple`). |
+| ~~Contrato inconsistente capture vs refund~~ | ✅ **RESUELTO — 4 ago 2026** | `captureSchema` acepta ahora **`amountOfMoney: { amount, currencyCode }`** (forma CANÓNICA, la misma que `refundSchema` y `cancelSchema`) y mantiene **`amount` plano** como forma LEGADA por compatibilidad. Si llegan las dos con valores distintos → `400 capture.conflicting_amount` (no se elige una en silencio). Si no llega ninguna, se captura el importe pendiente completo, como antes. Cambio **aditivo**: ninguna integración existente se rompe. `paymentsController.capturePayment` lee `amountOfMoney?.amount ?? amount`. Documentado en `openapi.yaml` v2.9.0. **Descripción original:** `captureSchema` usaba `amount` plano (entero, céntimos) mientras `refundSchema` y `cancelSchema` usaban `amountOfMoney: { amount, currencyCode }` — mismo concepto, dos formas, en endpoints hermanos. No rompía nada (lo verificado fue con body vacío) pero confundía a quien integrase. |
+| ~~`x-api-key` transporta el keyId, no el secreto~~ | ✅ **RESUELTO — 4 ago 2026** · ⚠️ **CAMBIO DE CONTRATO** | **Era el agujero de seguridad real del proyecto, catalogado como "Media" durante tres semanas.** En modo simple (`API_KEY_SIMPLE_FALLBACK=true`), `validateApiKey()` buscaba por `keyId: rawKey`: el header llevaba el `rawKeyId` (`mk_...`) y el `rawSecret` **no intervenía en ningún momento**. El `keyId` es el identificador **PÚBLICO** de la credencial — se muestra en el panel `/admin`, viaja en claro en la cabecera `Authorization` del modo HMAC y aparece en los logs. Es decir: **el identificador público era la contraseña**, y cualquiera que lo viese tenía acceso completo a la API de ese merchant. **Corregido:** `validateApiKey()` busca ahora por `secretHash` (SHA-256 del secreto), exactamente igual que el modo HMAC. **Retirado también el fallback por `keyHash`** (SHA-256 del `keyId`), que era el mismo agujero con un hash encima. Añadido `looksLikeKeyId()` — solo diagnóstico, **no autentica**: se llama después de que la validación haya fallado, para devolver `401` con `detail: x_api_key_must_be_the_secret_not_the_key_id` en vez de un 401 mudo. Fail-closed por diseño: `validateApiKey` devuelve `merchantId` o `null`, nunca un valor truthy en caso de fallo. **CONSECUENCIA OPERATIVA:** en `x-api-key` hay que poner el **secreto (`ms_...`)**, no el `mk_...`. Toda colección de Postman que use el keyId deja de funcionar al desplegar. **Si de alguna key no se conserva el `rawSecret`** (solo se muestra UNA vez al crearla), esa key queda inservible: hay que crear otra desde `/admin` → Merchants → API Keys. Asumible por no haber merchants integrados. `HmacV1` sigue siendo el modo recomendado en producción, porque además firma la petición. 12 tests nuevos en `tests/unit/apiKeySecret.test.js`. `openapi.yaml` v2.9.0. |
 | La firma HMAC usa `secretHash`, no el secreto | Baja — solo documentación | `hmacAuth.js` hace `computeSignature(doc.secretHash, stringToHash)`: la clave del HMAC es el SHA-256 del secreto, no el `rawSecret`. Quien integre debe hashear su secreto antes. No es un fallo, pero es contraintuitivo y no estaba escrito en ningún sitio. Ya documentado en `openapi.yaml`. |
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **238/247 pasan** (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos (fix del portal, consola de onboarding en `/admin`, ojito de contraseña).** Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. `supertest` es devDependency y debe estar instalada para correr las suites de integración. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npx jest` → **259/268 pasan** (4 ago 2026; 238/247 hasta entonces) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. **CORRECCIÓN (4 ago 2026): `supertest` NO es devDependency — está en `dependencies` de `package.json`. Y `jest` NO figura en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. No se ha tocado `package.json` en esta sesión: con `node_modules` versionado y despliegue manual, cambiar dependencias tiene radio de impacto sobre el build de Render y hace falta saber su build command primero. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -440,8 +441,8 @@ ver la fila S2S de la sección 5 y la nota de sesión del 18 jul.)*
 
 Ninguno se ha "arreglado" en la spec: están documentados tal como son, con aviso.
 
-**Pendiente (no bloqueante):** publicar la spec en Swagger UI (`swagger-ui-express`)
-en `/docs`, y escribir `docs/integration-guide.md`.
+**Pendiente (no bloqueante):** ~~publicar la spec en Swagger UI en `/docs`~~ →
+✅ **HECHO 4 ago 2026** (ver sesión de esa fecha). Queda `docs/integration-guide.md`.
 
 ### M5 — PCI SAQ A formal
 - Documentar que Monetiser cumple SAQ A: el PAN nunca toca los servidores de Monetiser
@@ -749,6 +750,62 @@ bloqueada por la política del proxy (403 al CONNECT). NO se puede sondear el se
 desde aquí; "qué hay desplegado" lo confirma Marcos en su navegador, y desde aquí se valida
 leyendo el código + `node --check` + `jest`.
 
+### Sesión 4 ago 2026 — pago de deudas técnicas (§5) + un hallazgo no apuntado
+
+**Contexto:** sesión dedicada exclusivamente a saldar deuda del §5, sin funcionalidad
+nueva. **Línea base al empezar: 238/247 y arranque limpio** (reproducida antes de tocar
+nada, según el protocolo de `CLAUDE.md`). **Al terminar: 259/268** — 21 tests nuevos en
+verde, los mismos 9 fallos preexistentes de `webhooks.test.js`. Arranque verificado sin
+warnings nuevos; `node --check` OK en los 5 JS tocados.
+
+- **🔴 `x-api-key` llevaba el keyId público como credencial.** La deuda más importante de
+  las cerradas y la que peor estaba catalogada ("Media"). Detalle completo en la fila
+  correspondiente de §5. **Cambio de contrato: rompe Postman al desplegar** — en
+  `x-api-key` va ahora el secreto (`ms_...`), no el `mk_...`.
+
+- **Contrato `capture` unificado con `refund`/`cancel`.** `amountOfMoney` canónica,
+  `amount` plano legado, `400` si discrepan. Aditivo, no rompe nada. Ver §5.
+
+- **Retirada la trampa del `.validate` machacado en `paymentValidator.js`.** El módulo
+  hacía `module.exports = paymentSchema` (un objeto Joi) y acto seguido
+  `module.exports.validate = validate`, **sobrescribiéndole a la instancia de Joi su
+  propio método**. Cualquiera que hiciera `paymentSchema.validate(obj)` recibía una
+  FUNCIÓN en vez de un resultado, y su `{ error }` era SIEMPRE `undefined`: no rechazaba
+  nada, en silencio. Fue exactamente lo que dejó pasar todo en el stack `/apms` retirado
+  el 16 jul (§4). La víctima ya no existía, pero **la trampa seguía armada** para el
+  siguiente. Ahora se exporta un objeto plano con nombres explícitos y ningún schema
+  mutado. Único consumidor (`src/routes/payments.js`) ya destructuraba bien → riesgo cero.
+  9 tests nuevos en `tests/unit/paymentValidatorContract.test.js`.
+
+- **`/docs` — Swagger UI publicado** (pendiente de M4 desde el 16 jul). `GET /docs` sirve
+  `public/docs.html` y `GET /openapi.yaml` sirve la spec. **Sin dependencias npm nuevas:**
+  el bundle de Swagger UI viene de CDN (jsdelivr) precisamente porque este repo versiona
+  `node_modules` (58 MB, 4880 archivos) y añadir `swagger-ui-express` obligaría a
+  commitear su árbol entero. La CSP que permite el CDN se fija **solo en la ruta `/docs`**
+  mediante `res.setHeader` (reemplaza la que puso `helmet()`); el resto de la app conserva
+  la CSP de helmet — comprobado en vivo contra `/health`. Apagable con `DOCS_ENABLED=false`.
+  Verificado arrancando la app de verdad (con `mongoose.connect`/`createConnection`
+  stubbeados): `/docs` → 200, `/openapi.yaml` → 200 `application/yaml`, CSP correcta y
+  acotada. **PENDIENTE: abrirlo en un navegador real.** Es estático servido en una ruta
+  sin barra final — justo la clase de fallo que ni `node --check` ni `jest` detectan
+  (lección del 24 jul, §4). Los assets se referencian con ruta ABSOLUTA (`/openapi.yaml`,
+  `/Logo_Monetiser.png`) precisamente por eso.
+
+- **HALLAZGO NO APUNTADO: `openapi.yaml` no parseaba desde M6 Fase 4.** Ver la fila nueva
+  en §4. Arreglado y subido a **v2.9.0**.
+
+- **Dos afirmaciones falsas del propio DEV-LOG, corregidas:** `supertest` no es
+  devDependency (está en `dependencies`) y **`jest` no figura en `package.json`**. Ver la
+  fila de la suite de tests en §5.
+
+**NO tocado a propósito — requiere decisión de Marcos:**
+- **`.gitignore` / `node_modules` versionado (58 MB).** Sacarlo del repo depende de qué
+  build command tenga Render. Si Render no ejecuta `npm install`, el despliegue muere en
+  seco al quitar `node_modules`. **Hace falta ese dato antes de tocarlo.** Arrastra
+  también el arreglo de `package.json` (jest, script `test`, `supertest` a devDeps) y, con
+  él, la posibilidad de escribir el test de regresión de `openapi.yaml`.
+- **`WEBHOOK_SECRET`** sigue sin configurar en Render (variable, no código).
+
 ---
 
 ## 7. Elementos de seguridad
@@ -782,8 +839,9 @@ leyendo el código + `node --check` + `jest`.
 | Elemento | Prioridad |
 |---|---|
 | WEBHOOK_SECRET configurado en Render | Alta |
+| Forzar `HmacV1` en producción (`API_KEY_SIMPLE_FALLBACK=false`). Desde el 4 ago 2026 el modo simple ya usa el SECRETO y no el keyId, pero sigue siendo un bearer en claro: no firma la petición. | Media |
 | ~~Eliminar logs de debug (fullBody, tokenKeys)~~ → ✅ HECHO 16 jul 2026. Eliminados el PAN, `tokenKeys` y `tokenValue` de `proxyPciRoutes.js` y `pciProxyService.js`. `fullBody` no existía (deuda fantasma). | — |
-| Revocar el PAT de GitHub que estuvo publicado en CLAUDE.md (11-16 jul 2026) | **Alta — acción de Marcos** |
+| Revocar los PAT de GitHub expuestos. **Son DOS: (1) el publicado en `CLAUDE.md` (11-16 jul 2026), que sigue sin revocar; (2) uno nuevo pegado en el chat de sesión el 4 ago 2026.** Este repo es PÚBLICO. Un PAT pegado en un chat se considera quemado en el momento en que se pega. Revocar ambos en GitHub → Settings → Developer settings → Fine-grained tokens, y emitir uno nuevo que NO se escriba en ningún sitio persistente. | **Alta — acción de Marcos** |
 | 2FA para panel admin | Media |
 | Rotación de PAYNOPAIN_SIGNATURE | Media |
 
@@ -812,6 +870,7 @@ leyendo el código + `node --check` + `jest`.
 | Variable | Descripción |
 |---|---|
 | `WEBHOOK_SECRET` | Secret para firmar webhooks salientes. Verificar que está configurado. |
+| `DOCS_ENABLED` | `false` para ocultar la documentación pública de la API (`/docs` y `/openapi.yaml`). Por defecto ACTIVADA. Añadida el 4 ago 2026. |
 | `ENCRYPTION_KEY` | 32 bytes en hex para AES-256-GCM |
 | `FEATURE_IFRAME_GUARD` | `1` para activar validación HMAC en carga del iFrame |
 | `WEBHOOK_MAX_RETRIES` | Intentos máximos del dispatcher (default: 6) |
@@ -950,6 +1009,15 @@ POST /backoffice/merchants/:merchantId/portal-users   → Crear (superadmin) →
 ```
 
 Auth: JWT de backoffice (sesión de `/backoffice/auth/login`, rol `superadmin`).
+
+### Documentación de la API (4 ago 2026)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/docs` | Swagger UI sobre `openapi.yaml`. Bundle desde CDN (sin dependencias npm). CSP propia acotada a esta ruta. |
+| GET | `/openapi.yaml` | La spec en crudo (`application/yaml`). |
+
+Ambas se apagan con `DOCS_ENABLED=false`.
 
 ### Observabilidad
 

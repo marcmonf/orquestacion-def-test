@@ -113,37 +113,56 @@ function touchLastUsed(docId, ip) {
 }
 
 /**
- * Valida una API key simple (legacy, compat con flujo anterior sin HMAC).
- * Se mantiene para no romper nada durante la migración.
+ * Valida una API key en modo simple (x-api-key), usado por Postman/testing
+ * cuando API_KEY_SIMPLE_FALLBACK=true.
+ *
+ * LA CREDENCIAL ES EL SECRETO (`ms_...`), NUNCA EL keyId (`mk_...`).
+ *
+ * Hasta el 4 ago 2026 esta función buscaba por `keyId: rawKey`, es decir: el
+ * identificador PÚBLICO de la credencial actuaba como contraseña, y el
+ * `rawSecret` no intervenía en ningún momento. El keyId viaja en claro en la
+ * cabecera `Authorization` del modo HMAC y se muestra en el panel /admin y en
+ * los logs — cualquiera que lo viese tenía acceso completo a la API del
+ * merchant. Corregido: se busca por `secretHash` (SHA-256 del secreto), igual
+ * que hace el modo HMAC. El fallback por `keyHash` (SHA-256 del keyId) también
+ * se ha retirado por el mismo motivo: hashear un identificador público no lo
+ * convierte en credencial.
+ *
+ * Devuelve `merchantId` si la credencial es válida, o `null`. Nunca devuelve
+ * un valor truthy en caso de fallo (el llamante hace `if (!valid) → 401`).
  */
 async function validateApiKey(rawKey, merchantId, ip = null) {
   if (!rawKey || !merchantId) return null;
 
-  // Con el nuevo modelo, el keyId ES la "rawKey" en el flujo legacy.
   const doc = await MerchantApiKey.findOne({
     merchantId,
-    keyId: rawKey,
+    secretHash: hashKey(rawKey),
     active: { $ne: false }, // tolera legacy data donde 'active' no sea boolean estricto
   }).lean();
 
-  if (!doc) {
-    // Fallback: buscar por hash legacy (para keys creadas antes de la migración)
-    const hash = hashKey(rawKey);
-    const legacyDoc = await MerchantApiKey.findOne({
-      merchantId,
-      keyHash: hash,
-      active: { $ne: false },
-    }).lean();
-
-    if (!legacyDoc) return null;
-    if (legacyDoc.expiresAt && new Date() > new Date(legacyDoc.expiresAt)) return null;
-    touchLastUsed(legacyDoc._id, ip);
-    return merchantId;
-  }
-
+  if (!doc) return null;
   if (doc.expiresAt && new Date() > new Date(doc.expiresAt)) return null;
+
   touchLastUsed(doc._id, ip);
   return merchantId;
+}
+
+/**
+ * Diagnóstico para el 401 del modo simple: ¿nos han mandado el keyId público
+ * (`mk_...`) donde debía ir el secreto (`ms_...`)?
+ *
+ * Se llama SOLO después de que validateApiKey haya fallado, para poder devolver
+ * un detalle de error útil en vez de un 401 mudo. No autentica nada: devuelve
+ * un booleano y el llamante responde 401 igualmente.
+ */
+async function looksLikeKeyId(rawKey, merchantId) {
+  if (!rawKey || !merchantId) return false;
+  try {
+    const hit = await MerchantApiKey.exists({ merchantId, keyId: rawKey });
+    return Boolean(hit);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -183,6 +202,7 @@ async function listApiKeys(merchantId) {
 module.exports = {
   createApiKey,
   validateApiKey,
+  looksLikeKeyId,
   findActiveByKeyId,
   touchLastUsed,
   revokeApiKey,

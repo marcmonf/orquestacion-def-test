@@ -172,8 +172,19 @@ const CAPTURABLE_STATUSES = ['authorized', 'partially_captured'];
 exports.capturePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const { amount: reqAmount, isFinal, references, operationReferences } = req.body || {};
+    const { amount: legacyAmount, amountOfMoney, isFinal, references, operationReferences } = req.body || {};
     const idempotencyKey = req.idemKey;
+
+    // Contrato unificado (4 ago 2026): `amountOfMoney.amount` es la forma
+    // canónica (igual que refund y cancel); `amount` plano se mantiene por
+    // compatibilidad. Si llegan las dos y discrepan, no elegimos en silencio.
+    if (amountOfMoney?.amount != null && legacyAmount != null && amountOfMoney.amount !== legacyAmount) {
+      return res.status(400).json({
+        success: false,
+        message: 'capture.conflicting_amount: amountOfMoney.amount y amount no coinciden'
+      });
+    }
+    const reqAmount = amountOfMoney?.amount ?? legacyAmount;
 
     logger.info('CAPTURE.REQUEST', {
       component: 'paymentsController',

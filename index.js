@@ -191,6 +191,35 @@ app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.get('/portal-app', (req, res) => res.sendFile(path.join(__dirname, 'public/portal/index.html')));
 app.use('/portal-app', express.static(path.join(__dirname, 'public/portal')));
 
+/* ===== Documentación pública de la API (M4, pendiente desde el 16 jul 2026) =====
+ * Swagger UI sobre openapi.yaml. Sin dependencias npm nuevas: el bundle viene de
+ * CDN (ver comentario en public/docs.html — este repo versiona node_modules y
+ * añadir swagger-ui-express obligaría a commitear su árbol entero).
+ * Se puede apagar con DOCS_ENABLED=false en Render.
+ */
+if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
+  app.get('/openapi.yaml', (req, res) => {
+    res.type('application/yaml');
+    res.sendFile(path.join(__dirname, 'openapi.yaml'));
+  });
+
+  app.get('/docs', (req, res) => {
+    // CSP acotada A ESTA RUTA: helmet() aplica su default-src 'self' a toda la
+    // app y bloquearía el bundle del CDN. res.setHeader reemplaza la cabecera
+    // que helmet ya puso, sin tocar el resto de rutas.
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; " +
+      "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; " +
+      "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; " +
+      "img-src 'self' data: https://cdn.jsdelivr.net; " +
+      "font-src 'self' data: https://cdn.jsdelivr.net; " +
+      "connect-src 'self'; frame-ancestors 'none'"
+    );
+    res.sendFile(path.join(__dirname, 'public/docs.html'));
+  });
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ===== Error handler global ===== */

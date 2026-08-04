@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monetiser — Documentación de la API</title>
+  <!--
+    Swagger UI servido desde CDN a propósito: este repo versiona node_modules
+    (58 MB, 4880 archivos), así que añadir `swagger-ui-express` como dependencia
+    obligaría a commitear todo su árbol. Con el CDN, /docs no añade ni una
+    dependencia nueva al proyecto. La CSP que permite jsdelivr se fija SOLO en
+    la ruta /docs (index.js) — el resto de la app mantiene la de helmet.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css" />
+  <link rel="icon" href="/Logo_Monetiser.png" />
+  <style>
+    body { margin: 0; background: #fafafa; }
+    .topbar { display: none; }
+    #brand {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 20px; background: #0f1720; color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    #brand img { height: 28px; }
+    #brand strong { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+    #brand span { font-size: 13px; opacity: .65; margin-left: auto; }
+    #fallback {
+      display: none; padding: 24px 20px; color: #8a1f1f;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="brand">
+    <img src="/Logo_Monetiser.png" alt="Monetiser" onerror="this.style.display='none'" />
+    <strong>Monetiser — API</strong>
+    <span>Especificación: <a href="/openapi.yaml" style="color:#7fb2ff">openapi.yaml</a></span>
+  </div>
+
+  <div id="fallback">
+    No se ha podido cargar Swagger UI desde el CDN. La especificación sigue
+    disponible en crudo en <a href="/openapi.yaml">/openapi.yaml</a>.
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-standalone-preset.js" crossorigin></script>
+  <script>
+    window.addEventListener('load', function () {
+      if (typeof SwaggerUIBundle !== 'function') {
+        document.getElementById('fallback').style.display = 'block';
+        return;
+      }
+      SwaggerUIBundle({
+        url: '/openapi.yaml',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        docExpansion: 'none',
+        defaultModelsExpandDepth: 0,
+        tryItOutEnabled: false,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: 'BaseLayout'
+      });
+    });
+  </script>
+</body>
+</html>

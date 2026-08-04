@@ -11,15 +11,20 @@
  *   Content-Type: application/json
  *
  * Modo simple (dev/Postman):
- *   x-api-key: <rawKeyId>
+ *   x-api-key: <rawSecret>      ← el SECRETO (ms_...), NO el keyId (mk_...)
  *   x-merchant-id: <merchantId>
  *
  * El modo simple solo está activo si API_KEY_SIMPLE_FALLBACK=true en ENV.
+ *
+ * CAMBIO DE CONTRATO (4 ago 2026): hasta esta fecha el modo simple aceptaba el
+ * `keyId` público como credencial y el secreto no intervenía. Corregido en
+ * apiKeyService.validateApiKey (busca por secretHash). Quien mande el keyId
+ * recibe 401 con detalle `x_api_key_must_be_the_secret_not_the_key_id`.
  */
 
 const crypto             = require('crypto');
 const getMessage         = require('../i18n/getMessage');
-const { findActiveByKeyId, touchLastUsed, validateApiKey } = require('../services/apiKeyService');
+const { findActiveByKeyId, touchLastUsed, validateApiKey, looksLikeKeyId } = require('../services/apiKeyService');
 
 const TOLERANCE_MS    = (parseInt(process.env.HMAC_DATE_TOLERANCE_MINUTES || '5', 10)) * 60 * 1000;
 const AUTH_PREFIX     = 'GCS v1HMAC:';
@@ -102,7 +107,16 @@ async function hmacAuth(req, res, next) {
 
     const ip    = (req.headers['x-forwarded-for'] || '').split(',')[0] || req.ip || null;
     const valid = await validateApiKey(rawKey, merchantId, ip);
-    if (!valid) return unauthorized(res, lang, 'invalid_api_key_simple');
+    if (!valid) {
+      // 401 igualmente; solo afinamos el detalle para no dejar un fallo mudo
+      // al integrador que manda el keyId público en vez del secreto.
+      const sentKeyId = await looksLikeKeyId(rawKey, merchantId);
+      return unauthorized(
+        res,
+        lang,
+        sentKeyId ? 'x_api_key_must_be_the_secret_not_the_key_id' : 'invalid_api_key_simple'
+      );
+    }
 
     req.merchantId = merchantId;
     req.authMethod = 'api_key_simple';

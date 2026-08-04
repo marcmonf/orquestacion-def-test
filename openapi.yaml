@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.8.0
+  version: 2.9.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -806,8 +806,9 @@ paths:
         **El `rawSecret` se devuelve UNA SOLA VEZ**, en esta respuesta. No se puede
         recuperar después: en Mongo solo queda su hash.
 
-        Ver la nota sobre qué es realmente `x-api-key` en el esquema de seguridad
-        `ApiKeySimple` — hoy el header lleva el `rawKeyId`, no el `rawSecret`.
+        Este `rawSecret` es lo que va en el header `x-api-key` del modo simple
+        (desde el 4 ago 2026) y lo que se hashea para firmar en modo `HmacV1`.
+        El `rawKeyId` es público: identifica la credencial, no la autoriza.
       parameters:
         - $ref: '#/components/parameters/MerchantIdPath'
       requestBody:
@@ -1751,8 +1752,6 @@ paths:
         '401':
           description: Sin token o token inválido.
         '403':
-          description: Rol insuficiente o password sin cambiar.
-        '403':
           description: Rol insuficiente, password sin cambiar, o crear fuera del subárbol asignado (`outside_your_scope`).
         '404':
           description: El `parentId` no existe en este merchant (`parent_not_found`) — incluye el caso cross-tenant.
@@ -1977,14 +1976,22 @@ components:
         **Solo funciona si `API_KEY_SIMPLE_FALLBACK=true` en el entorno.** Si no lo
         está, hay que usar `HmacV1`.
 
-        > **Cuidado con qué va en este header.** Hoy `x-api-key` lleva el
-        > **`rawKeyId`** (`mk_...`), no el `rawSecret` (`ms_...`). Verificado en
-        > `validateApiKey()` de `src/services/apiKeyService.js`: busca por
-        > `keyId: rawKey`. El `rawSecret` no interviene en este modo.
+        **En este header va el `rawSecret` (`ms_...`), NUNCA el `rawKeyId`
+        (`mk_...`).** `validateApiKey()` en `src/services/apiKeyService.js` busca
+        por `secretHash` (SHA-256 del secreto), igual que el modo HMAC.
+
+        > **Cambio de contrato — 4 ago 2026.** Hasta esa fecha este header
+        > llevaba el `rawKeyId` y el `rawSecret` no intervenía en ningún momento:
+        > el identificador PÚBLICO de la credencial (visible en `/admin`, en la
+        > cabecera `Authorization` del modo HMAC y en los logs) actuaba como
+        > contraseña. Corregido. También se retiró el fallback por `keyHash`
+        > (SHA-256 del `keyId`), que era el mismo agujero con un hash encima.
         >
-        > Es decir: **en modo simple el secreto no se usa, y el identificador actúa
-        > como credencial.** Aceptable para pruebas; no para producción. Ese es el
-        > motivo por el que existe `HmacV1`.
+        > Quien mande el `keyId` recibe `401` con
+        > `detail: "x_api_key_must_be_the_secret_not_the_key_id"`.
+        >
+        > Sigue siendo un bearer secret en claro: `HmacV1` continúa siendo el
+        > modo recomendado en producción, porque además firma la petición.
 
         Requiere acompañarlo del header `x-merchant-id`.
 
@@ -2404,16 +2411,40 @@ components:
       type: object
       description: |
         `captureSchema` en `src/validators/paymentValidator.js`.
+        Rechaza campos desconocidos.
 
-        > **Inconsistencia real:** aquí el importe es `amount` **plano**, mientras
-        > que en refund y cancel es `amountOfMoney.amount`. No es un error de esta
-        > spec: es así en el código. Rechaza campos desconocidos.
+        El importe admite dos grafías:
+        `amountOfMoney` (**canónica**, la misma que refund y cancel) y `amount`
+        plano (**legada**, se mantiene por compatibilidad). Si se omiten las dos,
+        se captura el importe pendiente completo. Si se mandan las dos con
+        valores distintos → `400 capture.conflicting_amount`.
+
+        > **Inconsistencia resuelta el 4 ago 2026.** Antes solo existía `amount`
+        > plano mientras refund y cancel usaban `amountOfMoney.amount`: mismo
+        > concepto, dos formas, en endpoints hermanos. No rompía nada, pero
+        > confundía a quien integrase. Ahora los tres comparten forma canónica.
       properties:
+        amountOfMoney:
+          type: object
+          description: Forma **canónica**, idéntica a la de refund y cancel.
+          properties:
+            amount:
+              type: integer
+              minimum: 1
+              description: '**Céntimos.**'
+            currencyCode:
+              type: string
+              minLength: 3
+              maxLength: 3
+          required: [amount]
+          additionalProperties: false
         amount:
           type: integer
           minimum: 1
           description: |
-            **Céntimos.** Si se omite, se captura el importe pendiente completo.
+            **Céntimos. Forma legada**, equivalente a `amountOfMoney.amount`.
+            Si se omite (y no hay `amountOfMoney`), se captura el importe
+            pendiente completo. Preferir `amountOfMoney` en integraciones nuevas.
         isFinal:
           type: boolean
           description: Marca esta captura como la última de la autorización.
