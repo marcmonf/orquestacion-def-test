@@ -237,7 +237,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npx jest` → **259/268 pasan** (4 ago 2026; 238/247 hasta entonces) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. **CORRECCIÓN (4 ago 2026): `supertest` NO es devDependency — está en `dependencies` de `package.json`. Y `jest` NO figura en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. No se ha tocado `package.json` en esta sesión: con `node_modules` versionado y despliegue manual, cambiar dependencias tiene radio de impacto sobre el build de Render y hace falta saber su build command primero. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| Suite de tests no verde en algunos entornos | Media | `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -667,8 +667,8 @@ la descargáis para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA).**
   email (`POST /invoices/:id/send`), **facturación mensual** (`POST /billing/run` finaliza
   y opcionalmente envía todos los de un mes cerrado) y **export CSV** para el ERP
   (`GET /billing/export`).
-- **Deps nuevas**: `pdfkit` + `nodemailer` (node_modules se versiona en este repo — sin
-  `.gitignore`). **Tests nuevos verdes**; suite **225/234**. `openapi.yaml` v2.7.0.
+- **Deps nuevas**: `pdfkit` + `nodemailer`. *(Cuando se escribió esto, `node_modules` se
+  versionaba y no había `.gitignore`. Retirado el 4 ago 2026 — ver esa sesión.)* **Tests nuevos verdes**; suite **225/234**. `openapi.yaml` v2.7.0.
 - **Aviso fiscal**: correcta por construcción, pero la validez legal (campos, **Verifactu/SII**)
   la confirma el asesor. Configurable para adaptarlo.
 
@@ -798,13 +798,48 @@ warnings nuevos; `node --check` OK en los 5 JS tocados.
   devDependency (está en `dependencies`) y **`jest` no figura en `package.json`**. Ver la
   fila de la suite de tests en §5.
 
-**NO tocado a propósito — requiere decisión de Marcos:**
-- **`.gitignore` / `node_modules` versionado (58 MB).** Sacarlo del repo depende de qué
-  build command tenga Render. Si Render no ejecuta `npm install`, el despliegue muere en
-  seco al quitar `node_modules`. **Hace falta ese dato antes de tocarlo.** Arrastra
-  también el arreglo de `package.json` (jest, script `test`, `supertest` a devDeps) y, con
-  él, la posibilidad de escribir el test de regresión de `openapi.yaml`.
+**Segundo bloque de la misma sesión — higiene del repositorio.** Desbloqueado al ver el
+log de despliegue del commit `8225640`, que confirma que **el build command de Render es
+`npm install`**. Ese era el único dato que faltaba.
+
+- **`node_modules` RETIRADO del repositorio + `.gitignore` creado.** Este repo, que es
+  **PÚBLICO**, versionaba las dependencias enteras: **58 MB y 4880 archivos commiteados**,
+  y no existía `.gitignore` de ningún tipo. Verificado ANTES de tocar nada, sobre un clon
+  limpio del commit desplegado: borrar `node_modules` y lanzar `npm install` instala 182
+  paquetes (**el mismo recuento que audita Render**), la app arranca sin fallos de módulo y
+  la suite da la misma cifra. `package-lock.json` estaba completo y sano. Efecto: el repo
+  baja de ~75 MB a ~2 MB, los diffs dejan de estar sepultados y las dependencias pasan a
+  resolverse donde deben, en el despliegue.
+- **`package.json` arreglado.** `jest` **no figuraba en absoluto** pese a existir
+  `jest.config.json` y 28 ficheros de test — para reproducir la línea base había que
+  instalarlo a mano. Añadido como devDependency junto a `js-yaml`; `supertest` movido de
+  `dependencies` a `devDependencies` (comprobado que no lo requiere nada de `src/` ni
+  `index.js`); añadido el script **`npm test`**. `package-lock.json` regenerado con
+  `--package-lock-only`.
+- **`tests/unit/openapiSpec.test.js` — blindaje de la spec (5 tests).** Parseo (que es lo
+  que caza las claves duplicadas), versión OpenAPI 3.x, **cero `$ref` internos rotos**,
+  toda ruta con al menos una operación y toda operación con `responses`. Ya no puede
+  repetirse lo de cinco versiones con la spec rota sin que nadie se entere. Solo era
+  escribible después de declarar `js-yaml` como devDependency.
+- **Suite tras este bloque: 264/273** (mismos 9 fallos preexistentes de `webhooks.test.js`).
+
+**Doble verificación del riesgo de despliegue** (era el cambio con más radio de impacto de
+toda la sesión): (1) instalación completa desde cero → arranca + `npm test` 264/273; (2)
+instalación **solo de producción** (`NODE_ENV=production npm install --omit=dev`, 167
+paquetes) → arranca sin fallos de módulo y `/docs` y `/openapi.yaml` siguen respondiendo
+200. El segundo escenario es el que importaba: si `supertest` hubiera hecho falta en
+runtime, moverlo a devDependencies habría roto producción en silencio.
+
+**Vulnerabilidad conocida y NO resuelta:** `npm audit` reporta 1 de severidad **alta** en
+`ip-address` (SSRF / bypass de trust-boundary). Es **transitiva**:
+`mongoose@7 → mongodb@5 → socks → ip-address`. **`npm audit fix` no la resuelve** — haría
+falta subir `mongoose` de versión mayor, que es un cambio con su propio riesgo y merece
+sesión propia. Exposición práctica baja (no se usa proxy SOCKS para Mongo), pero queda
+anotada, no ignorada.
+
+**NO tocado a propósito:**
 - **`WEBHOOK_SECRET`** sigue sin configurar en Render (variable, no código).
+- **Subir `mongoose` de major** para cerrar el aviso de `ip-address`.
 
 ---
 

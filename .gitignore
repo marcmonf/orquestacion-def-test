@@ -1,0 +1,24 @@
+# Dependencias — se instalan en el despliegue, no se versionan.
+#
+# Hasta el 4 ago 2026 este repo NO tenía .gitignore y versionaba node_modules
+# entero: 58 MB y 4880 archivos commiteados, en un repositorio PÚBLICO.
+# Se ha retirado tras verificar que el build command de Render es `npm install`
+# (visto en el log de despliegue del commit 8225640) y que un clon limpio sin
+# node_modules instala, arranca y pasa la suite igual: 182 paquetes, 259/268.
+node_modules/
+
+# Variables de entorno — el repo es público. Solo se versiona .env.example.
+.env
+.env.*
+!.env.example
+
+# Artefactos de test y build
+coverage/
+*.log
+npm-debug.log*
+
+# Sistema operativo / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
