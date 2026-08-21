@@ -3,6 +3,7 @@
 
 const express = require('express');
 const request = require('supertest');
+const crypto  = require('crypto');
 
 const PAYNOPAIN_SIGNATURE = 'test_sig_literal_value';
 
@@ -42,14 +43,27 @@ function buildApp() {
   return app;
 }
 
-// El body real que envía Paylands: order_uuid (no order.token), signature en raíz
+// Paylands NO manda la firma en claro: manda `validation_hash`, que es
+//   SHA-256( JSON.stringify({ order, client [, extra_data] }) + PAYNOPAIN_SIGNATURE )
+// `extra_data` entra en el hash SOLO si viene en el body — incluirlo como null
+// fue un bug real de produccion (DEV-LOG §4). Reimplementado aqui a proposito,
+// no importado de src/: asi un cambio de formula en la ruta rompe estos tests.
+function validationHash(body) {
+  const hashObj = { order: body.order || null, client: body.client || null };
+  if (body.extra_data !== undefined) hashObj.extra_data = body.extra_data;
+  return crypto.createHash('sha256')
+    .update(JSON.stringify(hashObj) + PAYNOPAIN_SIGNATURE)
+    .digest('hex');
+}
+
+// El body real que envía Paylands: order_uuid (no order.token), firmado.
 function buildPaylandsBody(overrides = {}) {
-  return {
-    signature: PAYNOPAIN_SIGNATURE,
+  const body = {
     order_uuid: 'mock-order-uuid-123',
     status: 'paid',
     ...overrides,
   };
+  return { ...body, validation_hash: validationHash(body) };
 }
 
 function mockTxDoc(overrides = {}) {
@@ -78,18 +92,24 @@ describe('POST /webhooks/paynopain — firma', () => {
       .send(buildPaylandsBody());
     expect(res.status).toBe(200);
     expect(res.body.received).toBe(true);
+    // Sin estas dos, el test pasa TAMBIEN por la rama ignored:true — que es
+    // exactamente lo que hacia mientras la firma no se enviaba bien.
+    expect(res.body.ignored).toBeUndefined();
+    expect(res.body.paymentId).toBe('pay-test-001');
   });
 
-  test('200 con ignored:true — firma inválida', async () => {
+  test('200 con ignored:true — validation_hash incorrecto', async () => {
+    // Mismo largo que un sha256 en hex: obliga a pasar por timingSafeEqual
+    // en vez de cortar por el chequeo de longitud.
     const res = await request(app)
       .post('/webhooks/paynopain')
       .set('Content-Type', 'application/json')
-      .send(buildPaylandsBody({ signature: 'firma-incorrecta' }));
+      .send({ ...buildPaylandsBody(), validation_hash: 'f'.repeat(64) });
     expect(res.status).toBe(200);
     expect(res.body.ignored).toBe(true);
   });
 
-  test('200 con ignored:true — sin signature', async () => {
+  test('200 con ignored:true — sin validation_hash', async () => {
     const res = await request(app)
       .post('/webhooks/paynopain')
       .set('Content-Type', 'application/json')
@@ -99,12 +119,15 @@ describe('POST /webhooks/paynopain — firma', () => {
   });
 
   test('200 con ignored:true — sin order_uuid', async () => {
+    // Firma VALIDA a proposito: con una invalida la ruta corta antes y este
+    // test nunca llega a ejercitar la rama de order_uuid que dice probar.
     const res = await request(app)
       .post('/webhooks/paynopain')
       .set('Content-Type', 'application/json')
-      .send({ signature: PAYNOPAIN_SIGNATURE, status: 'paid' });
+      .send(buildPaylandsBody({ order_uuid: undefined }));
     expect(res.status).toBe(200);
     expect(res.body.ignored).toBe(true);
+    expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
   });
 
   test('200 — transacción no encontrada no bloquea Paylands', async () => {
@@ -114,6 +137,7 @@ describe('POST /webhooks/paynopain — firma', () => {
       .set('Content-Type', 'application/json')
       .send(buildPaylandsBody());
     expect(res.status).toBe(200);
+    expect(mockFindOneAndUpdate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -172,6 +196,9 @@ describe('POST /webhooks/paynopain — dispatcher saliente', () => {
       .post('/webhooks/paynopain')
       .set('Content-Type', 'application/json')
       .send(buildPaylandsBody());
+    // La tx SI se encontro y actualizo — lo que no hay es a quien notificar.
+    // Sin esta linea el test pasa aunque la peticion muera antes de llegar aqui.
+    expect(mockFindOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(dispatcher.enqueue).not.toHaveBeenCalled();
   });
 
