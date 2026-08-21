@@ -237,7 +237,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| Suite de tests no verde en algunos entornos | Media | `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): la suite necesita MongoDB en memoria / config de entorno que no siempre está. Verificado clonando el código original. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -840,6 +840,76 @@ anotada, no ignorada.
 **NO tocado a propósito:**
 - **`WEBHOOK_SECRET`** sigue sin configurar en Render (variable, no código).
 - **Subir `mongoose` de major** para cerrar el aviso de `ip-address`.
+
+### Sesión 21 ago 2026 — suite a 273/273: los 9 fallos no eran de MongoDB
+
+**Contexto:** sesión dedicada solo a cerrar los 9 fallos de
+`tests/integration/webhooks.test.js`. **Línea base reproducida antes de tocar nada:
+264/273**, según el protocolo de `CLAUDE.md`. **Al terminar: 273/273**, sin tocar una
+sola línea de `src/`.
+
+**La causa que este DEV-LOG daba por buena era falsa.** Durante semanas esta fila (§5)
+afirmó que los 9 fallos eran porque "la suite necesita MongoDB en memoria / config de
+entorno que no siempre está". No es cierto, y era comprobable en un minuto: el fichero
+mockea `Transaction`, `WebhookEvent`, `webhookDispatcher`, `TraceLog` y `logger` — no
+toca Mongo por ningún sitio, y falla igual en cualquier máquina.
+
+**Causa real — el test firmaba el webhook con un contrato muerto.** El test mandaba
+`signature: <valor literal de PAYNOPAIN_SIGNATURE>` en la raíz del body. La ruta
+verifica otra cosa: `validation_hash` = `SHA-256(JSON.stringify({order, client[,
+extra_data]}) + PAYNOPAIN_SIGNATURE)` (§4, incluida la regla de excluir `extra_data`
+si no viene). Como `body.validation_hash` era `undefined`, **todas** las peticiones del
+fichero caían en la rama de firma inválida y salían por `{received:true, ignored:true}`
+(`webhooks.js:91`), sin llegar nunca al mapeo de estados ni al dispatcher.
+
+Eso explica el patrón exacto de fallos, que es la pista que lo delata: fallaban los 9
+asserts que dependían de pasar la firma, y "pasaban" los que solo miraban `status 200` o
+`received:true` — cosas que la rama `ignored` cumple igual.
+
+**`src/` no se tocó, y es lo correcto.** El contrato `validation_hash` es el bueno: está
+depurado contra Paylands real (§4 documenta incluso el bug del `extra_data: null`) y la
+prueba definitiva es que hay transacciones reales en Mongo con `lastWebhookRaw`, campo
+que esta misma ruta escribe **después** de validar la firma. Si la firma no pasara, no
+existirían. El test estaba caducado; la producción, no.
+
+**Tampoco aplicaba `memoryModel`.** Era la vía que parecía obvia (es el patrón del portal
+de M6), pero no arregla nada aquí: la petición no llegaba nunca a la capa de datos, y
+`Transaction`/`WebhookEvent` ya estaban mockeados. Habría sido maquinaria nueva sobre un
+problema que no era de datos.
+
+**4 falsos verdes destapados de propina.** Al firmar bien, 4 tests que "pasaban" resultan
+no estar probando lo que dicen. Asegurados con asserts que distinguen la rama buena de la
+rama `ignored`:
+- `firma válida y transacción encontrada` — pasaba con la firma **inválida**; solo miraba
+  `received:true`, que la rama `ignored` también devuelve.
+- `sin order_uuid` — salía por la rama de firma, sin ejercitar nunca la de `order_uuid`.
+- `enqueue NO se llama cuando callbackUrl es null` — pasaba porque `enqueue` no se
+  llamaba **jamás**, con cualquier entrada.
+- `transacción no encontrada` — no comprobaba siquiera que se hubiese buscado.
+
+La fórmula del hash se reimplementa en el test a propósito, sin importarla de `src/`: así
+un cambio de fórmula en la ruta rompe estos tests en vez de arrastrarlos.
+
+**HALLAZGO ANOTADO Y NO TOCADO — comentario mentiroso en `src/routes/webhooks.js:28-31`.**
+La cabecera de la ruta sigue diciendo: *"Paylands incluye en el body el campo `signature`
+que es el valor literal de PAYNOPAIN_SIGNATURE (no un hash calculado)"*. Es **falso** y
+contradice al código que tiene 15 líneas más abajo, que calcula el SHA-256 de
+`validation_hash`. Describe el contrato viejo — con toda probabilidad es de donde salió
+el test caducado, y es la clase de comentario que hace que el siguiente que pase "arregle"
+el código en vez del test. **No se toca porque está en `src/` y esta sesión no tenía
+autorización para ello.** Es solo comentario, riesgo cero, un borrado de 4 líneas.
+
+**Verificación (protocolo de `CLAUDE.md`, antes de cada commit):** `npm test` → 273/273 y
+arranque real de la app con `MONGO_URI` apuntando a un Mongo inexistente → **0 warnings**
+(ni `no montado`, ni `no exporta un Router válido`, ni `Cannot find module`): el grafo de
+requires resuelve entero, porque las rutas se montan (`index.js:110-192`) antes del
+`mongoose.connect` (`index.js:244`). El crash posterior por `ECONNREFUSED 27017` es solo
+que no hay Mongo local, no un fallo de la app.
+
+**NO tocado a propósito:**
+- **`src/routes/webhooks.js:28-31`** — el comentario falso de arriba. Requiere permiso.
+- Todo lo que ya venía de la sesión del 4 ago: `WEBHOOK_SECRET` sin configurar en Render y
+  el major de `mongoose` pendiente por el aviso de `ip-address`.
 
 ---
 
