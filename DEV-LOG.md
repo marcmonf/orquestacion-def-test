@@ -835,11 +835,13 @@ runtime, moverlo a devDependencies habría roto producción en silencio.
 `mongoose@7 → mongodb@5 → socks → ip-address`. **`npm audit fix` no la resuelve** — haría
 falta subir `mongoose` de versión mayor, que es un cambio con su propio riesgo y merece
 sesión propia. Exposición práctica baja (no se usa proxy SOCKS para Mongo), pero queda
-anotada, no ignorada.
+anotada, no ignorada. **→ ✅ CERRADA el 21 ago 2026 (`8967562`), y sin tocar `mongoose`:
+el diagnóstico de "haría falta subir mongoose de major" caducó. Ver esa sesión.**
 
 **NO tocado a propósito:**
 - **`WEBHOOK_SECRET`** sigue sin configurar en Render (variable, no código).
-- **Subir `mongoose` de major** para cerrar el aviso de `ip-address`.
+- ~~**Subir `mongoose` de major** para cerrar el aviso de `ip-address`.~~ → **innecesario:
+  cerrado el 21 ago 2026 actualizando solo `ip-address`, que ya tiene parche compatible.**
 
 ### Sesión 21 ago 2026 — suite a 273/273: los 9 fallos no eran de MongoDB
 
@@ -912,8 +914,47 @@ requires resuelve entero, porque las rutas se montan (`index.js:110-192`) antes 
 que no hay Mongo local, no un fallo de la app.
 
 **NO tocado a propósito:**
-- Todo lo que ya venía de la sesión del 4 ago: `WEBHOOK_SECRET` sin configurar en Render y
-  el major de `mongoose` pendiente por el aviso de `ip-address`.
+- **`WEBHOOK_SECRET`** sigue sin configurar en Render (variable, no código), heredado de la
+  sesión del 4 ago.
+- El major de `mongoose` **ya no hace falta** — ver el bloque siguiente.
+
+### Sesión 21 ago 2026 (bloque 2) — cerrada la alerta de `ip-address` sin tocar `mongoose`
+
+**Las "3 vulnerabilidades" que anuncia GitHub al hacer push son 3 avisos sobre UN solo
+paquete**, no tres problemas: `ip-address`, con 1 alta y 2 moderadas. GitHub cuenta
+avisos; `npm audit` cuenta paquetes y las agrega en "1 high". De ahí la discrepancia de
+cifras, que confundía.
+
+Los tres avisos son variantes del mismo fallo: se le cuelan direcciones IP escritas de
+forma retorcida (ceros a la izquierda, sufijo CIDR, IPv6 mapeada a IPv4) y clasifica una
+dirección interna como pública, saltándose comprobaciones de SSRF / trust-boundary.
+
+**El diagnóstico del 4 ago había caducado.** Aquella sesión concluyó —correctamente, en
+su momento— que `npm audit fix` no lo resolvía y que haría falta subir `mongoose` de
+versión mayor, "un cambio con su propio riesgo que merece sesión propia". Entre medias se
+publicaron versiones parcheadas (`10.3.1`, `10.4.0`, `10.5.0`) y `socks@2.8.9` declara
+`ip-address: ^10.1.1`, así que **`10.5.0` entra en el rango que el árbol ya aceptaba**.
+Resultado: `npm update ip-address`, **3 líneas de `package-lock.json`**, cero cambios en
+`mongoose` y cero en `package.json` (es transitiva, no dependencia directa).
+
+Lección para el §5: una fila de deuda marcada como "no arreglable" caduca. Los parches
+aguas arriba aparecen sin avisar. Conviene revalidar antes de asumir el coste alto — aquí
+la diferencia era entre "sesión propia con riesgo de major" y tres líneas.
+
+**Exposición real previa: baja**, y esto no cambia. `socks` solo entra en juego si Mongo
+se conecta a través de un proxy SOCKS, y Atlas se conecta directo, así que el código
+vulnerable no llegaba a ejecutarse. Se cierra igual por ser un sistema de pagos, no
+porque estuviera explotable.
+
+**Verificación:** `npm audit` → **0 vulnerabilidades** (antes 1 alta); `npm test` →
+**273/273**; arranque real → 0 warnings; y la comprobación que de verdad importa aquí,
+**instalación solo de producción desde cero** (`NODE_ENV=production npm install
+--omit=dev`) → **167 paquetes, el mismo recuento que audita Render**, y 0
+vulnerabilidades. Ese último check es el que descarta que el cambio rompa el servidor.
+
+**⚠️ ESTE SÍ REQUIERE DEPLOY.** A diferencia del bloque 1 de esta sesión (tests y
+documentación, sin cambio de comportamiento), este commit cambia lo que se instala en el
+servidor. Marcos lo despliega a mano desde Render, como siempre.
 
 ---
 
