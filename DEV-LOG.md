@@ -890,14 +890,19 @@ rama `ignored`:
 La fórmula del hash se reimplementa en el test a propósito, sin importarla de `src/`: así
 un cambio de fórmula en la ruta rompe estos tests en vez de arrastrarlos.
 
-**HALLAZGO ANOTADO Y NO TOCADO — comentario mentiroso en `src/routes/webhooks.js:28-31`.**
+**HALLAZGO — comentario mentiroso en `src/routes/webhooks.js:28-31`. ✅ ARREGLADO en la
+misma sesión, tras autorización expresa de Marcos (`461586f`).**
 La cabecera de la ruta sigue diciendo: *"Paylands incluye en el body el campo `signature`
 que es el valor literal de PAYNOPAIN_SIGNATURE (no un hash calculado)"*. Es **falso** y
 contradice al código que tiene 15 líneas más abajo, que calcula el SHA-256 de
 `validation_hash`. Describe el contrato viejo — con toda probabilidad es de donde salió
 el test caducado, y es la clase de comentario que hace que el siguiente que pase "arregle"
-el código en vez del test. **No se toca porque está en `src/` y esta sesión no tenía
-autorización para ello.** Es solo comentario, riesgo cero, un borrado de 4 líneas.
+el código en vez del test. Se anotó primero como hallazgo sin tocar (está en `src/`) y **Marcos autorizó
+arreglarlo**: la cabecera describe ahora el contrato real. De paso se quitó la
+duplicación — la fórmula estaba escrita **dos veces** (cabecera + inline), que es
+precisamente el mecanismo por el que una de las dos se quedó obsoleta; queda una sola.
+Solo comentarios, cero líneas ejecutables, verificado igualmente con suite (273/273) y
+arranque limpio.
 
 **Verificación (protocolo de `CLAUDE.md`, antes de cada commit):** `npm test` → 273/273 y
 arranque real de la app con `MONGO_URI` apuntando a un Mongo inexistente → **0 warnings**
@@ -907,7 +912,6 @@ requires resuelve entero, porque las rutas se montan (`index.js:110-192`) antes 
 que no hay Mongo local, no un fallo de la app.
 
 **NO tocado a propósito:**
-- **`src/routes/webhooks.js:28-31`** — el comentario falso de arriba. Requiere permiso.
 - Todo lo que ya venía de la sesión del 4 ago: `WEBHOOK_SECRET` sin configurar en Render y
   el major de `mongoose` pendiente por el aviso de `ip-address`.
 
