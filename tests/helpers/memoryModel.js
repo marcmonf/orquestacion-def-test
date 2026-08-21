@@ -4,9 +4,12 @@
 // Modelo Mongoose MÍNIMO en memoria para tests, fiel a las operaciones que usan
 // las rutas del portal. Permite probar el AISLAMIENTO de verdad, en caja negra:
 // se siembran usuarios de A y B, y una query {_id, merchantId} que no casa
-// devuelve null → la ruta responde 404. No depende de mongodb-memory-server (que
-// no está disponible en este entorno — ver DEV-LOG §5, los 9 fallos preexistentes
-// de webhooks.test.js son justamente por eso).
+// devuelve null → la ruta responde 404. No depende de mongodb-memory-server, que
+// no está disponible en este entorno.
+//
+// OJO: este comentario afirmaba que los 9 fallos de webhooks.test.js eran "por
+// eso" (falta de mongodb-memory-server). Era FALSO — no tenían nada que ver con
+// Mongo: el test firmaba mal el webhook. Arreglado 21 ago 2026, ver DEV-LOG.
 //
 // Soporta lo que el código real invoca:
 //   create(data) · findOne(query) · findById(id) · countDocuments(query)
