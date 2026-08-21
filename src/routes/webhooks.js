@@ -26,9 +26,11 @@ const logger       = require('../utils/logger');
 // en su página de tarjeta.
 //
 // Seguridad:
-//   Paylands incluye en el body el campo "signature" que es el valor literal
-//   de PAYNOPAIN_SIGNATURE (no un hash calculado). Lo verificamos por
-//   comparación timing-safe para evitar ataques de timing.
+//   Paylands manda en el body el campo "validation_hash", que es:
+//     SHA-256( JSON.stringify({ order, client [, extra_data] }) + PAYNOPAIN_SIGNATURE )
+//   Lo recalculamos y comparamos timing-safe para evitar ataques de timing.
+//   OJO: extra_data entra en el hash SOLO si viene en el body. Incluirlo como
+//   null hacia que el hash no cuadrase NUNCA — bug real, ver DEV-LOG §4.
 //
 // Flujo:
 //   1. Verificar firma
@@ -42,9 +44,7 @@ const logger       = require('../utils/logger');
 router.post('/paynopain', async (req, res) => {
   const body = req.body || {};
 
-  // ── 1. Verificar firma ──────────────────────────────────────────────────────
-  // Paylands valida el webhook con un campo "validation_hash" calculado así:
-  //   SHA-256( JSON.stringify({ order, client, extra_data }) + PAYNOPAIN_SIGNATURE )
+  // ── 1. Verificar firma (fórmula en la cabecera de la ruta) ──────────────────
   const signatureKey = process.env.PAYNOPAIN_SIGNATURE || '';
 
   if (!signatureKey) {
