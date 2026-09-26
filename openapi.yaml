@@ -2,12 +2,39 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.9.0
+  version: 2.10.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.10.0 (26 sep 2026)** — Auditoría de seguridad y corrección. Cambios de
+    contrato (ver DEV-LOG, sesión 26 sep 2026):
+      - **Validación estricta del pedido:** `order.amountOfMoney.amount` entero ≥ 1
+        (unidades menores) y `currencyCode` dentro de las divisas soportadas (hoy
+        solo `EUR`: el conector de Paylands no envía la divisa, la fija el service).
+        `returnUrl` solo http(s); `webhookUrl` solo https y nunca hacia redes privadas.
+      - **Estado de pagos aislado por merchant:** consultar un pago de otro merchant
+        devuelve 404. `completed` es `true` para CUALQUIER estado final (incluidos
+        captured/refunded/cancelled...).
+      - **Webhook por defecto:** si el pago no trae `feedbacks.webhookUrl`, se usa el
+        `webhookUrl` configurado en la ficha del merchant.
+      - **Webhooks salientes:** cada evento lleva `id` (`evt_...`, también en la
+        cabecera `Monetiser-Event-Id`) y `data.merchantReference`. Reintentos
+        persistentes durante ~2 días (1 min, 5 min, 15 min, 1 h, 3 h, 6 h, 12 h, 24 h).
+        Un evento solo se envía si el estado CAMBIÓ; un webhook tardío del
+        adquirente ya no hace retroceder un pago (p. ej. `captured` → `authorized`).
+      - **Refund de un pago autorizado sin capturar** (DEFERRED) → `409
+        refund.capture_required` (antes 502 envolviendo el 409 de Paylands).
+      - **Webhook entrante de Paylands:** firma inválida → `401`; sin
+        `PAYNOPAIN_SIGNATURE` → `500` (antes `200 ignored`: el evento se perdía).
+      - **`GET /webhooks` y `POST /orchestration/decide`** pasan a ser internos
+        (`X-Admin-Token`). `decide` acepta `bin` (6-8 dígitos), nunca el PAN.
+      - **Alta de merchant:** el servidor genera el secreto de firma de webhooks y lo
+        devuelve UNA vez (`webhookSigningSecret`); ya no se acepta `signingSecret`.
+      - Retirado `POST /iframe-process` (público, aceptaba PAN y aprobaba con el
+        conector simulado).
 
     **v2.8.0 (20 jul 2026)** — M7 Bloque 2 (adquirentes + coste real). Multi-adquirente
     (N; hoy solo Paylands en vivo). El merchant gestiona sus **fichas de adquirente**
@@ -263,6 +290,10 @@ paths:
 
         Es una alternativa al webhook para conocer el desenlace del pago, pero el
         webhook es el mecanismo recomendado: este endpoint hay que sondearlo.
+
+        **Aislado por merchant (v2.10.0):** solo devuelve checkouts del merchant
+        autenticado; el de otro merchant responde 404. `completed` es `true` en
+        cualquier estado final (authorized, captured, refunded, cancelled, declined...).
       security:
         - ApiKeySimple: []
           MerchantId: []
@@ -290,7 +321,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: No existe un checkout con ese id.
+          description: No existe un checkout con ese id para este merchant.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -390,16 +421,23 @@ paths:
 
         **Prerequisito (operativa `DEFERRED`, verificado en vivo 18 jul 2026):** el
         pago debe estar **capturado**. Sobre un pago `authorized` sin capturar no hay
-        dinero movido que reembolsar: Paylands responde `409 Conflict` y Monetiser lo
-        devuelve como `502 refund.processor_declined`. Las operaciones válidas sobre
-        una autorización sin capturar son `capture` o `cancel`.
+        dinero movido que reembolsar: desde v2.10.0 Monetiser responde directamente
+        `409 refund.capture_required` (antes reenviaba a Paylands y devolvía `502`).
+        Las operaciones válidas sobre una autorización sin capturar son `capture` o
+        `cancel`. `partially_captured` sí es reembolsable (hasta lo capturado).
 
         Usa `amountOfMoney.amount` (entero, céntimos). Si se omite, se reembolsa el
-        importe reembolsable restante completo.
+        importe reembolsable restante completo. Si se envía `currencyCode`, debe
+        coincidir con la divisa del pago (si no, `400 refund.currency_mismatch`).
 
-        Si no hay una operación de `capture` previa registrada, la base reembolsable
-        es el **importe autorizado** (se corrigió así porque el flujo actual no
-        siempre pasa por una captura explícita).
+        Base reembolsable = lo capturado (operaciones `capture`) menos lo ya
+        reembolsado. Los pagos legados `approved` (operativa AUTHORIZATION, dinero
+        movido al instante) usan el importe autorizado.
+
+        **Concurrencia:** una sola operación a la vez por pago (`409
+        refund.payment_busy` si hay otra en curso) y la `Idempotency-Key` se
+        reserva ANTES de llamar a Paylands: dos peticiones con la misma clave nunca
+        producen dos reembolsos.
 
         El validator rechaza campos desconocidos (`allowUnknown: false`).
       security:
@@ -443,7 +481,9 @@ paths:
           description: |
             Conflicto de estado. Mensajes reales:
             - `Cannot refund payment in status '<status>'`
-            - `Invalid refund amount`
+            - `refund.capture_required: ...` (autorizado sin capturar: usa cancel)
+            - `refund.payment_busy: ...` / `refund.in_progress: ...`
+            - `Invalid refund amount` / `Refund exceeds refundable amount`
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -619,16 +659,29 @@ paths:
 
         La comparación es timing-safe (`crypto.timingSafeEqual`).
 
-        ### Por qué siempre responde 200
+        También se acepta la serialización por defecto de PHP `json_encode` ("/"
+        escapada y no-ASCII como `\uXXXX`), que Paylands produciría con URLs o
+        tildes en el payload.
 
-        Este endpoint devuelve `200` **incluso cuando rechaza el evento** (firma
-        inválida, transacción no encontrada, o `PAYNOPAIN_SIGNATURE` sin configurar).
-        Es deliberado: un no-2xx haría que Paylands reintentase indefinidamente. Los
-        eventos rechazados responden `{"received": true, "ignored": true}` y quedan
-        registrados en los logs.
+        ### Códigos de respuesta (v2.10.0)
 
-        **Consecuencia operativa:** un `200` aquí NO significa que el pago se haya
-        procesado. Para saberlo hay que mirar `webhookevents` en Mongo o los logs.
+        - `401` firma inválida o ausente: Paylands reintenta y queda rastro (antes
+          `200 ignored` y el evento se perdía en silencio).
+        - `500` sin `PAYNOPAIN_SIGNATURE` configurada, o error de base de datos:
+          fallo nuestro, Paylands reintenta.
+        - `200 {received, ignored:true}` sin `order_uuid` o transacción desconocida.
+        - `200 {received, paymentId, status}` evento aplicado (o ya aplicado).
+
+        ### Máquina de estados
+
+        Un webhook solo hace AVANZAR la transacción: un `SUCCESS` tardío no devuelve
+        un pago `captured` a `authorized`, un `PENDING` no deshace un `authorized` y un
+        estado desconocido no toca el estado. El webhook saliente al merchant solo se
+        envía si el estado cambió. Si la orden no está enlazada (fallo de red al
+        cobrar), se enlaza por el `paymentId` enviado a Paylands en `order_id`/`additional`.
+
+        Se monta ANTES de los sanitizadores globales (que reescriben el body e
+        invalidarían el hash) y fuera del rate limit global.
       requestBody:
         required: true
         content:
@@ -649,14 +702,10 @@ paths:
                     paymentId: a0408ee0-ba65-4dc7-bccb-6c3a778f8c83
                     status: authorized
                 ignorado:
-                  summary: Firma inválida o tx no encontrada (también 200)
+                  summary: Transacción no encontrada o sin order_uuid
                   value:
                     received: true
                     ignored: true
-                sinSecreto:
-                  summary: PAYNOPAIN_SIGNATURE no configurada en el entorno
-                  value:
-                    received: true
               schema:
                 type: object
                 properties:
@@ -664,16 +713,26 @@ paths:
                   ignored: { type: boolean }
                   paymentId: { type: string }
                   status: { type: string }
+        '401':
+          description: '`invalid_signature` — validation_hash ausente o incorrecto.'
         '500':
-          description: '`db_error` — fallo al actualizar la transacción.'
+          description: '`db_error` (fallo al actualizar la transacción) o `not_configured` (falta PAYNOPAIN_SIGNATURE).'
 
   /webhooks:
     get:
       tags: [Observabilidad]
-      summary: Histórico de eventos de webhook entrantes
+      summary: Histórico de eventos de webhook entrantes (INTERNO)
       operationId: listWebhookEvents
-      x-madurez: estable
+      x-madurez: interno
+      description: |
+        **Solo uso interno** (`X-Admin-Token`). Hasta v2.9.0 era público y exponía
+        el `rawPayload` de los eventos de TODOS los merchants.
+      security:
+        - AdminToken: []
       parameters:
+        - name: merchantId
+          in: query
+          schema: { type: string }
         - name: paymentId
           in: query
           schema: { type: string }
@@ -693,6 +752,10 @@ paths:
                 items:
                   type: object
                   additionalProperties: true
+        '401':
+          description: Falta o es incorrecto `X-Admin-Token`.
+        '503':
+          description: '`ADMIN_TOKEN` no configurado en el servidor (fail-closed).'
         '500':
           description: Error interno.
 
@@ -1011,10 +1074,16 @@ paths:
   /orchestration/decide:
     post:
       tags: [Reglas de routing]
-      summary: Consultar qué conector elegiría el motor de reglas
+      summary: Consultar qué conector elegiría el motor de reglas (INTERNO)
       operationId: orchestrationDecide
-      x-madurez: estable
-      description: Solo consulta. No crea ninguna transacción ni mueve dinero.
+      x-madurez: interno
+      description: |
+        Solo consulta. No crea ninguna transacción ni mueve dinero. **Interno**
+        (`X-Admin-Token`) desde v2.10.0: antes su auth dependía de una variable que
+        no existía y era público (devolvía la política de routing de cualquier
+        merchant). Acepta el `bin` (6-8 dígitos), nunca un número de tarjeta.
+      security:
+        - AdminToken: []
       requestBody:
         required: true
         content:
@@ -1028,7 +1097,7 @@ paths:
                 amount: { type: number }
                 currency: { type: string }
                 method: { type: string, enum: [card, apm] }
-                cardNumber: { type: string }
+                bin: { type: string, pattern: '^\d{6,8}$', description: 'BIN (6-8 primeros dígitos). Nunca el PAN.' }
                 cardInfo:
                   type: object
                   additionalProperties: true
@@ -1849,8 +1918,10 @@ webhooks:
       x-madurez: estable
       x-emisor: src/services/webhookDispatcher.js
       description: |
-        Se dispara cuando Paylands notifica el desenlace de un pago. Se envía al
-        `callbackUrl` de la transacción (el `feedbacks.webhookUrl` del create).
+        Se dispara cuando Paylands notifica el desenlace de un pago Y el estado de
+        la transacción CAMBIA (un webhook repetido o tardío no genera evento). Se
+        envía al `callbackUrl` de la transacción (el `feedbacks.webhookUrl` del
+        create o, si no vino, el `webhookUrl` de la ficha del merchant).
 
         ### Firma
 
@@ -1861,12 +1932,18 @@ webhooks:
         v1 = HMAC_SHA256_hex( secreto, `${t}.${JSON.stringify(body)}` )
         ```
 
-        El secreto es el `signingSecret` del merchant (o `hmacSecret` / `secret`), y
-        si no tiene, el `WEBHOOK_SECRET` global. Sin ninguno de los dos, el webhook
-        **no se envía** y se marca `no_secret_config`.
+        El secreto es el `signingSecret` del merchant (`whsec_...`, generado en el
+        alta y mostrado una vez; rotable desde /admin). Si un merchant antiguo no
+        tiene y no hay `WEBHOOK_SECRET` global, el servidor le genera uno (antes el
+        webhook no se enviaba nunca).
 
-        Con reintentos y backoff exponencial (`WEBHOOK_MAX_RETRIES`, por defecto 6).
-        Cada intento queda en la colección `webhooklogs`.
+        **Deduplicación:** cada evento lleva `id` (`evt_...`) en el cuerpo y en la
+        cabecera `Monetiser-Event-Id`. Un reintento repite el mismo `id`.
+
+        **Reintentos persistentes** (sobreviven a reinicios y despliegues): si tu
+        endpoint no responde 2xx, se reintenta a 1 min, 5 min, 15 min, 1 h, 3 h,
+        6 h, 12 h y 24 h (~2 días). Cada intento queda en `webhooklogs`. Solo se
+        envía a URLs https públicas.
 
         **Desde el 17 jul 2026 esta es la firma de TODOS los webhooks salientes**
         (`payment.updated`, `payment.captured`, `payment.refunded`,
@@ -2175,16 +2252,23 @@ components:
     AmountOfMoney:
       type: object
       required: [amount, currencyCode]
-      description: Importe. **Siempre en céntimos.**
+      description: |
+        Importe. **Siempre en céntimos (unidades menores), entero.** En el importe
+        del pedido (`order.amountOfMoney`) debe ser ≥ 1 y la divisa debe estar
+        entre las soportadas (`SUPPORTED_CURRENCIES`, hoy solo `EUR`).
       properties:
         amount:
           type: integer
-          description: '**Céntimos.** `100` = 1,00 €.'
+          minimum: 1
+          maximum: 100000000
+          description: '**Céntimos.** `100` = 1,00 €. Entero; sin decimales ni negativos.'
           example: 100
         currencyCode:
           type: string
           minLength: 3
           maxLength: 3
+          enum: [EUR]
+          description: 'ISO 4217. Se normaliza a mayúsculas. Otra divisa → 400 `currency_not_supported`.'
           example: EUR
       additionalProperties: false
 
@@ -2223,16 +2307,21 @@ components:
           properties:
             returnUrl:
               type: string
-              description: URL a la que vuelve el cardholder al terminar.
+              format: uri
+              pattern: '^https?://'
+              description: URL (http/https) a la que vuelve el cardholder al terminar.
             webhookUrl:
               type: string
               format: uri
+              pattern: '^https://'
               description: |
-                Destino de los webhooks salientes. **Se persiste como `callbackUrl`
-                en la transacción.** Sin esto no hay notificación.
+                Destino de los webhooks salientes (**solo https**, nunca una dirección
+                de red privada). Se persiste como `callbackUrl` en la transacción.
+                Si no se envía, se usa el `webhookUrl` de la ficha del merchant.
             webhooksUrls:
               type: array
-              items: { type: string, format: uri }
+              maxItems: 5
+              items: { type: string, format: uri, pattern: '^https://' }
           additionalProperties: false
         cardPaymentMethodSpecificInput:
           type: object
@@ -2603,9 +2692,12 @@ components:
 
     OutboundWebhookPayload:
       type: object
-      required: [event, version, data]
+      required: [id, event, version, data]
       description: Cuerpo de los webhooks que Monetiser envía al merchant.
       properties:
+        id:
+          type: string
+          description: 'Identificador único del evento (`evt_...`). Úsalo para deduplicar reintentos. También en la cabecera `Monetiser-Event-Id`.'
         event:
           type: string
           enum: [payment.updated, payment.captured, payment.refunded, payment.cancelled]
@@ -2616,6 +2708,10 @@ components:
           properties:
             paymentId: { type: string }
             merchantId: { type: string }
+            merchantReference:
+              type: string
+              nullable: true
+              description: 'Tu referencia de pedido (`order.references.merchantReference`). Para conciliar sin guardar el paymentId.'
             status: { $ref: '#/components/schemas/TransactionStatus' }
             amount: { type: integer, description: '**Céntimos.**' }
             currency: { type: string }
@@ -2652,8 +2748,8 @@ components:
         success: { type: boolean }
         rawKeyId:
           type: string
-          description: 'Identificador (`mk_...`). Es lo que hoy va en `x-api-key`.'
-          example: mk_7065b5507c6efae4d1067f2768919154
+          description: 'Identificador PÚBLICO (`mk_...`). Va en la cabecera Authorization del modo HMAC. NO es una credencial: en `x-api-key` va el secreto (`ms_...`).'
+          example: mk_00000000000000000000000000000000
         rawSecret:
           type: string
           description: |
@@ -2669,7 +2765,8 @@ components:
       properties:
         merchantId:
           type: string
-          description: Único. Es el que viaja en las URLs y en `x-merchant-id`.
+          description: Único. Es el que viaja en las URLs y en `x-merchant-id`. 3-64 caracteres `[A-Za-z0-9_-]`.
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$'
         name: { type: string }
         country: { type: string, description: 'ISO 3166-1 alpha-2 (ej. `ES`).' }
         plan:
@@ -2682,14 +2779,14 @@ components:
           type: string
           format: uri
           description: Webhook por defecto del merchant.
-        signingSecret:
+        webhookSigningSecret:
           type: string
+          readOnly: true
           description: |
-            Secreto con el que se firman sus webhooks salientes. **Nunca se devuelve
-            en las respuestas.**
-
-            Ojo: solo lo usa el dispatcher (`payment.updated`). Los eventos de ciclo
-            de vida se firman con `WEBHOOK_SECRET` global — ver `payment.captured`.
+            Secreto (`whsec_...`) con el que se firman TODOS sus webhooks salientes
+            (cabecera `Monetiser-Signature`). Lo GENERA el servidor en el alta y se
+            devuelve UNA sola vez en la respuesta de creación. Ya no se acepta
+            `signingSecret` en la petición (v2.10.0).
         serviceUuid:
           type: string
           description: 'UUID del servicio en Paylands. Va al campo `service` de POST /payment.'

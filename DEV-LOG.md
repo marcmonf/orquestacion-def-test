@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 4 agosto 2026
+> Última actualización: 26 septiembre 2026
 
 ---
 
@@ -181,10 +181,14 @@ Merchant backend
 
 **NOTA:** La tarjeta `4507670001000009` NO funciona con el flujo tokenizado (solo con hosted checkout directo de Paylands).
 
-**Credenciales de demo-merchant:**
-- `rawKeyId`: `mk_7065b5507c6efae4d1067f2768919154`
-- `rawSecret`: `ms_03e84aaa3db4875d22ffd87fc397b3a6803739555f987ceaddb9a7c52d3c2a52`
-- Auth en Postman: headers `x-api-key: mk_7065b5507c6efae4d1067f2768919154` + `x-merchant-id: demo-merchant`
+**Credenciales de demo-merchant:** ⚠️ **RETIRADAS de este documento el 26 sep 2026.**
+Aquí estaban escritos el `rawKeyId` y el `rawSecret` de la API key de demo-merchant, en
+un repositorio PÚBLICO. Desde el 4 ago 2026 el modo `x-api-key` autentica con el
+SECRETO, así que ese `rawSecret` era una credencial VÁLIDA de producción para
+cualquiera que leyese el repo. Quitarlo de aquí no lo borra del historial de git:
+**esa key debe revocarse en `/admin` → Merchants → API Keys y crearse otra** (acción de
+Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo.
+- Auth en Postman: headers `x-api-key: <rawSecret ms_... guardado fuera del repo>` + `x-merchant-id: demo-merchant`
 - Requiere `API_KEY_SIMPLE_FALLBACK=true` en Render ENV
 
 **Bugs resueltos en esta fase:**
@@ -213,6 +217,7 @@ Merchant backend
 | **Segunda hornada de endpoints legacy peligrosos, montados y olvidados** (17 jul 2026) | Auditoría de código muerto pedida por Marcos. Cuatro hallazgos en rutas VIVAS: (1) `PUT`/`DELETE /transactions/:paymentId` operaban por `paymentId` **sin comprobar la pertenencia al merchant** — cualquier merchant con API key válida podía modificar o borrar transacciones ajenas (mismo patrón que el bug de `ensureTx` del 16 jul, en otro router); el listado y las analíticas además agregaban TODOS los merchants; (2) `POST /transactions/card-payment` aceptaba el **PAN en crudo** en el body (rule engine V1 + acquirers mock); (3) `POST /tokens` aceptaba PAN+CVV y **guardaba el PAN cifrado en MongoDB** (bóveda propia = scope SAQ D); solo lo frenaba que `TOKEN_API_KEY` no existe en Render → 403 permanente, es decir, a una variable de entorno de activarse; (4) `/initialize` y `/payment-requests`: stack pre-Hosted-Checkout sin ningún consumidor (verificado: ni el front ni los flujos actuales los llaman). | **Retirados los cuatro** (commit `a7bad5e`): `/initialize`, `/tokens` y `/payment-requests` desmontados y eliminados con toda su cadena (16 archivos); `/transactions` reescrito **solo-lectura** con scoping obligatorio por `req.merchantId` en listado, detalle y las cuatro analíticas. La escritura de transacciones ocurre únicamente en los flujos de pago reales. Verificado por tanda: grafo de requires + arranque de la app + suite 119/128. Refuerza la lección del 16 jul: lo montado y olvidado es peor que lo muerto. |
 | **`/portal-app` se quedaba en "Cargando…" para siempre** (24 jul 2026) | `public/portal/index.html` cargaba `<script src="app.js">` (ruta **relativa**). La SPA se sirve en `/portal-app` (sin barra final), así que el navegador resolvía el script contra la raíz → pedía `/app.js` (inexistente) → 404 → `app.js` nunca ejecutaba y `#root` se quedaba con el "Cargando…" inicial. El panel `/admin` no lo sufría porque ya referenciaba sus scripts con ruta absoluta (`/admin/dashboard.js`). | Ruta absoluta `<script src="/portal-app/app.js">` (commit `c4889fe`). **Lección: un estático servido en una ruta SIN barra final debe referenciar sus assets con ruta ABSOLUTA.** Y esta clase de fallo no la detectan `node --check` ni `jest` (validan sintaxis y servidor, no la resolución de rutas del navegador) — solo aparece abriendo la página en un navegador real. Nadie había abierto `/portal-app` en vivo hasta esta sesión: toda la verificación de M6 Fase 3 había sido a nivel de API/tests. |
 | **`openapi.yaml` llevaba roto sin que nadie lo supiera** (4 ago 2026) | Clave `'403'` DUPLICADA en `/portal/hierarchy` (línea 1755): al añadir el caso `outside_your_scope` en **M6 Fase 4** se metió un segundo bloque `'403':` en vez de fusionarlo con el que ya estaba. En YAML una clave duplicada en el mismo mapa es **error de parseo**, no un aviso: `js-yaml` lanza `duplicated mapping key` y el documento entero deja de cargar. | **Fusionadas las dos descripciones en un solo `'403'`.** Verificado que el fallo era PREEXISTENTE parseando `git show HEAD:openapi.yaml` — no lo introdujo esta sesión. **Lo grave no es el fallo, es cuánto duró:** el DEV-LOG afirmaba desde M4 *"validado con `js-yaml`, 0 refs rotas"*, cierto en v1.0.0 y **falso desde M6 Fase 4** — la spec pasó por v2.4.0, v2.5.0, v2.6.0, v2.7.0 y v2.8.0 sin que nadie la volviera a parsear. Tras el arreglo: 42 rutas · 35 schemas · 4 webhooks · **0 refs rotas**. **Lección: un artefacto que se declara "validado" y no tiene un test que lo valide, deja de estarlo en silencio.** Aquí además tenía consecuencia directa: Swagger UI (`/docs`, montado en esta misma sesión) no habría podido cargar la spec nunca. **No se ha podido escribir el test de regresión** porque `js-yaml` no está trackeado en git — ver la fila de la suite de tests en §5. |
+| **Auditoría completa: tercera hornada de agujeros "montados y olvidados" + fallos de dinero** (26 sep 2026) | Auditoría de todo el repo pedida por Marcos (núcleo de pagos a mano + 3 auditorías en paralelo de backoffice/portal, facturación y frontends). Los CRÍTICOS: (1) **`POST /iframe-process` público**: con solo el `paymentId` (visible en la URL del iFrame) dejaba un pago en `authorized` vía `dummyCard` **sin pagar** — reproducido con un test; además aceptaba PAN+CVV y el iFrame tenía un "modo legacy" (`?mode=x`) que pintaba un formulario PROPIO de tarjeta (fuera de SAQ A). (2) **`/backoffice/auth/forgot-password` devolvía el token de reset** si `NODE_ENV≠production` (en Render no está definido): toma de cualquier cuenta de superadmin sabiendo su email. (3) **`GET /webhooks` público**: rawPayload de los eventos de TODOS los merchants. (4) **IDOR** en `GET .../hosted/:id/status` y `GET .../server/:paymentId` (sin filtro de merchant). (5) **Fail-open**: `adminAuth` sin `ADMIN_TOKEN` dejaba pasar todo; JWT con secretos por defecto escritos en el repo; firma del iFrame con `'default_merchant_secret'`. (6) **`dummyCard` (aprueba siempre) era la política por defecto y el fallback que el validador añadía solo**: un rechazo real de Paylands podía acabar "authorized"; `/orchestration/decide` público. (7) **Backoffice**: cancel solo tocaba Mongo (la retención al comprador no se liberaba); refund podía ejecutarse dos veces (clave de idempotencia con `Date.now()`) y caía a `dummyCard`. (8) **Doble cobro** posible en `/proxy-pci/charge` (dos "Pagar" simultáneos → dos órdenes). (9) **Webhook entrante** sin máquina de estados (un `SUCCESS` tardío devolvía `captured` a `authorized`), firma inválida respondida con 200 (evento perdido) y verificada DESPUÉS de que `xss-clean`/`mongo-sanitize` reescribieran el body. (10) **Secreto real de la API key de demo-merchant escrito en este DEV-LOG** (repo público). | Arreglado en la rama `claude/clever-bohr-fk3164` (ver sesión 26 sep 2026): retirados `/iframe-process`, el modo legacy y `inpage.js`; forgot-password ya no devuelve el token; `GET /webhooks` y `/orchestration/decide` pasan a `X-Admin-Token`; estados aislados por merchant; todo fail-closed; `dummyCard` solo en development/test; servicio único `paymentLifecycleService` para API y backoffice (bloqueo por pago + reserva idempotente); reserva atómica en `/charge`; máquina de estados en el webhook; secreto retirado del documento (**la key debe revocarse**, ver §7). Suite 273 → **346/346**. **Lección (cuarta vez): cada endpoint montado sin dueño acaba siendo un agujero. Y "verificado en producción" solo cubre el camino feliz: ninguno de estos fallos salía en las pruebas manuales porque ninguna probaba lo que un atacante — o un doble clic — haría.** |
 
 ---
 
@@ -237,7 +242,7 @@ Merchant backend
 | test-checkout.html no carga con iframe | Baja | El botón "Cargar" no funciona — workaround: abrir la URL directamente en el navegador |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **346/346** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -956,6 +961,103 @@ vulnerabilidades. Ese último check es el que descarta que el cambio rompa el se
 documentación, sin cambio de comportamiento), este commit cambia lo que se instala en el
 servidor. Marcos lo despliega a mano desde Render, como siempre.
 
+
+### Sesión 26 sep 2026 — auditoría completa del repositorio + Fase 0 de seguridad
+
+**Contexto:** Marcos pidió una auditoría de TODO el código con criterio de "mejor
+orquestador del mercado": seguridad, escalabilidad, preparación multi-adquirente y
+facilidad de integración para el comercio, y avanzar hacia un MVP. Línea base al
+empezar (protocolo CLAUDE.md): **273/273** y arranque limpio. Método: núcleo de pagos
+leído a mano (hosted, iFrame, proxy-pci, conector Paylands, webhooks, ciclo de vida,
+S2S, rule engine) + tres auditorías en paralelo (backoffice/portal, facturación/coste/
+adquirentes, frontends). Hallazgos críticos resumidos en la fila del 26 sep de §4. El
+informe completo (con el plan al MVP y las preguntas para Marcos) se publicó aparte.
+
+**Trabajo en la rama `claude/clever-bohr-fk3164`** (NO en `main`; nada está desplegado
+hasta que Marcos fusione y lance Manual Deploy). **Al terminar: 346/346** (+73 tests
+nuevos: `tests/security/audit2026.test.js`, `tests/unit/paymentLifecycle.test.js`,
+`tests/integration/checkoutHardening.test.js`, ampliados `webhooks.test.js` y
+`webhookDispatcher.test.js`), arranque real sin warnings de montaje, y las tres SPAs
+(`/admin`, iFrame, `/portal-app`) abiertas en Chromium real: con datos maliciosos en
+la API simulada no se ejecuta ningún script y el reembolso manda `Authorization` +
+`Idempotency-Key`.
+
+**Qué se cambió (Fase 0 — solo seguridad y dinero, sin decisiones de negocio):**
+- **Checkout:** retirados `POST /iframe-process` (y `POST /iframe`), el modo legacy
+  del iFrame y `public/inpage.js`; retirado el guard con nonce (código muerto: nada
+  emitía nonces). La URL del iFrame se firma con un secreto de plataforma
+  (`HPP_SIGNING_SECRET`, `src/utils/hppSigner.js`). Runtime del iFrame inyectado con
+  JSON escapado (`<`, `>`, `&`), logo solo https y colores solo hex. La URL de la
+  librería ProxyFields la decide el servidor por `PAYNOPAIN_ENV` (antes fija a
+  sandbox en el HTML). `/proxy-pci/charge` reserva el pago (`processing`) de forma
+  atómica antes de llamar a Paylands: dos clics = una sola orden. Se guardan BIN,
+  últimos 4, marca, banco y país (truncado permitido por PCI) → el "Coste real" deja
+  de salir con interchange 0. El token de tarjeta ya no se escribe en los logs.
+- **Estados:** fuente única `src/utils/paymentStatus.js`. `completed` correcto para
+  captured/refunded/...; analíticas del portal, API y backoffice cuentan como
+  aprobadas todas las que el adquirente aprobó (antes solo el estado legado
+  `approved` → tasa ≈ 0 con pagos reales).
+- **Webhook entrante:** máquina de estados (solo avanza), estado desconocido no toca
+  nada, evento saliente solo si cambió, 401 con firma inválida, 500 sin secreto,
+  verificación tolerante a la serialización de PHP, enlace por `paymentId` de órdenes
+  huérfanas (timeout al cobrar) y montado ANTES de sanitizadores/rate limit global.
+- **Webhooks salientes:** cola PERSISTENTE (`webhooklogs` + worker que arranca con la
+  app): reintentos 1 min → 24 h (~2 días), sobreviven a despliegues y funcionan con
+  varias instancias. `id` de evento (cuerpo + `Monetiser-Event-Id`), `merchantReference`
+  en el payload, SSRF bloqueado (solo https y nunca IPs privadas). El alta de merchant
+  GENERA el secreto de firma (`whsec_...`, se muestra una vez; botón "Secreto webhook"
+  en /admin para rotarlo); si un merchant antiguo no tiene, se le genera. El
+  `webhookUrl` de la ficha se usa si el pago no trae uno.
+- **Ciclo de vida:** `src/services/paymentLifecycleService.js`, único para la API y el
+  backoffice: aislamiento por merchant, bloqueo por pago, reserva de la
+  Idempotency-Key antes de llamar a Paylands, nunca un conector simulado como
+  sustituto. Refund de `authorized` sin capturar → `409 refund.capture_required`
+  (mejora anotada el 17 jul); `partially_captured` reembolsable. Cancel del
+  backoffice = anulación REAL en Paylands (o local si el checkout ni se completó).
+- **Validación:** importe entero ≥ 1, divisa en `SUPPORTED_CURRENCIES` (EUR por
+  defecto: el conector no envía divisa), `returnUrl` http(s), `webhookUrl` https,
+  alta de merchant validada (merchantId seguro para URLs, colores/logos).
+- **Auth y plataforma:** `adminAuth` fail-closed y en tiempo constante; secretos JWT
+  fail-closed fuera de development/test (el plano responde 503, los pagos siguen);
+  audience `backoffice` y algoritmo fijado; forgot-password no devuelve el token;
+  `/setup` de un solo uso; límites de login por IP+email y por email; hash dummy real
+  (fin de la enumeración de emails por tiempo); usuarios de backoffice nuevos sin
+  alcance por defecto; merchant `suspended` → 403 en la API; revocación de API keys
+  acotada al merchant. `/orchestration/decide` y `GET /webhooks` → `X-Admin-Token`.
+  El "Probar" de reglas envía solo el BIN. `dummyCard` solo con development/test o
+  `ALLOW_DUMMY_CONNECTOR=true`; políticas validadas contra conectores registrados y
+  sin fallback automático; el motor ya no cambia de adquirente tras un rechazo o un
+  timeout (evita el doble cobro entre adquirentes). Handlers de reglas con try/catch
+  y `unhandledRejection` ya no tumba el proceso; parada ordenada con SIGTERM.
+- **Escalabilidad inmediata:** rate limits por merchant AUTENTICADO (600/min) y por
+  IP (300/min) en la API; el checkout limita por IP y por paymentId (antes 60/min
+  compartidos por TODOS los compradores de un merchant); el global ya no afecta a
+  Paylands; KPIs del backoffice agregados en Mongo (antes todo a memoria); índices
+  compuestos `merchantId+createdAt(+status)`; las trazas HTTP ya no se escriben en
+  Mongo (2 escrituras por petición); pool de Mongo 20.
+- **Frontend /admin:** `esc()` en TODO dato dinámico (antes nada escapado);
+  `BASE_URL` relativo (antes fijo al servidor de pruebas).
+- **Facturación (salvaguardas):** lo facturable excluye importes ≤ 0, `dummyCard` y
+  divisas distintas a la de la tarifa.
+- **Dependencias:** `npm audit fix` (nodemailer, qs, joi, morgan, js-yaml, express,
+  body-parser — parches dentro de rango) → **0 vulnerabilidades**.
+- **Docs:** `openapi.yaml` v2.10.0; `.env.example` como plantilla completa sin
+  credenciales; secreto de demo-merchant retirado de este documento.
+
+**⚠️ ANTES DE DESPLEGAR (Marcos, en Render → Environment):**
+1. Confirmar que existen `BACKOFFICE_JWT_SECRET` y `PORTAL_JWT_SECRET` (distintos). Si
+   falta alguno, ese panel responderá 503 tras el deploy (por diseño).
+2. Añadir `HPP_SIGNING_SECRET` (64 hex nuevos).
+3. Confirmar `ADMIN_TOKEN` de ≥ 32 caracteres.
+4. No hace falta `NODE_ENV`. **No** poner `ALLOW_DUMMY_CONNECTOR`.
+5. Tras desplegar: revocar la API key de demo-merchant publicada y crear otra.
+
+**Pendiente (Fase 1 en adelante, ver informe):** retorno del comprador al comercio
+tras pagar (`url_ok`/`url_ko` de Paylands + postMessage), entorno de producción
+separado, API simplificada para el comercio, revocación de sesiones (tokenVersion),
+2FA de superadmin, numeración de facturas en transacción, routing del portal
+conectado al flujo real, conector #2.
+
 ---
 
 ## 7. Elementos de seguridad
@@ -983,6 +1085,14 @@ servidor. Marcos lo despliega a mano desde Render, como siempre.
 | Password temporal + cambio obligatorio | `src/routes/portalAuthRoutes.js` | Alta sin email: temporal visible una vez; `mustChangePassword` bloquea el portal hasta cambiarla. |
 | Proyección pública de usuarios | `src/utils/publicUser.js` | Allowlist explícita; el `passwordHash` nunca se serializa en una respuesta. |
 | Scoping por nodo (Fase 4) | `src/routes/portalHierarchyRoutes.js` | Un usuario asignado a un nodo (`hierarchyNodeId` en el JWT) solo ve/gestiona su subárbol; fuera → 404 / `403 outside_your_scope`. Encima del aislamiento por merchant. |
+| Fail-closed de secretos (26 sep 2026) | `adminAuth.js`, `runtimeSecrets.js`, `backofficeAuth.js`, `portalAuth.js` | Sin `ADMIN_TOKEN` / secretos JWT (fuera de development/test) el plano afectado responde 503: nunca se usan valores por defecto. |
+| Firma del iFrame con secreto de plataforma | `src/utils/hppSigner.js` | `HPP_SIGNING_SECRET` (antes signingSecret del merchant o la cadena pública `default_merchant_secret`). |
+| Ciclo de vida con bloqueo e idempotencia | `src/services/paymentLifecycleService.js` | Un solo movimiento de dinero a la vez por pago; Idempotency-Key reservada antes de llamar al adquirente. API y backoffice comparten reglas. |
+| Anti doble cobro en el checkout | `src/routes/proxyPciRoutes.js` | Reserva atómica `hosted_pending → processing` antes de crear la orden en Paylands. |
+| Máquina de estados de webhooks | `src/utils/paymentStatus.js`, `src/routes/webhooks.js` | Un webhook del adquirente solo hace avanzar el pago; 401 con firma inválida. |
+| SSRF en webhooks salientes | `src/utils/safeUrl.js` | Solo https y nunca direcciones privadas/loopback/link-local; conexión a la IP validada. |
+| Escapado XSS en /admin | `public/admin/dashboard.js` | `esc()` en todo dato dinámico (el portal ya escapaba). |
+| Rate limits por merchant autenticado y por pago | `rateLimiterPayments.js`, `rateLimiterCheckout.js`, `rateLimiterLogin.js` | Un tercero sin credenciales ya no puede agotar el cupo de un merchant; login limitado por IP+email y por email. |
 
 ### Pendientes
 
@@ -992,6 +1102,9 @@ servidor. Marcos lo despliega a mano desde Render, como siempre.
 | Forzar `HmacV1` en producción (`API_KEY_SIMPLE_FALLBACK=false`). Desde el 4 ago 2026 el modo simple ya usa el SECRETO y no el keyId, pero sigue siendo un bearer en claro: no firma la petición. | Media |
 | ~~Eliminar logs de debug (fullBody, tokenKeys)~~ → ✅ HECHO 16 jul 2026. Eliminados el PAN, `tokenKeys` y `tokenValue` de `proxyPciRoutes.js` y `pciProxyService.js`. `fullBody` no existía (deuda fantasma). | — |
 | Revocar los PAT de GitHub expuestos. **Son DOS: (1) el publicado en `CLAUDE.md` (11-16 jul 2026), que sigue sin revocar; (2) uno nuevo pegado en el chat de sesión el 4 ago 2026.** Este repo es PÚBLICO. Un PAT pegado en un chat se considera quemado en el momento en que se pega. Revocar ambos en GitHub → Settings → Developer settings → Fine-grained tokens, y emitir uno nuevo que NO se escriba en ningún sitio persistente. | **Alta — acción de Marcos** |
+| **Revocar la API key de demo-merchant** cuyo `rawSecret` estuvo escrito en este DEV-LOG (repo público) hasta el 26 sep 2026, y crear otra en /admin → Merchants → API Keys. | **Alta — acción de Marcos** |
+| **Rotar la contraseña del usuario de MongoDB Atlas** si coincide con la de ejemplo que había en `.env.example` (`admin` / `admin12345`) y revisar el acceso de red de Atlas. | **Alta — acción de Marcos (verificar)** |
+| Revocación de sesiones: hoy un JWT de backoffice/portal sigue valiendo hasta que caduca aunque se desactive el usuario o se cambie su contraseña (añadir `tokenVersion`). | Alta |
 | 2FA para panel admin | Media |
 | Rotación de PAYNOPAIN_SIGNATURE | Media |
 
@@ -1022,8 +1135,18 @@ servidor. Marcos lo despliega a mano desde Render, como siempre.
 | `WEBHOOK_SECRET` | Secret para firmar webhooks salientes. Verificar que está configurado. |
 | `DOCS_ENABLED` | `false` para ocultar la documentación pública de la API (`/docs` y `/openapi.yaml`). Por defecto ACTIVADA. Añadida el 4 ago 2026. |
 | `ENCRYPTION_KEY` | 32 bytes en hex para AES-256-GCM |
-| `FEATURE_IFRAME_GUARD` | `1` para activar validación HMAC en carga del iFrame |
-| `WEBHOOK_MAX_RETRIES` | Intentos máximos del dispatcher (default: 6) |
+| `HPP_SIGNING_SECRET` | **(26 sep 2026)** Secreto de plataforma para firmar la URL del iFrame. Sin él, uno aleatorio por proceso (vale con una sola instancia). **Recomendado definirlo.** |
+| `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
+| `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
+| `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |
+| `PAYNOPAIN_PCI_CLIENT_URL` | **(26 sep 2026)** URL de la librería ProxyFields (por defecto según `PAYNOPAIN_ENV`; la de producción debe confirmarse con Paylands). |
+| `RL_PAYMENTS_IP_MAX` / `RL_PAYMENTS_MERCHANT_MAX` | API de pagos: por IP antes de autenticar (300/min) y por merchant autenticado (600/min). |
+| `RL_CHECKOUT_IP_MAX` / `RL_CHECKOUT_PAYMENT_MAX` | Checkout público: por IP (60/min) y por paymentId (20/min). |
+| `RL_BACKOFFICE_LOGIN_MAX` / `RL_BACKOFFICE_LOGIN_MAX_PER_EMAIL` / `RL_PORTAL_LOGIN_MAX_PER_EMAIL` | Límites de login por IP+email (10) y por email (30) en 15 min. |
+| `BACKOFFICE_JWT_EXPIRES` | Caducidad del JWT de backoffice (por defecto `12h`, antes 24h fijo). |
+| `MONGO_MAX_POOL` | Tamaño del pool de Mongo (por defecto 20). |
+| `WEBHOOK_TIMEOUT_MS` / `WEBHOOK_WORKER_INTERVAL_MS` | Timeout por intento de webhook saliente (5000) y cadencia del worker de reintentos (15000). |
+| ~~`FEATURE_IFRAME_GUARD`~~ | **Retirada el 26 sep 2026** (el guard nunca podía activarse: nada emitía nonces). También retiradas `MERCHANT_SECRET`, `THREEDS_CHALLENGE_THRESHOLD`/`_BASE_URL`, `ORCHESTRATION_REQUIRE_API_KEY` y `WEBHOOK_MAX_RETRIES`. |
 | `LOG_LEVEL` | Nivel mínimo de logs: error, warning, info, debug, trace |
 | `ALLOW_PAN_DECRYPT` | `true` solo en desarrollo |
 | `ALLOWED_ORIGINS` | CORS origins permitidos (separados por coma) |
@@ -1072,14 +1195,14 @@ Nada pendiente. La configuración de Render no se toca desde aquí; la gestiona 
 ```
 POST /:merchantId/payments/hosted                        → Crear Hosted Checkout (sin datos de tarjeta)
 GET  /:merchantId/payments/hosted/:hostedCheckoutId/status → Estado del Hosted Checkout
-POST /:merchantId/payments/server                        → Pago S2S (con datos de tarjeta en body)
+POST /:merchantId/payments/server                        → Pago S2S TOKENS-ONLY (source_uuid de ProxyFields; el PAN se rechaza)
 POST /:merchantId/proxy-pci/session                      → Sesión PCI para ProxyFields
 POST /:merchantId/proxy-pci/charge                       → Cobro con card UUID de ProxyFields
 GET  /:merchantId/iframe                                 → Cargar iFrame de checkout
 GET  /hpp/:hostedCheckoutId                              → Redirect a iFrame firmado
 ```
 
-Auth: `x-api-key: <rawKeyId>` + `x-merchant-id: <merchantId>` (modo simple, `API_KEY_SIMPLE_FALLBACK=true`)
+Auth: `x-api-key: <rawSecret ms_...>` + `x-merchant-id: <merchantId>` (modo simple, `API_KEY_SIMPLE_FALLBACK=true`). El `mk_...` es público y NO autentica.
 
 ### Administración
 
@@ -1175,7 +1298,7 @@ Ambas se apagan con `DOCS_ENABLED=false`.
 GET /transactions                      → Listar transacciones
 GET /transactions/:paymentId           → Detalle de transacción
 GET /transactions/analytics/summary    → Métricas agregadas
-GET /webhooks                          → Histórico de WebhookEvents
+GET /webhooks                          → Histórico de WebhookEvents (INTERNO: X-Admin-Token desde el 26 sep 2026)
 GET /webhooks?paymentId=<id>           → Filtrar por pago
 ```
 
@@ -1240,7 +1363,7 @@ POST /webhooks/paynopain 200               → WEBHOOK_PAYNOPAIN_RECEIVED
 
 *→ **RUNBOOK M6 FASE 1 — para Marcos (todo contra el servidor Render):** **(0) ENV nuevas en Render antes de desplegar:** `PORTAL_JWT_SECRET=<algo largo y aleatorio, DISTINTO de BACKOFFICE_JWT_SECRET>`. (Opcionales: `RL_PORTAL_LOGIN_MAX`, `RL_PORTAL_LOGIN_WINDOW_MS`.) Luego Manual Deploy → Deploy latest commit → esperar Live. **(1) Sembrar el 1er merchant_admin** (con la sesión de superadmin del dashboard, o su JWT): `POST /backoffice/merchants/demo-merchant/portal-users`, `Authorization: Bearer <JWT superadmin>`, body `{"name":"Admin Demo","email":"admin@demo.com"}` → `201` con `tempPassword` (apúntala, no se repite). **(2) Login del portal:** `POST /portal/auth/login`, body `{"email":"admin@demo.com","password":"<tempPassword>"}` → `200` con `token` y `mustChangePassword:true`. **(3) Comprobar el bloqueo:** `GET /portal/users` con `Authorization: Bearer <token>` → `403 password_change_required`. **(4) Cambiar la password:** `POST /portal/auth/change-password` con ese token, body `{"currentPassword":"<tempPassword>","newPassword":"<nueva de 8+>"}` → `200` con un `token` nuevo. **(5) Ya con el token nuevo:** `GET /portal/users` → `200` (solo usuarios de demo-merchant); `POST /portal/users` body `{"name":"Op","email":"op@demo.com","role":"merchant_operator"}` → `201` con su `tempPassword`. **(6) Aislamiento (si hay un 2º merchant con usuarios):** intentar `PATCH /portal/users/<id de un usuario de OTRO merchant>` → `404`. **Lo que confirma cada paso:** que el plano merchant funciona aislado, que el token de un plano no vale en el otro, y que la password temporal obliga al cambio. NADA de esto toca Paylands.*
 
-*Sesión 18 julio 2026 (Test D — POSPUESTO a una sesión en Mac) — A/B/C ya verificados en producción (ver nota siguiente). Falta el **Test D** (S2S→payNoPain real con 3DS), que es lo único para poder subir S2S de `beta` a `estable`. Marcos está en iPad sin terminal; **decidido hacerlo en una sesión nueva desde el Mac**, donde el runbook de curl es trivial. **RUNBOOK TEST D — listo para ejecutar en Mac (todo Paylands SANDBOX vía el servidor Render, sin dinero real):** **(1) Enrutar S2S a payNoPain** — `PUT /rules/demo-merchant`, header `X-Admin-Token: <ADMIN_TOKEN>`, body `{"version":"v1","defaultConnector":"payNoPain","rules":[],"fallback":{"order":["payNoPain"],"on":["network_error"]}}` → 200. Con `rules:[]` el motor enruta al `defaultConnector` (verificado en `ruleEngineV2.evaluate`: sin reglas devuelve `connector = policy.defaultConnector`). **(2) Conseguir un `source_uuid` real** (lo genera ProxyFields, NUNCA es el PAN): _opción recomendada (NO construida aún)_ = helper solo-lectura `GET /diag/card-token?reference=<paymentId>` que devuelva `pciProxy.getTokenizationResults(reference).token`; _opción manual_ = crear un Hosted Checkout, meter la tarjeta de test `4018810000100036` (12/34, CVV 123) en el iframe, y recuperar el token del Proxy PCI → `POST https://pci-proxy-api.paynopain.com/sandbox/customers` con `{"apiKey":"<PAYNOPAIN_API_KEY>","signature":"<PAYNOPAIN_SIGNATURE>"}` (el JWT viene en `resp.apiKey`), luego `GET https://pci-proxy-api.paynopain.com/sandbox/card/reference/<paymentId>` con `Authorization: Bearer <JWT>` → el campo `token` del primer elemento del array es el `source_uuid`; _opción C_ = portal Paylands sandbox. **(3) Lanzar el S2S** — `POST /demo-merchant/payments/server`, headers `x-api-key: mk_7065b5507c6efae4d1067f2768919154` + `x-merchant-id: demo-merchant`, body `{"source_uuid":"<UUID>","cardPaymentMethodSpecificInput":{"threeDSecure":{"redirectionData":{"returnUrl":"https://example.com/return"}}},"order":{"amountOfMoney":{"amount":1000,"currencyCode":"EUR"}},"feedbacks":{"webhookUrl":"https://webhook.site/<uuid>"}}`. Esperado: `200`, `status:pending_3ds`, `connectorUsed:payNoPain`, `merchantAction.actionType:REDIRECT` con la URL de 3DS. Apuntar el `paymentId`. **(4) Completar el 3DS** abriendo esa URL en el navegador (challenge del sandbox). **(5) Verificar** — `GET /diag/transactions?paymentId=<id>` con `X-Admin-Token` → `status:authorized`, `_diag.webhookReceived:true`, `lastWebhookRaw.status:PENDING_CONFIRMATION` (mapea a authorized en DEFERRED); y en webhook.site un `payment.updated` con header `Monetiser-Signature`. **(6) Revertir el routing** — `PUT /rules/demo-merchant` con `defaultConnector:"dummyCard"` y `fallback.order:["dummyCard"]` (restaura la base de A/B/C). **Incierto, anotar el resultado:** si el mismo `source_uuid` admite dos cobros (el del hosted del paso 2 + el del S2S del paso 3) contra Paylands sandbox — card-on-file dice que sí, pero sin verificar; si Paylands lo rechaza NO es bug de Monetiser (usar entonces un source_uuid fresco sin cobrar antes). **Ofrecido y NO construido (decisión pospuesta al Mac):** (a) el helper `GET /diag/card-token` (colapsa el paso 2 a una sola petición y elimina manejar los secretos `PAYNOPAIN_*`), (b) una colección de Postman con todo el Test D montado (para poder hacerlo desde iPad si hiciera falta). Con D en verde → subir S2S de `beta` a `estable` en `openapi.yaml` y cerrar el último bloqueante técnico previo a M5.*
+*Sesión 18 julio 2026 (Test D — POSPUESTO a una sesión en Mac) — A/B/C ya verificados en producción (ver nota siguiente). Falta el **Test D** (S2S→payNoPain real con 3DS), que es lo único para poder subir S2S de `beta` a `estable`. Marcos está en iPad sin terminal; **decidido hacerlo en una sesión nueva desde el Mac**, donde el runbook de curl es trivial. **RUNBOOK TEST D — listo para ejecutar en Mac (todo Paylands SANDBOX vía el servidor Render, sin dinero real):** **(1) Enrutar S2S a payNoPain** — `PUT /rules/demo-merchant`, header `X-Admin-Token: <ADMIN_TOKEN>`, body `{"version":"v1","defaultConnector":"payNoPain","rules":[],"fallback":{"order":["payNoPain"],"on":["network_error"]}}` → 200. Con `rules:[]` el motor enruta al `defaultConnector` (verificado en `ruleEngineV2.evaluate`: sin reglas devuelve `connector = policy.defaultConnector`). **(2) Conseguir un `source_uuid` real** (lo genera ProxyFields, NUNCA es el PAN): _opción recomendada (NO construida aún)_ = helper solo-lectura `GET /diag/card-token?reference=<paymentId>` que devuelva `pciProxy.getTokenizationResults(reference).token`; _opción manual_ = crear un Hosted Checkout, meter la tarjeta de test `4018810000100036` (12/34, CVV 123) en el iframe, y recuperar el token del Proxy PCI → `POST https://pci-proxy-api.paynopain.com/sandbox/customers` con `{"apiKey":"<PAYNOPAIN_API_KEY>","signature":"<PAYNOPAIN_SIGNATURE>"}` (el JWT viene en `resp.apiKey`), luego `GET https://pci-proxy-api.paynopain.com/sandbox/card/reference/<paymentId>` con `Authorization: Bearer <JWT>` → el campo `token` del primer elemento del array es el `source_uuid`; _opción C_ = portal Paylands sandbox. **(3) Lanzar el S2S** — `POST /demo-merchant/payments/server`, headers `x-api-key: <rawSecret ms_...>` + `x-merchant-id: demo-merchant`, body `{"source_uuid":"<UUID>","cardPaymentMethodSpecificInput":{"threeDSecure":{"redirectionData":{"returnUrl":"https://example.com/return"}}},"order":{"amountOfMoney":{"amount":1000,"currencyCode":"EUR"}},"feedbacks":{"webhookUrl":"https://webhook.site/<uuid>"}}`. Esperado: `200`, `status:pending_3ds`, `connectorUsed:payNoPain`, `merchantAction.actionType:REDIRECT` con la URL de 3DS. Apuntar el `paymentId`. **(4) Completar el 3DS** abriendo esa URL en el navegador (challenge del sandbox). **(5) Verificar** — `GET /diag/transactions?paymentId=<id>` con `X-Admin-Token` → `status:authorized`, `_diag.webhookReceived:true`, `lastWebhookRaw.status:PENDING_CONFIRMATION` (mapea a authorized en DEFERRED); y en webhook.site un `payment.updated` con header `Monetiser-Signature`. **(6) Revertir el routing** — `PUT /rules/demo-merchant` con `defaultConnector:"dummyCard"` y `fallback.order:["dummyCard"]` (restaura la base de A/B/C). **Incierto, anotar el resultado:** si el mismo `source_uuid` admite dos cobros (el del hosted del paso 2 + el del S2S del paso 3) contra Paylands sandbox — card-on-file dice que sí, pero sin verificar; si Paylands lo rechaza NO es bug de Monetiser (usar entonces un source_uuid fresco sin cobrar antes). **Ofrecido y NO construido (decisión pospuesta al Mac):** (a) el helper `GET /diag/card-token` (colapsa el paso 2 a una sola petición y elimina manejar los secretos `PAYNOPAIN_*`), (b) una colección de Postman con todo el Test D montado (para poder hacerlo desde iPad si hiciera falta). Con D en verde → subir S2S de `beta` a `estable` en `openapi.yaml` y cerrar el último bloqueante técnico previo a M5.*
 
 *Sesión 18 julio 2026 (S2S tokens-only — MERGE + VERIFICADO EN PRODUCCIÓN) — El trabajo descrito en la nota siguiente se fusionó a `main`: PR #1 (squash) → commit `24d8dc4`. Rama `claude/s2s-tokens-only-b7r033` retirada en local; la remota la cierra Marcos desde el PR (el proxy de git de la sesión NO permite borrar ramas — 403 de política, no se reintenta). **Deploy:** Marcos hizo Manual Deploy de `24d8dc4` en Render y se confirmó **Live** — evidencia: el Test A devolvió el `400` nuevo, que el código viejo (que aceptaba el PAN) no daba. **Verificado en producción vía curl (Render, `PAYNOPAIN_ENV=sandbox`), 18 jul:** (A) PAN en crudo → `400 card_data_not_accepted`; (B) sin token → `400 missing_card_token`; (C) con `source_uuid` → `200` `status:authorized` `connectorUsed:dummyCard` (tx de prueba `bedb572a-ba86-41f1-b177-14a05800bbf4`, dummyCard, sin dinero real). O sea: el gating tokens-only (rechazo de PAN / exigencia de token) y el happy-path por la ruta por defecto (dummyCard) quedan verificados EN VIVO. **`openapi.yaml` se mantiene en `beta`** (correcto): lo único que falta para `estable` es el **Test D — S2S→payNoPain real con 3DS**, que sigue PENDIENTE. **Matiz sobre el Test D (duda de Marcos, aclarada aquí):** D NO es Paylands producción ni dinero real. Se ejecuta *a través del servidor de Render* (único entorno con credenciales reales de PayNoPain, y necesario porque Paylands entrega el webhook de cierre a `SERVER_URL/webhooks/paynopain`, que debe ser una URL pública — desde el Mac en local no llegaría), pero **contra Paylands SANDBOX** (`PAYNOPAIN_ENV=sandbox`, tarjetas de test `4018810...`, sin dinero). "Prod" solo en el sentido de "el servidor desplegado en Render", jamás Paylands producción. Requisitos de D: (1) una regla de routing que enrute S2S a `payNoPain` (pestaña Reglas o `PUT /rules/demo-merchant` con `defaultConnector:"payNoPain"`), y (2) un `source_uuid` real de ProxyFields (hoy solo se genera dentro del iframe del Hosted Checkout).*
 
