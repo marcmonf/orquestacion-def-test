@@ -307,7 +307,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <input type="text" id="rulesSampleAmount" placeholder="amount 25" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
           <input type="text" id="rulesSampleCurrency" placeholder="currency EUR" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
-          <input type="text" id="rulesSampleCard" placeholder="cardNumber (opcional)" style="grid-column:span 2;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
+          <input type="text" id="rulesSampleCard" inputmode="numeric" maxlength="8" placeholder="BIN: 6-8 primeros dígitos (opcional, nunca la tarjeta entera)" style="grid-column:span 2;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px"/>
         </div>
         <div id="rulesTryOut" style="min-height:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;color:var(--text2)"></div>
         <div id="rulesAuditWrap" style="display:none;margin-top:16px">
