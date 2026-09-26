@@ -1,6 +1,13 @@
 'use strict';
 
 const Joi = require('joi');
+const { listConnectors } = require('../services/connectorRegistry');
+
+// Solo conectores REGISTRADOS (en producción, dummyCard no lo está). Antes se
+// aceptaba cualquier nombre y el fallback por defecto era dummyCard: una
+// política {defaultConnector:'payNoPain', rules:[]} acababa, al validarse, con
+// un fallback al simulador que aprueba todo. Ver connectorRegistry.js.
+const connectorName = () => Joi.string().valid(...listConnectors());
 
 const cmpNumber = Joi.object({
   lte: Joi.number(),
@@ -53,7 +60,7 @@ const ruleSchema = Joi.object({
   id: Joi.string().required(),
   priority: Joi.number().integer().min(0),
   when: whenSchema.required(),
-  action: Joi.object({ route: Joi.string().required() }).required()
+  action: Joi.object({ route: connectorName().required() }).required()
 }).unknown(false);
 
 const retriesSchema = Joi.object({
@@ -63,16 +70,19 @@ const retriesSchema = Joi.object({
 }).unknown(false);
 
 const fallbackSchema = Joi.object({
-  order: Joi.array().items(Joi.string()).min(1).required(),
+  order: Joi.array().items(connectorName()).min(1).required(),
   on: Joi.array().items(Joi.string().valid('network_error','soft_decline','issuer_unavailable')).min(1).required()
 }).unknown(false);
 
 const policySchema = Joi.object({
   merchantId: Joi.string().required(),
   version: Joi.string().valid('v1').required(),
-  defaultConnector: Joi.string().required(),
-  rules: Joi.array().items(ruleSchema).required(),
-  fallback: fallbackSchema.default({ order: ['dummyCard'], on: ['network_error','soft_decline'] }),
+  defaultConnector: connectorName().required(),
+  rules: Joi.array().items(ruleSchema).max(200).required(),
+  // Sin fallback por defecto. Si se define, solo se usa cuando el conector
+  // elegido no está disponible — nunca tras un rechazo o un timeout (ver
+  // paymentService.processCardPayment).
+  fallback: fallbackSchema.optional(),
   retries: retriesSchema.default({ soft_decline:1, network_error:2, jitterMs:[200,500] }),
   explain: Joi.boolean().default(true)
 }).unknown(false);

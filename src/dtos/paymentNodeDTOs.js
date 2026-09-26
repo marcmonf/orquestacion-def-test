@@ -2,13 +2,39 @@
 'use strict';
 
 const Joi = require('joi');
+const { getSupportedCurrencies } = require('../utils/currencyConfig');
+
+// Importe máximo por pago en unidades menores (céntimos). Guarda técnica contra
+// importes absurdos; ajustable con MAX_PAYMENT_AMOUNT. Por defecto 1.000.000,00.
+const MAX_PAYMENT_AMOUNT = parseInt(process.env.MAX_PAYMENT_AMOUNT || '100000000', 10);
+
+// URLs a las que se REDIRIGE al comprador: solo http(s). Joi.uri() a secas
+// admite javascript:, data:, etc. (son URIs válidas según el RFC).
+const RedirectUrl = () => Joi.string().uri({ scheme: ['https', 'http'] }).max(2048);
+
+// URLs a las que Monetiser envía webhooks: solo https (el dispatcher solo habla
+// TLS y además bloquea destinos de red privada — ver webhookDispatcher.js).
+const WebhookUrl = () => Joi.string().uri({ scheme: ['https'] }).max(2048);
 
 /**
- * Nodo: AmountOfMoney
+ * Nodo: AmountOfMoney (genérico: líneas de carrito, recargos, tarjetas regalo...)
+ * Siempre entero en unidades menores y no negativo.
  */
 const AmountOfMoneyDTO = Joi.object({
-  amount: Joi.number().required(),
-  currencyCode: Joi.string().length(3).required()
+  amount: Joi.number().integer().min(0).max(MAX_PAYMENT_AMOUNT).required(),
+  currencyCode: Joi.string().length(3).uppercase().required()
+});
+
+/**
+ * Importe TOTAL del pedido (lo que se cobra). Más estricto que el genérico:
+ *   - entero ≥ 1 en unidades menores (antes Joi.number() aceptaba negativos,
+ *     cero y decimales: un pago de -1000 o de 10.5 céntimos se creaba sin más);
+ *   - divisa dentro de SUPPORTED_CURRENCIES (ver utils/currencyConfig.js).
+ */
+const OrderAmountOfMoneyDTO = Joi.object({
+  amount: Joi.number().integer().min(1).max(MAX_PAYMENT_AMOUNT).required(),
+  currencyCode: Joi.string().length(3).uppercase().valid(...getSupportedCurrencies()).required()
+    .messages({ 'any.only': 'currency_not_supported: {{#label}} debe ser una de [{{#valids}}]' })
 });
 
 /**
@@ -337,7 +363,7 @@ const DiscountDTO = Joi.object({
  */
 const OrderDTO = Joi.object({
   additionalInput: AdditionalInputDTO.optional(),
-  amountOfMoney: AmountOfMoneyDTO.required(),
+  amountOfMoney: OrderAmountOfMoneyDTO.required(),
   customer: CustomerDTO.optional(),
   references: ReferencesDTO.optional(),
   shipping: ShippingDTO.optional(),
@@ -358,7 +384,7 @@ const PriorThreeDSecureDataDTO = Joi.object({
 });
 
 const RedirectionDataDTO = Joi.object({
-  returnUrl: Joi.string().uri().required()
+  returnUrl: RedirectUrl().required()
 });
 
 const ExternalCardholderAuthenticationDataDTO = Joi.object({
@@ -432,7 +458,7 @@ const CardPaymentMethodSpecificInputDTO = Joi.object({
   card: CardDTO.optional(),
   networkTokenData: NetworkTokenDataDTO.optional(),
   isRecurring: Joi.boolean().optional(),
-  returnUrl: Joi.string().optional(), // aunque el oficial lo tomamos de threeDSecure.redirectionData.returnUrl
+  returnUrl: RedirectUrl().optional(), // aunque el oficial lo tomamos de threeDSecure.redirectionData.returnUrl
   threeDSecure: ThreeDSecureDTO.required(),
   currencyConversion: CurrencyConversionDTO.optional(),
   cardOnFileRecurringFrequency: Joi.string().optional(),
@@ -446,12 +472,16 @@ const CardPaymentMethodSpecificInputDTO = Joi.object({
  * Nodo: Feedbacks
  */
 const FeedbacksDTO = Joi.object({
-  webhooksUrls: Joi.array().items(Joi.string().uri()).optional(),
-  webhookUrl: Joi.string().uri().optional()
+  webhooksUrls: Joi.array().items(WebhookUrl()).max(5).optional(),
+  webhookUrl: WebhookUrl().optional()
 });
 
 module.exports = {
+  MAX_PAYMENT_AMOUNT,
+  RedirectUrl,
+  WebhookUrl,
   AmountOfMoneyDTO,
+  OrderAmountOfMoneyDTO,
   FraudFieldsDTO,
   AirlineDataDTO,
   LoanRecipientDTO,

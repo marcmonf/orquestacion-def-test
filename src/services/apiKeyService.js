@@ -166,12 +166,15 @@ async function looksLikeKeyId(rawKey, merchantId) {
 }
 
 /**
- * Revoca una key por su ID de documento MongoDB.
+ * Revoca una key por su ID de documento MongoDB, SIEMPRE dentro de su merchant.
+ * Antes ignoraba el merchant de la URL: un id equivocado revocaba la key de
+ * otro comercio.
  */
-async function revokeApiKey(keyId) {
+async function revokeApiKey(keyId, merchantId) {
   // keyId aquí es el _id de MongoDB, no el campo keyId del schema
-  const doc = await MerchantApiKey.findByIdAndUpdate(
-    keyId,
+  if (!merchantId || !/^[a-f0-9]{24}$/i.test(String(keyId || ''))) return null;
+  const doc = await MerchantApiKey.findOneAndUpdate(
+    { _id: keyId, merchantId },
     { $set: { active: false, revokedAt: new Date() } },
     { new: true }
   ).lean();

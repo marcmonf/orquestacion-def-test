@@ -73,13 +73,17 @@ const merchantSchema = new mongoose.Schema({
   // ── Branding (nuevo, anidado) ──────────────────────────────
   branding: { type: brandingSchema, default: () => ({}) },
 
-  // ── Branding (legacy, plano — NO borrar: lo leen iframe/inpage) ──
+  // ── Branding (legacy, plano — NO borrar: lo lee el iFrame de pago) ──
   logoUrl:      String,
   brandColor:   String,
   accentColor:  String,
 
-  // ── Secretos (NO borrar: hpp.js lee signingSecret||hmacSecret||secret) ──
-  signingSecret: String,  // secret para firmar webhooks salientes a este merchant
+  // ── Secretos ──
+  // signingSecret: firma de los webhooks salientes a este merchant (whsec_...).
+  // Lo genera el servidor en el alta (y el dispatcher si falta). hmacSecret y
+  // secret son grafías legadas que el dispatcher sigue leyendo como fallback.
+  // (La URL del iFrame ya NO se firma con esto: ver src/utils/hppSigner.js.)
+  signingSecret: String,
   hmacSecret:    String,
   secret:        String,
 

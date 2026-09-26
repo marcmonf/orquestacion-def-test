@@ -261,32 +261,6 @@
       </div>
     </div>
 
-    <!-- MODO LEGACY: formulario propio (para dummyCard / fallback) -->
-    <div id="legacy-form" style="display:none;">
-      <div class="form-group">
-        <label for="card-number-legacy">Número de tarjeta</label>
-        <input type="tel" id="card-number-legacy" placeholder="4111 1111 1111 1111" maxlength="19" autocomplete="cc-number">
-      </div>
-      <div class="row">
-        <div class="form-group">
-          <label for="expiry-month-legacy">Mes</label>
-          <input type="tel" id="expiry-month-legacy" placeholder="MM" maxlength="2">
-        </div>
-        <div class="form-group">
-          <label for="expiry-year-legacy">Año</label>
-          <input type="tel" id="expiry-year-legacy" placeholder="AA" maxlength="2">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="cvv-legacy">CVV</label>
-        <input type="tel" id="cvv-legacy" placeholder="123" maxlength="4">
-      </div>
-      <div class="form-group">
-        <label for="holder-legacy">Titular</label>
-        <input type="text" id="holder-legacy" placeholder="Nombre en la tarjeta">
-      </div>
-    </div>
-
     <button class="submit-btn" id="pay-btn" disabled>Cargando...</button>
 
     <div id="status-msg" class="status-message"></div>
@@ -302,9 +276,11 @@
     const currency   = RUNTIME.currency   || '';
     const branding   = RUNTIME.branding   || {};
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const mode      = urlParams.get('mode') || 'proxy-pci';
     const SERVER_BASE = '';
+    // URL de la librería ProxyFields de Paylands. La decide el SERVIDOR según
+    // PAYNOPAIN_ENV (sandbox/production): antes estaba fija a /sandbox/ aquí,
+    // lo que impedía pasar a producción sin tocar este fichero.
+    const PCI_CLIENT_URL = RUNTIME.pciClientUrl || 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
 
     // Aplicar branding
     if (branding.brandColor) {
@@ -337,14 +313,18 @@
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // MODO PROXY PCI
+    // PROXY PCI (único modo). Los campos de PAN y CVV son sub-iFrames de
+    // Paylands: el PAN nunca pasa por el DOM ni por los servidores de Monetiser
+    // (PCI SAQ A). El antiguo "modo legacy" (?mode=...) pintaba un formulario
+    // PROPIO con PAN y CVV y lo enviaba a POST /iframe-process — retirado el
+    // 26 sep 2026: rompía SAQ A y, sin autenticación, permitía marcar un pago
+    // como autorizado sin pagar. Ver DEV-LOG §4.
     // ═══════════════════════════════════════════════════════════════════════
-    if (mode === 'proxy-pci') {
+    {
       document.getElementById('proxy-pci-form').style.display = 'block';
-      document.getElementById('legacy-form').style.display    = 'none';
 
       const script = document.createElement('script');
-      script.src   = 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
+      script.src   = PCI_CLIENT_URL;
 
       script.onerror = function() {
         showStatus('error', 'Error al cargar el módulo de seguridad. Recarga la página.');
@@ -466,59 +446,6 @@
         });
       });
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // MODO LEGACY (dummyCard / testing sin Proxy PCI)
-    // ═══════════════════════════════════════════════════════════════════════
-    } else {
-      document.getElementById('proxy-pci-form').style.display = 'none';
-      document.getElementById('legacy-form').style.display    = 'block';
-      payBtn.disabled    = false;
-      payBtn.textContent = 'Pagar ahora';
-
-      payBtn.addEventListener('click', async function() {
-        const cardNumber  = document.getElementById('card-number-legacy').value.trim().replace(/\s/g, '');
-        const expiryMonth = document.getElementById('expiry-month-legacy').value.trim();
-        const expiryYear  = document.getElementById('expiry-year-legacy').value.trim();
-        const cvv         = document.getElementById('cvv-legacy').value.trim();
-        const cardHolder  = document.getElementById('holder-legacy').value.trim();
-
-        if (!cardNumber || !expiryMonth || !expiryYear || !cvv || !cardHolder) {
-          showStatus('error', 'Completa todos los campos.');
-          return;
-        }
-
-        setLoading(true);
-        statusMsg.className = 'status-message';
-
-        try {
-          const processRes = await fetch(`/${merchantId}/iframe-process`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              paymentId,
-              cardNumber,
-              expiryMonth,
-              expiryYear,
-              cvv,
-              cardholderName: cardHolder,
-              method: 'card',
-            }),
-          });
-
-          const processData = await processRes.json();
-
-          if (processData.success) {
-            showStatus('success', '¡Pago completado correctamente!');
-            payBtn.style.display = 'none';
-          } else {
-            showStatus('error', processData.message || 'El pago fue rechazado.');
-            setLoading(false);
-          }
-        } catch (err) {
-          showStatus('error', 'Error de conexión. Inténtalo de nuevo.');
-          setLoading(false);
-        }
-      });
     }
   </script>
 </body>

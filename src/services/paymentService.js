@@ -12,21 +12,23 @@
 
 const PaymentAttempt = require('../models/PaymentAttempt');
 const MerchantRules  = require('../models/MerchantRules');
-const { getConnector } = require('./connectorRegistry');
+const { getConnector, DEFAULT_CONNECTOR } = require('./connectorRegistry');
 const { evaluate }   = require('../rules/ruleEngineV2');
 
 const MAX_RETRIES_PER_CONNECTOR = 2;   // reintentos ante soft decline
 const CONNECTOR_TIMEOUT_MS      = 7000;
 
 // ─── Política por defecto si el merchant no tiene ninguna configurada ───────
+// Conector real, SIN fallback. Antes era dummyCard (simulador que aprueba todo)
+// tanto como conector por defecto como de fallback: un rechazo real podía
+// terminar en "authorized" sin cobrar. Ver connectorRegistry.js.
 function defaultPolicy(merchantId) {
   return {
     merchantId,
     version: 'v1',
-    defaultConnector: 'dummyCard',
+    defaultConnector: DEFAULT_CONNECTOR,
     rules: [],
-    fallback: { order: ['dummyCard'], on: ['network_error', 'soft_decline'] },
-    retries: { soft_decline: 1, network_error: 2 },
+    retries: { soft_decline: 0, network_error: 0 },
     explain: false
   };
 }
@@ -58,8 +60,15 @@ async function processCardPayment(paymentData) {
   // ruleEngineV2.evaluate → { connector, matchedRuleId, reasons }
   const decision = evaluate(policy, ctx, { explain: false });
 
-  // Secuencia de conectores: el elegido por el rule engine + fallback
-  const primaryConnector = decision.connector || policy.defaultConnector || 'dummyCard';
+  // Secuencia de conectores: el elegido por el rule engine + fallback.
+  //
+  // CUÁNDO se pasa al siguiente conector (26 sep 2026): SOLO si el conector no
+  // está disponible (no registrado). Nunca tras un rechazo (reintentar en otro
+  // adquirente una tarjeta rechazada por el emisor está penalizado por las
+  // marcas) ni tras un timeout (el primer adquirente pudo cobrar: pasar al
+  // segundo sería un DOBLE COBRO). Antes se pasaba al siguiente ante cualquier
+  // fallo e ignorando `fallback.on`.
+  const primaryConnector = decision.connector || policy.defaultConnector || DEFAULT_CONNECTOR;
   const fallbackOrder    = policy.fallback?.order || [];
 
   // Construimos la secuencia sin duplicados
@@ -139,19 +148,26 @@ async function processCardPayment(paymentData) {
         };
       }
 
-      // Hard decline → pasar al siguiente conector directamente
-      if (!connector.isSoftDecline(result.responseCode)) {
-        break;
+      // Soft decline → reintento en el MISMO conector (si el conector lo declara)
+      if (connector.isSoftDecline(result.responseCode) && retries < MAX_RETRIES_PER_CONNECTOR) {
+        retries += 1;
+        continue;
       }
 
-      // Soft decline → reintentamos
-      retries += 1;
+      // Rechazo, error o timeout: resultado final. NO se prueba otro conector.
+      return {
+        status:             'failed',
+        reasonCode:         result.responseCode || 'declined',
+        connectorUsed:      connector.name,
+        processorReference: result.processorReference || null,
+        matchedRuleId:      decision.matchedRuleId,
+      };
     }
   }
 
   return {
     status:    'failed',
-    reasonCode: 'all_connectors_failed',
+    reasonCode: 'no_connector_available',
   };
 }
 

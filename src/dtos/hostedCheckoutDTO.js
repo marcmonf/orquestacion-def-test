@@ -6,7 +6,9 @@ const Joi = require('joi');
 const {
   FraudFieldsDTO,
   OrderDTO,
-  CardDTO
+  CardDTO,
+  RedirectUrl,
+  WebhookUrl
 } = require('./paymentNodeDTOs');
 
 /**
@@ -30,7 +32,7 @@ const CardPaymentMethodSpecificInputHostedDTO = Joi.object({
   paymentProductId: Joi.number().optional(),
   card: CardDTO.optional(),
   isRecurring: Joi.boolean().optional(),
-  returnUrl: Joi.string().optional(),
+  returnUrl: RedirectUrl().optional(),
   threeDSecure: Joi.object().optional(),  // opcional en HC
   cardOnFileRecurringFrequency: Joi.string().optional(),
   cardOnFileRecurringExpiration: Joi.string().optional(),
@@ -43,9 +45,9 @@ const CardPaymentMethodSpecificInputHostedDTO = Joi.object({
  * Acepta returnUrl aquí (a diferencia del FeedbacksDTO S2S).
  */
 const FeedbacksHostedDTO = Joi.object({
-  returnUrl: Joi.string().optional(),
-  webhooksUrls: Joi.array().items(Joi.string().uri()).optional(),
-  webhookUrl: Joi.string().uri().optional()
+  returnUrl: RedirectUrl().optional(),
+  webhooksUrls: Joi.array().items(WebhookUrl()).max(5).optional(),
+  webhookUrl: WebhookUrl().optional()
 });
 
 /**

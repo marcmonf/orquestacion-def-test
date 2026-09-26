@@ -147,3 +147,62 @@ describe('Webhook dispatcher — generación de firma Monetiser-Signature', () =
     expect(sig1).not.toBe(sig2);
   });
 });
+
+// ─── Cola persistente de webhooks (26 sep 2026) ───────────────────────────────
+describe('Webhook dispatcher — cola persistente, reintentos y SSRF', () => {
+  let dispatcher;
+  const mockLogs = [];
+  const mockMerchants = [];
+
+  beforeAll(() => {
+    jest.resetModules();
+    jest.doMock('../../src/models/WebhookLog', () => ({
+      create: jest.fn(async (d) => { const doc = { _id: 'wl' + (mockLogs.length + 1), ...d, toObject() { return { ...this }; } }; mockLogs.push(doc); return doc; }),
+      updateOne: jest.fn(async (f, u) => { const d = mockLogs.find((x) => x._id === f._id); if (d) Object.assign(d, u.$set || {}); return {}; }),
+      findOneAndUpdate: jest.fn(async () => null),
+    }));
+    jest.doMock('../../src/models/Merchant', () => ({
+      findOne: jest.fn((f) => ({ lean: async () => mockMerchants.find((m) => m.merchantId === f.merchantId) || null })),
+      updateOne: jest.fn(async (f, u) => {
+        const m = mockMerchants.find((x) => x.merchantId === f.merchantId);
+        if (m && !m.signingSecret) Object.assign(m, u.$set);
+        return {};
+      }),
+    }));
+    delete process.env.WEBHOOK_SECRET;
+    dispatcher = require('../../src/services/webhookDispatcher');
+  });
+
+  test('destino a red privada → no se envía y queda FALLIDO sin reintentos (SSRF)', async () => {
+    mockMerchants.push({ merchantId: 'm1', signingSecret: 'whsec_x' });
+    const doc = { _id: 'wl-a', merchantId: 'm1', url: 'https://127.0.0.1:9999/hook', payload: { id: 'evt_1', event: 'payment.updated' }, attempt: 0 };
+    mockLogs.push(doc);
+    const r = await dispatcher._test.attemptDelivery(doc);
+    expect(r.delivered).toBe(false);
+    expect(r.exhausted).toBe(true);
+    expect(doc.failedAt).toBeInstanceOf(Date);
+    expect(doc.lastError).toMatch(/blocked_destination/);
+  });
+
+  test('fallo transitorio (DNS caído) → se programa el siguiente intento a 1 min, no se pierde', async () => {
+    const doc = { _id: 'wl-b', merchantId: 'm1', url: 'https://nonexistent.invalid/hook', payload: { id: 'evt_2' }, attempt: 0 };
+    mockLogs.push(doc);
+    const before = Date.now();
+    const r = await dispatcher._test.attemptDelivery(doc);
+    expect(r.delivered).toBe(false);
+    expect(r.exhausted).toBe(false);
+    expect(doc.failedAt).toBeUndefined();
+    expect(doc.attempt).toBe(1);
+    const wait = doc.nextAttemptAt.getTime() - before;
+    expect(wait).toBeGreaterThanOrEqual(59e3);
+    expect(wait).toBeLessThan(62e3);
+    expect(dispatcher._test.MAX_ATTEMPTS).toBe(9); // 1 inmediato + 8 reintentos (~2 días)
+  });
+
+  test('merchant sin secreto y sin WEBHOOK_SECRET global → se le GENERA uno (antes: no se enviaba nunca)', async () => {
+    mockMerchants.push({ merchantId: 'm-nosecret' });
+    const secret = await dispatcher._test.resolveSecret('m-nosecret');
+    expect(secret).toMatch(/^whsec_[0-9a-f]{64}$/);
+    expect(mockMerchants.find((m) => m.merchantId === 'm-nosecret').signingSecret).toBe(secret);
+  });
+});

@@ -21,47 +21,10 @@ const logger     = require('../utils/logger');
 // Todas las rutas de gestión de merchants requieren X-Admin-Token
 router.use(adminAuth);
 
-// ── Esquemas de validación ───────────────────────────────────
-const brandingSchema = Joi.object({
-  logoUrl:      Joi.string().allow('', null),
-  primaryColor: Joi.string().allow('', null),
-  accentColor:  Joi.string().allow('', null),
-  merchantName: Joi.string().allow('', null),
-});
-
-const createSchema = Joi.object({
-  merchantId:    Joi.string().required(),
-  name:          Joi.string().allow('', null),
-  country:       Joi.string().allow('', null),
-  plan:          Joi.string().valid('free', 'starter', 'growth', 'enterprise'),
-  status:        Joi.string().valid('active', 'suspended', 'pending'),
-  webhookUrl:    Joi.string().uri().allow('', null),
-  serviceUuid:   Joi.string().allow('', null),
-  templateUuid:  Joi.string().allow('', null),
-  signingSecret: Joi.string().allow('', null),
-  branding:      brandingSchema,
-  // branding plano legacy (compatibilidad)
-  logoUrl:       Joi.string().allow('', null),
-  brandColor:    Joi.string().allow('', null),
-  accentColor:   Joi.string().allow('', null),
-  hierarchyId:   Joi.string().allow(null),
-});
-
-const updateSchema = Joi.object({
-  name:          Joi.string().allow('', null),
-  country:       Joi.string().allow('', null),
-  plan:          Joi.string().valid('free', 'starter', 'growth', 'enterprise'),
-  status:        Joi.string().valid('active', 'suspended', 'pending'),
-  webhookUrl:    Joi.string().uri().allow('', null),
-  serviceUuid:   Joi.string().allow('', null),
-  templateUuid:  Joi.string().allow('', null),
-  signingSecret: Joi.string().allow('', null),
-  branding:      brandingSchema,
-  logoUrl:       Joi.string().allow('', null),
-  brandColor:    Joi.string().allow('', null),
-  accentColor:   Joi.string().allow('', null),
-  hierarchyId:   Joi.string().allow(null),
-}).min(1);
+// ── Esquemas de validación (compartidos con /backoffice/merchants) ──
+// signingSecret ya NO se acepta por API: lo genera el servidor (whsec_...).
+const { createSchema, updateSchema } = require('../validators/merchantSchema');
+const { generateSigningSecret } = require('../services/webhookDispatcher');
 
 // signingSecret nunca se devuelve en las respuestas
 const SAFE_PROJECTION = { signingSecret: 0, hmacSecret: 0, secret: 0, passwordHash: 0 };
@@ -77,13 +40,15 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: `merchant '${value.merchantId}' ya existe` });
     }
 
-    const merchant = new Merchant(value);
+    const signingSecret = generateSigningSecret();
+    const merchant = new Merchant({ ...value, signingSecret });
     await merchant.save();
 
     logger.info(`Merchant creado: ${merchant.merchantId}`);
     const out = merchant.toObject();
     delete out.signingSecret; delete out.hmacSecret; delete out.secret; delete out.passwordHash;
-    res.status(201).json({ message: 'Merchant creado', merchant: out });
+    // Secreto de firma de webhooks: se muestra UNA sola vez (como el rawSecret de las API keys).
+    res.status(201).json({ message: 'Merchant creado', merchant: out, webhookSigningSecret: signingSecret });
   } catch (err) {
     logger.error(`Error al crear merchant: ${err.message}`);
     res.status(500).json({ error: 'Error al crear merchant' });
@@ -93,22 +58,26 @@ router.post('/', async (req, res) => {
 // ── GET /merchants — listar (con paginación y búsqueda) ──────
 router.get('/', async (req, res) => {
   try {
-    const { search, status, plan, page = 1, limit = 20 } = req.query;
+    const { search, status, plan } = req.query;
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const query = {};
-    if (status) query.status = status;
-    if (plan)   query.plan   = plan;
-    if (search) {
-      const regex = new RegExp(search, 'i');
+    if (typeof status === 'string') query.status = status;
+    if (typeof plan === 'string')   query.plan   = plan;
+    if (typeof search === 'string' && search.trim()) {
+      // Entrada escapada: antes iba cruda a new RegExp (ReDoS / 500 con patrón inválido).
+      const safe = search.trim().slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(safe, 'i');
       query.$or = [{ name: regex }, { merchantId: regex }, { country: regex }];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (page - 1) * limit;
     const [total, merchants] = await Promise.all([
       Merchant.countDocuments(query),
-      Merchant.find(query, SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit)).lean(),
+      Merchant.find(query, SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(limit).lean(),
     ]);
 
-    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, merchants });
+    res.status(200).json({ page, limit, total, merchants });
   } catch (err) {
     logger.error(`Error al listar merchants: ${err.message}`);
     res.status(500).json({ error: 'Error al listar merchants' });

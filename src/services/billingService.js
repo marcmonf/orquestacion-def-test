@@ -78,11 +78,24 @@ async function computeBilling(merchantId, period, config, activeUsers = 0) {
   if (!range) { const e = new Error('invalid_period'); e.code = 'invalid_period'; throw e; }
 
   const base = { merchantId, createdAt: { $gte: range.start, $lt: range.end } };
+  // Salvaguardas de lo FACTURABLE (26 sep 2026):
+  //   - importe > 0: antes un importe negativo creado por API restaba de la
+  //     factura (se podía dejar la factura en negativo);
+  //   - nunca el conector simulado (dummyCard aprueba sin mover dinero);
+  //   - solo la divisa de la tarifa: antes se sumaban EUR, JPY y KWD como si
+  //     fueran la misma moneda.
+  const billableFilter = {
+    ...base,
+    status:    { $in: BILLABLE_STATUSES },
+    amount:    { $gt: 0 },
+    processor: { $ne: 'dummyCard' },
+    currency:  config.currency || 'EUR',
+  };
   const [transactionsCount, billableCount, volAgg] = await Promise.all([
     Transaction.countDocuments(base),
-    Transaction.countDocuments({ ...base, status: { $in: BILLABLE_STATUSES } }),
+    Transaction.countDocuments(billableFilter),
     Transaction.aggregate([
-      { $match: { ...base, status: { $in: BILLABLE_STATUSES } } },
+      { $match: billableFilter },
       { $group: { _id: null, vol: { $sum: '$amount' } } },
     ]),
   ]);

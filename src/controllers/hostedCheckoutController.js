@@ -7,6 +7,7 @@ const Transaction = require('../models/Transaction');
 const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
+const { isCompleted } = require('../utils/paymentStatus');
 
 const {
   HostedCheckoutRequestDTO,
@@ -127,7 +128,7 @@ async function createHostedCheckout(req, res) {
     cardPaymentMethodSpecificInput?.threeDSecure?.redirectionData?.returnUrl ||
     null;
 
-  const callbackUrl =
+  const requestCallbackUrl =
     feedbacks?.webhookUrl ||
     (Array.isArray(feedbacks?.webhooksUrls) && feedbacks.webhooksUrls.length
       ? feedbacks.webhooksUrls[0]
@@ -141,14 +142,21 @@ async function createHostedCheckout(req, res) {
   try {
     const merchant = await Merchant.findOne(
       { merchantId },
-      { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
+      { signingSecret: 1, hmacSecret: 1, secret: 1, webhookUrl: 1, _id: 0 }
     ).lean();
 
+    // Si el pago no trae webhookUrl propio, se usa el configurado en la ficha
+    // del merchant (/admin → Merchants). Antes se ignoraba: un merchant con su
+    // webhookUrl configurado no recibía nada salvo que lo repitiese en cada pago.
+    const callbackUrl = requestCallbackUrl || merchant?.webhookUrl || null;
+
+    // RETURNMAC solo si el merchant tiene secreto propio. Antes, sin secreto, se
+    // firmaba con la cadena pública 'default_merchant_secret' (firma sin valor).
     const merchantSecret =
       merchant?.signingSecret ||
       merchant?.hmacSecret ||
       merchant?.secret ||
-      (process.env.MERCHANT_SECRET || 'default_merchant_secret');
+      null;
 
     const macPayload = {
       merchantId,
@@ -159,7 +167,7 @@ async function createHostedCheckout(req, res) {
       exp: expiresAt.toISOString()
     };
 
-    const RETURNMAC = generateReturnMac(macPayload, merchantSecret);
+    const RETURNMAC = merchantSecret ? generateReturnMac(macPayload, merchantSecret) : null;
 
     const baseHpp = resolveBaseUrl(req);
     const partialRedirectUrl = `/hpp/${encodeURIComponent(hostedCheckoutId)}`;
@@ -223,19 +231,23 @@ async function createHostedCheckout(req, res) {
 
     return res.status(500).json({
       success: false,
-      error: 'internal_error',
-      detail: e.message
+      error: 'internal_error'
     });
   }
 }
 
 /**
  * GET /:merchantId/payments/hosted/:hostedCheckoutId/status
+ *
+ * AISLAMIENTO: la búsqueda filtra por el merchant AUTENTICADO. Antes buscaba
+ * solo por hostedCheckoutId: cualquier merchant con API key válida podía leer
+ * el estado, importe y merchantId de los checkouts de OTRO merchant.
  */
 async function getHostedCheckoutStatus(req, res) {
   const { hostedCheckoutId } = req.params;
+  const merchantId = resolveMerchantIdFromRequest(req);
 
-  if (!hostedCheckoutId) {
+  if (!hostedCheckoutId || !merchantId) {
     return res.status(400).json({
       success: false,
       error: 'validation_error',
@@ -244,7 +256,7 @@ async function getHostedCheckoutStatus(req, res) {
   }
 
   try {
-    const tx = await Transaction.findOne({ hostedCheckoutId }).lean();
+    const tx = await Transaction.findOne({ hostedCheckoutId, merchantId }).lean();
     if (!tx) {
       return res.status(404).json({
         success: false,
@@ -256,10 +268,9 @@ async function getHostedCheckoutStatus(req, res) {
     const now = new Date();
     const expired =
       tx.sessionExpiresAt && now.getTime() > new Date(tx.sessionExpiresAt).getTime();
-    const isFinal =
-      ['approved', 'authorized', 'declined', 'refused', 'cancelled'].includes(
-        tx.status
-      );
+    // Fuente única de estados (utils/paymentStatus). La lista escrita a mano de
+    // antes no incluía captured/refunded/... → completed:false para siempre.
+    const isFinal = isCompleted(tx.status);
 
     const responsePayload = buildHostedCheckoutStatusResponse(tx, {
       completed: isFinal,
@@ -269,10 +280,10 @@ async function getHostedCheckoutStatus(req, res) {
     return res.status(200).json(responsePayload);
 
   } catch (e) {
+    logger.error('Error in getHostedCheckoutStatus', { error: e.message });
     return res.status(500).json({
       success: false,
-      error: 'internal_error',
-      detail: e.message
+      error: 'internal_error'
     });
   }
 }

@@ -17,6 +17,7 @@ const router        = express.Router();
 const MerchantUser  = require('../models/MerchantUser');
 const HierarchyNode = require('../models/HierarchyNode');
 const Transaction   = require('../models/Transaction');
+const { SUCCESSFUL_STATUSES, FAILED_STATUSES } = require('../utils/paymentStatus');
 const Merchant      = require('../models/Merchant');
 const MerchantAcquirer    = require('../models/MerchantAcquirer');
 const MerchantRoutingRule = require('../models/MerchantRoutingRule');
@@ -259,12 +260,15 @@ router.get('/transactions/:paymentId', async (req, res) => {
 router.get('/analytics/summary', async (req, res) => {
   try {
     const scope = { merchantId: req.portalUser.merchantId };
+    // "Aprobadas" = todo pago que el adquirente aprobó (authorized, captured,
+    // refunded...). Contar solo el estado legado 'approved' daba ~0 con pagos
+    // reales de Paylands, que acaban en 'authorized'/'captured'.
     const [total, approved, declined, volAgg] = await Promise.all([
       Transaction.countDocuments(scope),
-      Transaction.countDocuments({ ...scope, status: 'approved' }),
-      Transaction.countDocuments({ ...scope, status: 'declined' }),
+      Transaction.countDocuments({ ...scope, status: { $in: SUCCESSFUL_STATUSES } }),
+      Transaction.countDocuments({ ...scope, status: { $in: FAILED_STATUSES } }),
       Transaction.aggregate([
-        { $match: { ...scope, status: 'approved' } },
+        { $match: { ...scope, status: { $in: SUCCESSFUL_STATUSES } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]),
     ]);

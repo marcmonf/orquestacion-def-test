@@ -25,7 +25,8 @@ const transactionSchema = new mongoose.Schema({
   cardholderName:     { type: String },
   expiryMonth:        { type: String },
   expiryYear:         { type: String },
-  bin:                { type: String, length: 8 },
+  bin:                { type: String },
+  cardLast4:          { type: String },   // últimos 4 (truncado permitido por PCI DSS)
 
   /* BIN enrichment */
   cardBrand:          { type: String },
@@ -64,6 +65,11 @@ const transactionSchema = new mongoose.Schema({
     orderUuid: String,
   },
 
+  // Bloqueo por pago de capture/refund/cancel (ver paymentLifecycleService).
+  // Lease con caducidad: si el proceso muere a mitad, se libera solo.
+  opLockUntil:        { type: Date, default: null },
+  opLockId:           { type: String, default: null },
+
   createdAt:          { type: Date, default: Date.now },
   updatedAt:          { type: Date, default: Date.now }
 });
@@ -75,6 +81,10 @@ transactionSchema.index({ issuerCountry: 1 });
 transactionSchema.index({ merchantReference: 1 });
 transactionSchema.index({ processorReference: 1 }); // ← para búsqueda rápida por webhook
 transactionSchema.index({ hostedCheckoutId: 1 });
+// Listados, analíticas y facturación filtran por merchant + fecha (+ estado):
+// con índices sueltos cada consulta recorría todo el histórico del merchant.
+transactionSchema.index({ merchantId: 1, createdAt: -1 });
+transactionSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);

@@ -5,6 +5,9 @@ const router = express.Router();
 
 const apiKeyAuth = require('../middleware/auth');
 const idempotency = require('../middleware/idempotency');
+const rateLimiterPayments = require('../middleware/rateLimiterPayments');
+// Límite por merchant AUTENTICADO (después de apiKeyAuth).
+const merchantLimiter = rateLimiterPayments.byMerchant || ((req, res, next) => next());
 
 const paymentValidator = require('../validators/paymentValidator');
 const { validate, captureSchema, refundSchema, cancelSchema } = paymentValidator;
@@ -21,7 +24,9 @@ const logger = require('../utils/logger');
 const requireIdem = idempotency({ requireHeader: true });
 
 router.post('/:paymentId/capture',
+  rateLimiterPayments,
   apiKeyAuth,
+  merchantLimiter,
   requireIdem,
   validate(captureSchema),
   async (req, res) => {
@@ -34,7 +39,9 @@ router.post('/:paymentId/capture',
 );
 
 router.post('/:paymentId/refund',
+  rateLimiterPayments,
   apiKeyAuth,
+  merchantLimiter,
   requireIdem,
   validate(refundSchema),
   async (req, res) => {
@@ -47,7 +54,9 @@ router.post('/:paymentId/refund',
 );
 
 router.post('/:paymentId/cancel',
+  rateLimiterPayments,
   apiKeyAuth,
+  merchantLimiter,
   requireIdem,
   validate(cancelSchema),
   async (req, res) => {

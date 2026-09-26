@@ -2,24 +2,16 @@
 'use strict';
 
 const express     = require('express');
-const crypto      = require('crypto');
 const Transaction = require('../models/Transaction');
-const Merchant    = require('../models/Merchant');
+const hppSigner   = require('../utils/hppSigner');
 
 const router = express.Router();
-
-function generateSignature(payload, secret) {
-  return crypto
-    .createHmac('sha256', String(secret))
-    .update(JSON.stringify(payload))
-    .digest('hex');
-}
 
 // GET /hpp/:hostedCheckoutId
 router.get('/:hostedCheckoutId', async (req, res) => {
   const { hostedCheckoutId } = req.params;
 
-  if (!hostedCheckoutId) {
+  if (!hostedCheckoutId || typeof hostedCheckoutId !== 'string') {
     return res.status(400).send('hostedCheckoutId is required');
   }
 
@@ -49,17 +41,9 @@ router.get('/:hostedCheckoutId', async (req, res) => {
     // Por eso ELIMINAMOS ese check de estado y dejamos que sea /iframe
     // quien devuelva el error 409 bonito cuando corresponda.
 
-    const merchant = await Merchant.findOne(
-      { merchantId: tx.merchantId },
-      { signingSecret: 1, hmacSecret: 1, secret: 1, _id: 0 }
-    ).lean();
-
-    const secret =
-      merchant?.signingSecret ||
-      merchant?.hmacSecret ||
-      merchant?.secret ||
-      (process.env.MERCHANT_SECRET || 'default_merchant_secret');
-
+    // La URL del iFrame se firma con el secreto de PLATAFORMA (hppSigner), no
+    // con el del merchant ni —como antes, si el merchant no tenía— con la cadena
+    // pública 'default_merchant_secret'. Ver src/utils/hppSigner.js.
     const exp =
       tx.sessionExpiresAt
         ? tx.sessionExpiresAt.toISOString()
@@ -75,7 +59,7 @@ router.get('/:hostedCheckoutId', async (req, res) => {
       exp
     };
 
-    const signature = generateSignature(payload, secret);
+    const signature = hppSigner.sign(payload);
 
     const merchantIdEnc = encodeURIComponent(tx.merchantId);
     const redirectPath =

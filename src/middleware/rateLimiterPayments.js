@@ -5,37 +5,37 @@ const rateLimit = require('express-rate-limit');
 const logger    = require('../utils/logger');
 
 /**
- * Rate limiter específico para rutas de pagos.
+ * Rate limiter de la API de pagos del merchant (servidor a servidor).
  *
- * Aplica DOS límites independientes:
+ * Dos piezas, en dos momentos distintos:
  *
- * 1. POR IP — frena fuerza bruta desde una misma máquina.
- *    Límite: 30 req/min por IP.
- *    Configurable con RL_PAYMENTS_IP_MAX y RL_PAYMENTS_WINDOW_MS.
+ * 1. `module.exports` (array) — POR IP, ANTES de autenticar. Frena la fuerza
+ *    bruta de credenciales. RL_PAYMENTS_IP_MAX (300/min por defecto).
  *
- * 2. POR MERCHANT — frena abuso aunque el atacante rote IPs.
- *    Límite: 60 req/min por merchantId (leído de URL o header).
- *    Configurable con RL_PAYMENTS_MERCHANT_MAX.
+ * 2. `module.exports.byMerchant` — POR MERCHANT AUTENTICADO, DESPUÉS de la auth
+ *    (usa req.merchantId, que solo existe si la credencial es válida).
+ *    RL_PAYMENTS_MERCHANT_MAX (600/min por defecto).
  *
- * Ambos límites devuelven 429 con el mismo contrato de respuesta.
+ * Por qué cambió (26 sep 2026): antes el límite por merchant se aplicaba ANTES de
+ * autenticar y tomaba el merchantId de la URL/cabecera. Cualquiera, sin
+ * credenciales, podía mandar 60 peticiones/min con el merchantId de un comercio
+ * y dejarle SIN poder cobrar (429). Y 30 pagos/min por IP es inasumible para el
+ * backend de un comercio real, que llama desde pocas IPs.
  */
 
-const WINDOW_MS       = parseInt(process.env.RL_PAYMENTS_WINDOW_MS    || '60000', 10); // 1 min
-const IP_MAX          = parseInt(process.env.RL_PAYMENTS_IP_MAX        || '30',    10);
-const MERCHANT_MAX    = parseInt(process.env.RL_PAYMENTS_MERCHANT_MAX  || '60',    10);
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const WINDOW_MS    = parseInt(process.env.RL_PAYMENTS_WINDOW_MS    || '60000', 10); // 1 min
+const IP_MAX       = parseInt(process.env.RL_PAYMENTS_IP_MAX       || '300',   10);
+const MERCHANT_MAX = parseInt(process.env.RL_PAYMENTS_MERCHANT_MAX || '600',   10);
 
 function buildHandler(dimension) {
   return (req, res) => {
-    const merchantId = req.params?.merchantId || req.header('x-merchant-id') || 'unknown';
     logger.warn('rateLimiterPayments: límite superado', {
       component: 'security',
       event: 'RATE_LIMIT_EXCEEDED',
       data: {
         dimension,          // 'ip' o 'merchant'
         ip: req.ip,
-        merchantId,
+        merchantId: req.merchantId || null,
         path: req.originalUrl,
         method: req.method
       }
@@ -46,40 +46,30 @@ function buildHandler(dimension) {
       error: 'rate_limit_exceeded',
       detail: dimension === 'ip'
         ? 'Too many requests from this IP. Please slow down.'
-        : `Too many payment requests for merchant ${merchantId}. Please slow down.`
+        : 'Too many payment requests for this merchant. Please slow down.'
     });
   };
 }
-
-// ── Límite 1: por IP ─────────────────────────────────────────────────────────
 
 const byIp = rateLimit({
   windowMs: WINDOW_MS,
   max: IP_MAX,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => `payments-ip:${req.ip}`,
   handler: buildHandler('ip'),
   validate: { xForwardedForHeader: true }
 });
-
-// ── Límite 2: por merchantId ──────────────────────────────────────────────────
 
 const byMerchant = rateLimit({
   windowMs: WINDOW_MS,
   max: MERCHANT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
-  // La key es el merchantId — viene de la URL (/:merchantId/payments/...)
-  // o del header x-merchant-id como fallback
-  keyGenerator: (req) => {
-    const mid = req.params?.merchantId || req.header('x-merchant-id') || 'unknown';
-    return `merchant:${mid}`;
-  },
+  keyGenerator: (req) => `payments-merchant:${req.merchantId || 'unauthenticated'}`,
   handler: buildHandler('merchant'),
   validate: { xForwardedForHeader: true }
 });
 
-// ── Export: array de middlewares, se aplican en secuencia ────────────────────
-
-module.exports = [byIp, byMerchant];
+module.exports = [byIp];
+module.exports.byMerchant = byMerchant;

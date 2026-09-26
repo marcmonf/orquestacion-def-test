@@ -5,6 +5,7 @@ const { evaluate } = require('../rules/ruleEngineV2');
 const MerchantRules = require('../models/MerchantRules');
 const { parseBin } = require('../utils/cardInfoParser');
 const metrics = require('../orchestrator/metrics/metricsService');
+const { DEFAULT_CONNECTOR } = require('../services/connectorRegistry');
 
 const FEATURE_RULE_ENGINE_ADVANCED = process.env.FEATURE_RULE_ENGINE_ADVANCED === '1';
 
@@ -14,7 +15,8 @@ const decideSchema = Joi.object({
   amount: Joi.number().positive().required(),
   currency: Joi.string().length(3).required(),
   method: Joi.string().required().valid('card', 'apm'),
-  cardNumber: Joi.string().optional(),
+  // Solo el BIN (6-8 dígitos). Un PAN completo nunca debe llegar al servidor.
+  bin: Joi.string().pattern(/^\d{6,8}$/).optional(),
   cardInfo: Joi.object().optional()
 });
 
@@ -24,16 +26,15 @@ async function loadPolicy(merchantId) {
   return {
     merchantId,
     version: 'v1',
-    defaultConnector: 'dummyCard',
+    defaultConnector: DEFAULT_CONNECTOR,
     rules: [],
-    fallback: { order: ['dummyCard'], on: ['network_error', 'soft_decline'] },
-    retries: { soft_decline: 1, network_error: 2, jitterMs: [200, 500] },
+    retries: { soft_decline: 0, network_error: 0, jitterMs: [200, 500] },
     explain: true
   };
 }
 
 function toCtx(input, enriched) {
-  const bin = enriched?.bin || (input.cardNumber ? String(input.cardNumber).slice(0, 6) : null);
+  const bin = enriched?.bin || input.bin || null;
   const base = {
     bin,
     issuerCountry: enriched?.issuerCountry || null,
@@ -61,19 +62,19 @@ async function decideRoute(req, res) {
 
   try {
     let enriched = value.cardInfo || null;
-    if (!enriched && value.cardNumber) {
-      try { enriched = await parseBin(value.cardNumber); } catch {}
+    if (!enriched && value.bin) {
+      try { enriched = await parseBin(value.bin); } catch {}
     }
 
     const policy = await loadPolicy(value.merchantId);
     const ctx = toCtx(value, enriched);
     const decision = evaluate(policy, ctx, { explain: policy.explain });
 
-    let connector = decision.connector || policy.defaultConnector || 'dummyCard';
+    let connector = decision.connector || policy.defaultConnector || DEFAULT_CONNECTOR;
     if (connector === 'auto') {
       const list = Array.isArray(policy.fallback?.order) && policy.fallback.order.length
         ? policy.fallback.order
-        : ['dummyCard'];
+        : [DEFAULT_CONNECTOR];
       connector = metrics.pickBest(list, { maxLatencyMs: undefined, minSuccessRate: 0.0 }) || list[0];
     }
 
@@ -95,7 +96,8 @@ async function decideRoute(req, res) {
       timestamp: new Date().toISOString()
     });
   } catch (e) {
-    return res.status(500).json({ success: false, error: 'internal_error', detail: e.message });
+    console.error('❌ [orchestration/decide]', e && e.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 }
 
