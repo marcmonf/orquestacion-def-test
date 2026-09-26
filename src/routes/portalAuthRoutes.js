@@ -17,9 +17,13 @@ try { bcrypt = require('bcryptjs'); } catch {
   try { bcrypt = require('bcrypt'); } catch { console.error('❌ bcrypt/bcryptjs no instalado'); }
 }
 
+// Hash REAL para igualar tiempos cuando el email no existe. El literal anterior
+// era un hash malformado: bcrypt respondía al instante (2 ms frente a ~160 ms de
+// una password incorrecta) y el tiempo revelaba qué emails tienen cuenta.
+const DUMMY_HASH = bcrypt ? bcrypt.hashSync('monetiser-timing-equalizer', 10) : null;
+
 function clientIp(req) {
-  return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-    || req.socket?.remoteAddress || null;
+  return req.ip || req.socket?.remoteAddress || null;
 }
 
 function tokenClaims(user) {
@@ -39,9 +43,10 @@ function tokenClaims(user) {
 // ─────────────────────────────────────────────
 router.post('/login', rateLimiterPortalLogin, async (req, res) => {
   if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
+  if (!portalAuth.isConfigured()) return res.status(503).json({ success: false, error: 'portal_auth_not_configured' });
 
   const { email, password } = req.body || {};
-  if (!email || !password) {
+  if (!email || !password || typeof password !== 'string') {
     return res.status(400).json({ success: false, error: 'email_and_password_required' });
   }
 
@@ -49,7 +54,7 @@ router.post('/login', rateLimiterPortalLogin, async (req, res) => {
     const user = await MerchantUser.findOne({ email: String(email).toLowerCase().trim(), active: true });
     if (!user || !user.passwordHash) {
       // Comparación dummy: no filtrar por tiempo si el email no existe.
-      await bcrypt.compare('dummy', '$2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345');
+      await bcrypt.compare(password, DUMMY_HASH);
       return res.status(401).json({ success: false, error: 'invalid_credentials' });
     }
 

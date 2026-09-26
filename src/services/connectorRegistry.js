@@ -6,16 +6,29 @@
  *
  * Registro central de conectores de pago disponibles.
  *
- * CONECTORES ACTIVOS:
- *   - dummyCard:  conector de test/simulación, siempre aprueba.
- *   - payNoPain:  adquirente real Paylands (sandbox).
+ * CONECTORES:
+ *   - payNoPain:  adquirente real Paylands. Conector por defecto.
+ *   - dummyCard:  conector SIMULADO, aprueba SIEMPRE sin mover dinero. Solo se
+ *                 registra en development/test o con ALLOW_DUMMY_CONNECTOR=true.
  *
- * Stripe y Adyen son código dummy — ignorar hasta nuevo aviso.
+ * Por qué dummyCard ya no está siempre registrado (26 sep 2026): era la política
+ * por defecto de TODO merchant sin reglas y además el fallback que el validador
+ * de políticas añadía por su cuenta. Resultado: un pago que Paylands rechazaba o
+ * que fallaba por red podía acabar "authorized" por el simulador, sin cobrar a
+ * nadie. Un servidor con dinero real no debe tener un conector que aprueba todo.
+ *
  * Nassau comentado — pendiente de implementación futura.
  */
 
 const dummyCard   = require('../connectors/dummy/dummyCardConnector');
 const payNoPain   = require('../connectors/paynopain/payNoPainConnector');
+const { isDevOrTest } = require('../utils/runtimeSecrets');
+
+const DEFAULT_CONNECTOR = 'payNoPain';
+
+function dummyEnabled() {
+  return isDevOrTest() || String(process.env.ALLOW_DUMMY_CONNECTOR || '').toLowerCase() === 'true';
+}
 
 // ─── Adaptador dummyCard ─────────────────────────────────────────────────────
 // dummyCard devuelve { status, authCode, transactionId, ... }
@@ -100,10 +113,10 @@ function adaptPayNoPain(connector) {
 
 // ─── Registro ────────────────────────────────────────────────────────────────
 const registry = {
-  dummyCard:  adaptDummy(dummyCard),
   payNoPain:  adaptPayNoPain(payNoPain),
   // nassauBank: adaptNassau(nassauBank),  ← pendiente
 };
+if (dummyEnabled()) registry.dummyCard = adaptDummy(dummyCard);
 
 /**
  * Obtiene un conector por nombre.
@@ -128,4 +141,4 @@ function listConnectors() {
   return Object.keys(registry);
 }
 
-module.exports = { getConnector, listConnectors };
+module.exports = { getConnector, listConnectors, DEFAULT_CONNECTOR };

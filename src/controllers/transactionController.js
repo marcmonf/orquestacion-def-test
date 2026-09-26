@@ -22,6 +22,7 @@
  * paymentsController) — nunca por CRUD directo.
  */
 
+const { SUCCESSFUL_STATUSES, FAILED_STATUSES } = require('../utils/paymentStatus');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 
@@ -39,27 +40,29 @@ function withTimeout(promise, ms, tag) {
 /* --------------------------------------------------------------------------- */
 const getAllTransactions = async (req, res) => {
   try {
-    const { status, method, fromDate, toDate, page = 1, limit = 20 } = req.query;
+    const { status, method, fromDate, toDate } = req.query;
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     // Scoping obligatorio: el merchant autenticado solo lista lo suyo.
     const query = { merchantId: req.merchantId };
-    if (status) query.status = status;
-    if (method) query.method = method;
+    if (typeof status === 'string') query.status = status;
+    if (typeof method === 'string') query.method = method;
     if (fromDate || toDate) {
       query.createdAt = {};
-      if (fromDate) query.createdAt.$gte = new Date(fromDate);
-      if (toDate)   query.createdAt.$lte = new Date(toDate);
+      if (fromDate) query.createdAt.$gte = new Date(String(fromDate));
+      if (toDate)   query.createdAt.$lte = new Date(String(toDate));
     }
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (page - 1) * limit;
     const [total, transactions] = await Promise.all([
       withTimeout(Transaction.countDocuments(query), DB_QUERY_TIMEOUT_MS, 'mongo-count'),
       withTimeout(
-        Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
+        Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
         DB_QUERY_TIMEOUT_MS,
         'mongo-find'
       )
     ]);
     logger.info('Transacciones obtenidas', { merchantId: req.merchantId, total });
-    res.status(200).json({ page: parseInt(page), limit: parseInt(limit), total, transactions });
+    res.status(200).json({ page, limit, total, transactions });
   } catch (error) {
     logger.error('Error al obtener transacciones', { error: error.message });
     res.status(500).json({ success: false, message: res.getMessage('transaction.fetch.error') });
@@ -89,7 +92,7 @@ const getTransactionById = async (req, res) => {
 const getTransactionVolume = async (req, res) => {
   try {
     const aggP = Transaction.aggregate([
-      { $match: { merchantId: req.merchantId, status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: { $in: SUCCESSFUL_STATUSES } } },
       { $group: { _id: null, totalVolume: { $sum: '$amount' } } }
     ]);
     const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-volume');
@@ -106,7 +109,7 @@ const getApprovalRate = async (req, res) => {
   try {
     const scope = { merchantId: req.merchantId };
     const totalP    = Transaction.countDocuments(scope);
-    const approvedP = Transaction.countDocuments({ ...scope, status: 'approved' });
+    const approvedP = Transaction.countDocuments({ ...scope, status: { $in: SUCCESSFUL_STATUSES } });
     const [total, approved] = await Promise.all([
       withTimeout(totalP, DB_QUERY_TIMEOUT_MS, 'mongo-count-all'),
       withTimeout(approvedP, DB_QUERY_TIMEOUT_MS, 'mongo-count-approved')
@@ -123,7 +126,7 @@ const getApprovalRate = async (req, res) => {
 const getAverageMSC = async (req, res) => {
   try {
     const aggP = Transaction.aggregate([
-      { $match: { merchantId: req.merchantId, status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: { $in: SUCCESSFUL_STATUSES } } },
       { $group: { _id: null, average: { $avg: '$amount' } } }
     ]);
     const result = await withTimeout(aggP, DB_QUERY_TIMEOUT_MS, 'mongo-agg-avg');
@@ -140,10 +143,10 @@ const getTransactionSummary = async (req, res) => {
   try {
     const scope = { merchantId: req.merchantId };
     const totalP    = Transaction.countDocuments(scope);
-    const approvedP = Transaction.countDocuments({ ...scope, status: 'approved' });
-    const declinedP = Transaction.countDocuments({ ...scope, status: 'declined' });
+    const approvedP = Transaction.countDocuments({ ...scope, status: { $in: SUCCESSFUL_STATUSES } });
+    const declinedP = Transaction.countDocuments({ ...scope, status: { $in: FAILED_STATUSES } });
     const volumeP   = Transaction.aggregate([
-      { $match: { merchantId: req.merchantId, status: 'approved' } },
+      { $match: { merchantId: req.merchantId, status: { $in: SUCCESSFUL_STATUSES } } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const [total, approved, declined, volumeRes] = await Promise.all([

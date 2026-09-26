@@ -5,39 +5,50 @@ const express        = require('express');
 const router         = express.Router();
 const crypto         = require('crypto');
 const BackofficeUser = require('../models/BackofficeUser');
+const adminAuth      = require('../middleware/adminAuth');
+const { signBackofficeToken, isConfigured } = require('../middleware/backofficeAuth');
+const { makeLoginLimiters } = require('../middleware/rateLimiterLogin');
 
-let jwt, bcrypt;
-try { jwt    = require('jsonwebtoken'); } catch { console.error('❌ jsonwebtoken no instalado'); }
-try { bcrypt = require('bcryptjs');     } catch {
-  try { bcrypt = require('bcrypt');     } catch { console.error('❌ bcrypt/bcryptjs no instalado'); }
+let bcrypt;
+try { bcrypt = require('bcryptjs'); } catch {
+  try { bcrypt = require('bcrypt'); } catch { console.error('❌ bcrypt/bcryptjs no instalado'); }
 }
 
-const JWT_SECRET  = process.env.BACKOFFICE_JWT_SECRET || 'dev_backoffice_secret_change_me';
-const JWT_EXPIRES = '24h';
+const BCRYPT_COST = 12;
 
-function adminOnly(req, res, next) {
-  const t = req.headers['x-admin-token'];
-  if (!process.env.ADMIN_TOKEN || t !== process.env.ADMIN_TOKEN) {
-    return res.status(401).json({ success: false, error: 'unauthorized' });
-  }
-  next();
+// Hash real (no una cadena malformada) para igualar tiempos cuando el email no
+// existe. Con el literal anterior, bcrypt respondía al instante y el tiempo de
+// respuesta revelaba qué emails tienen cuenta.
+const DUMMY_HASH = bcrypt ? bcrypt.hashSync('monetiser-timing-equalizer', 10) : null;
+
+// Login + recuperación: límite por IP+email y por email (ataque distribuido).
+const loginLimiters = makeLoginLimiters({
+  name:          'backoffice',
+  windowMs:      parseInt(process.env.RL_BACKOFFICE_LOGIN_WINDOW_MS || '900000', 10), // 15 min
+  maxPerIpEmail: parseInt(process.env.RL_BACKOFFICE_LOGIN_MAX || '10', 10),
+  maxPerEmail:   parseInt(process.env.RL_BACKOFFICE_LOGIN_MAX_PER_EMAIL || '30', 10),
+});
+
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || null;
 }
 
 // ─────────────────────────────────────────────
 // POST /backoffice/auth/login
 // ─────────────────────────────────────────────
-router.post('/login', async (req, res) => {
-  if (!jwt || !bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
+router.post('/login', loginLimiters, async (req, res) => {
+  if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
+  if (!isConfigured()) return res.status(503).json({ success: false, error: 'backoffice_auth_not_configured' });
 
   const { email, password } = req.body || {};
-  if (!email || !password) {
+  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ success: false, error: 'email_and_password_required' });
   }
 
   try {
     const user = await BackofficeUser.findOne({ email: email.toLowerCase().trim(), active: true }).lean();
     if (!user || !user.passwordHash) {
-      await bcrypt.compare('dummy', '$2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345');
+      await bcrypt.compare(password, DUMMY_HASH);
       return res.status(401).json({ success: false, error: 'invalid_credentials' });
     }
 
@@ -47,20 +58,16 @@ router.post('/login', async (req, res) => {
     // Actualizar último login
     await BackofficeUser.updateOne({ _id: user._id }, {
       lastLoginAt: new Date(),
-      lastLoginIp: (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || null
+      lastLoginIp: clientIp(req)
     });
 
-    const token = jwt.sign(
-      {
-        userId:        user._id.toString(),
-        email:         user.email,
-        name:          user.name,
-        role:          user.role,
-        merchantScope: user.merchantScope,
-      },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES }
-    );
+    const token = signBackofficeToken({
+      userId:        user._id.toString(),
+      email:         user.email,
+      name:          user.name,
+      role:          user.role,
+      merchantScope: user.merchantScope,
+    });
 
     return res.status(200).json({
       success: true,
@@ -87,31 +94,36 @@ router.post('/logout', (req, res) => {
 
 // ─────────────────────────────────────────────
 // POST /backoffice/auth/setup
-// Crea el primer superadmin. Solo funciona si no existe ningún BackofficeUser.
-// Protegido por ADMIN_TOKEN.
+// Crea el PRIMER superadmin (arranque de una instalación nueva). Protegido por
+// ADMIN_TOKEN y de UN SOLO USO: si ya existe algún usuario de backoffice →
+// 409. El comentario original ya decía "solo si no existe ningún
+// BackofficeUser", pero el código solo rechazaba el email repetido: con el
+// ADMIN_TOKEN se podían crear superadmins sin límite. Los siguientes usuarios se
+// crean desde /admin → Usuarios (sesión de superadmin); la recuperación de una
+// cuenta, con /reset-password + ADMIN_TOKEN.
 // ─────────────────────────────────────────────
-router.post('/setup', adminOnly, async (req, res) => {
+router.post('/setup', adminAuth, async (req, res) => {
   if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
 
   const { name, email, password } = req.body || {};
-  if (!name || !email || !password) {
+  if (!name || !email || !password || typeof email !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ success: false, error: 'name_email_password_required' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ success: false, error: 'password_min_8_chars' });
+  if (password.length < 12) {
+    return res.status(400).json({ success: false, error: 'password_min_12_chars' });
   }
 
   try {
-    const existing = await BackofficeUser.findOne({ email: email.toLowerCase().trim() });
-    if (existing) {
-      return res.status(409).json({ success: false, error: 'email_already_exists' });
+    const anyUser = await BackofficeUser.countDocuments({});
+    if (anyUser > 0) {
+      return res.status(409).json({ success: false, error: 'setup_already_done' });
     }
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, BCRYPT_COST);
     const user = await BackofficeUser.create({
       email:         email.toLowerCase().trim(),
       passwordHash:  hash,
-      name,
+      name:          String(name),
       role:          'superadmin',
       merchantScope: ['all'],
     });
@@ -131,22 +143,22 @@ router.post('/setup', adminOnly, async (req, res) => {
 // POST /backoffice/auth/reset-password
 // Reset manual por ADMIN_TOKEN (sin email)
 // ─────────────────────────────────────────────
-router.post('/reset-password', adminOnly, async (req, res) => {
+router.post('/reset-password', adminAuth, async (req, res) => {
   if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
 
   const { email, newPassword } = req.body || {};
-  if (!email || !newPassword) {
+  if (!email || !newPassword || typeof email !== 'string' || typeof newPassword !== 'string') {
     return res.status(400).json({ success: false, error: 'email_and_newPassword_required' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ success: false, error: 'password_min_8_chars' });
+  if (newPassword.length < 12) {
+    return res.status(400).json({ success: false, error: 'password_min_12_chars' });
   }
 
   try {
     const user = await BackofficeUser.findOne({ email: email.toLowerCase().trim() });
     if (!user) return res.status(404).json({ success: false, error: 'user_not_found' });
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.resetToken       = null;
     user.resetTokenExpiry = null;
     await user.save();
@@ -160,20 +172,27 @@ router.post('/reset-password', adminOnly, async (req, res) => {
 
 // ─────────────────────────────────────────────
 // POST /backoffice/auth/forgot-password
-// Genera token de reset (sin email: devuelve el token directamente para uso manual)
-// Cuando haya email, este endpoint enviará el correo automáticamente.
+// Genera token de reset. Hasta que haya envío de email, el token NO se devuelve
+// nunca en la respuesta: el superadmin resetea con /reset-password + ADMIN_TOKEN.
+//
+// ANTES devolvía el token en `_dev_reset_token` siempre que NODE_ENV no fuese
+// 'production' — y en Render NODE_ENV no está definido. Es decir: sabiendo solo
+// el email de un superadmin, cualquiera obtenía el token, llamaba a
+// /confirm-reset y se quedaba con la cuenta. Cerrado el 26 sep 2026. Solo se
+// devuelve con la variable explícita BACKOFFICE_DEV_RESET_TOKEN=true en un
+// entorno development/test.
 // ─────────────────────────────────────────────
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', loginLimiters, async (req, res) => {
   const { email } = req.body || {};
-  if (!email) return res.status(400).json({ success: false, error: 'email_required' });
+  if (!email || typeof email !== 'string') return res.status(400).json({ success: false, error: 'email_required' });
+
+  const generic = { success: true, message: 'Si el email existe, recibirás instrucciones.' };
 
   try {
     const user = await BackofficeUser.findOne({ email: email.toLowerCase().trim(), active: true });
 
     // Siempre responder 200 para no revelar si el email existe
-    if (!user) {
-      return res.status(200).json({ success: true, message: 'Si el email existe, recibirás instrucciones.' });
-    }
+    if (!user) return res.status(200).json(generic);
 
     const token  = crypto.randomBytes(32).toString('hex');
     const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
@@ -183,14 +202,11 @@ router.post('/forgot-password', async (req, res) => {
     await user.save();
 
     // TODO: cuando haya servicio de email, enviar el token aquí.
-    // Por ahora: el superadmin usa /reset-password con ADMIN_TOKEN.
-    // En desarrollo devolvemos el token en la respuesta para testing.
-    const isDev = process.env.NODE_ENV !== 'production';
-    return res.status(200).json({
-      success: true,
-      message: 'Si el email existe, recibirás instrucciones.',
-      ...(isDev && { _dev_reset_token: token })
-    });
+    const exposeForDev =
+      ['development', 'test'].includes(String(process.env.NODE_ENV || '').toLowerCase()) &&
+      String(process.env.BACKOFFICE_DEV_RESET_TOKEN || '').toLowerCase() === 'true';
+
+    return res.status(200).json({ ...generic, ...(exposeForDev && { _dev_reset_token: token }) });
   } catch (err) {
     console.error('❌ [backoffice/forgot-password]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
@@ -201,15 +217,15 @@ router.post('/forgot-password', async (req, res) => {
 // POST /backoffice/auth/confirm-reset
 // Confirma el reset usando el token generado por forgot-password
 // ─────────────────────────────────────────────
-router.post('/confirm-reset', async (req, res) => {
+router.post('/confirm-reset', loginLimiters, async (req, res) => {
   if (!bcrypt) return res.status(500).json({ success: false, error: 'dependencies_missing' });
 
   const { token, newPassword } = req.body || {};
-  if (!token || !newPassword) {
+  if (!token || !newPassword || typeof token !== 'string' || typeof newPassword !== 'string') {
     return res.status(400).json({ success: false, error: 'token_and_newPassword_required' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ success: false, error: 'password_min_8_chars' });
+  if (newPassword.length < 12) {
+    return res.status(400).json({ success: false, error: 'password_min_12_chars' });
   }
 
   try {
@@ -222,7 +238,7 @@ router.post('/confirm-reset', async (req, res) => {
 
     if (!user) return res.status(400).json({ success: false, error: 'invalid_or_expired_token' });
 
-    user.passwordHash     = await bcrypt.hash(newPassword, 10);
+    user.passwordHash     = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.resetToken       = null;
     user.resetTokenExpiry = null;
     await user.save();

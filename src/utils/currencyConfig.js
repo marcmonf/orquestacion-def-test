@@ -106,9 +106,25 @@ function formatMinor(amountMinor, code, options = {}) {
   return formattedNumber;
 }
 
+/**
+ * Divisas que la plataforma ACEPTA en un pago, según SUPPORTED_CURRENCIES
+ * (lista separada por comas). Por defecto solo EUR.
+ *
+ * Por qué hay lista y no se acepta cualquier código: el conector de Paylands NO
+ * envía la divisa (la fija el "service" de Paylands, hoy en EUR). Si se aceptase
+ * un pago en USD o JPY, Paylands cobraría el mismo número en EUR — 1000 JPY
+ * (≈6 €) se cobraría como 10,00 €. Una divisa nueva solo debe añadirse aquí
+ * cuando exista un service de Paylands (o un adquirente) configurado para ella.
+ */
+function getSupportedCurrencies() {
+  const raw = process.env.SUPPORTED_CURRENCIES || 'EUR';
+  return raw.split(',').map(c => c.trim().toUpperCase()).filter(c => CURRENCIES[c]);
+}
+
 module.exports = {
   CURRENCIES,
   getCurrencyConfig,
+  getSupportedCurrencies,
   toMajorUnits,
   formatMinor
 };

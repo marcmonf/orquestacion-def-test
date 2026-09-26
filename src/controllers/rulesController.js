@@ -7,6 +7,7 @@ const { policySchema } = require('../validators/policySchema');
 const { evaluate } = require('../rules/ruleEngineV2');
 const { parseBin } = require('../utils/cardInfoParser');
 const metrics = require('../orchestrator/metrics/metricsService');
+const { DEFAULT_CONNECTOR } = require('../services/connectorRegistry');
 
 const FEATURE_RULE_TRY = process.env.FEATURE_RULE_TRY === '1';
 const FEATURE_RULE_AUDIT = process.env.FEATURE_RULE_AUDIT === '1';
@@ -16,11 +17,40 @@ function defaultPolicy(merchantId) {
   return {
     merchantId,
     version: 'v1',
-    defaultConnector: 'dummyCard',
+    defaultConnector: DEFAULT_CONNECTOR,
     rules: [],
-    fallback: { order: ['dummyCard'], on: ['network_error','soft_decline'] },
-    retries: { soft_decline: 1, network_error: 2, jitterMs: [200,500] },
+    retries: { soft_decline: 0, network_error: 0, jitterMs: [200,500] },
     explain: true
+  };
+}
+
+// El "Probar" de reglas solo necesita el BIN (6-8 dígitos). Un número de
+// tarjeta completo NO debe llegar al servidor (PCI SAQ A): se rechaza.
+function binFromSample(sample) {
+  if (!sample) return { bin: null };
+  if (sample.cardNumber != null) {
+    const digits = String(sample.cardNumber).replace(/\D/g, '');
+    if (digits.length > 8) return { error: 'send_bin_not_pan' };
+    return { bin: digits || null };
+  }
+  if (sample.bin != null) {
+    const digits = String(sample.bin).replace(/\D/g, '');
+    if (digits.length > 8) return { error: 'send_bin_not_pan' };
+    return { bin: digits || null };
+  }
+  return { bin: null };
+}
+
+// Express 4 no captura errores de handlers async: un fallo de Mongo aquí
+// tumbaba el PROCESO entero (verificado). Se envuelven todos los handlers.
+function safe(handler) {
+  return async function (req, res) {
+    try {
+      return await handler(req, res);
+    } catch (err) {
+      console.error('❌ [rulesController]', err && err.message);
+      if (!res.headersSent) res.status(500).json({ success: false, error: 'internal_error' });
+    }
   };
 }
 
@@ -82,7 +112,7 @@ async function upsertPolicy(req, res) {
       await RuleAudit.create({
         merchantId,
         actor: req.header('x-admin-actor') || 'unknown',
-        ip: (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || null,
+        ip: req.ip || req.socket?.remoteAddress || null,
         prevHash: _hash(prev || {}),
         nextHash: _hash(next || {}),
         diffSize: Math.abs(JSON.stringify(next).length - JSON.stringify(prev || {}).length),
@@ -106,10 +136,12 @@ async function tryPolicy(req, res) {
     });
   }
 
-  // Enriquecimiento BIN si hay PAN (respetando tus timeouts/flags)
+  // Enriquecimiento por BIN (nunca con el PAN completo)
+  const { bin: sampleBin, error: binError } = binFromSample(sample);
+  if (binError) return res.status(400).json({ success: false, error: binError });
   let enriched = sample?.cardInfo || null;
-  if (!enriched && sample?.cardNumber) {
-    try { enriched = await parseBin(sample.cardNumber); } catch {}
+  if (!enriched && sampleBin) {
+    try { enriched = await parseBin(sampleBin); } catch {}
   }
 
   // Métricas: sample.metrics > métricas rolling (si existen)
@@ -117,7 +149,7 @@ async function tryPolicy(req, res) {
   const m = sample?.metrics || {};
 
   const ctx = {
-    bin: enriched?.bin || (sample?.cardNumber ? String(sample.cardNumber).slice(0,6) : null),
+    bin: enriched?.bin || sampleBin || null,
     issuerCountry: enriched?.issuerCountry || null,
     scheme: enriched?.cardBrand || enriched?.scheme || null,
     cardType: enriched?.cardType || null,
@@ -155,8 +187,8 @@ async function tryPolicy(req, res) {
 async function getAudit(req, res) {
   if (!FEATURE_RULE_AUDIT) return res.status(404).json({ success: false, error: 'disabled' });
   const { merchantId } = req.params;
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || '20', 10)));
-  const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
+  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
   const [total, items] = await Promise.all([
     RuleAudit.countDocuments({ merchantId }),
@@ -221,7 +253,7 @@ async function importPolicy(req, res) {
       await RuleAudit.create({
         merchantId: value.merchantId,
         actor: req.header('x-admin-actor') || 'unknown',
-        ip: (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || null,
+        ip: req.ip || req.socket?.remoteAddress || null,
         prevHash: _hash(prev || {}),
         nextHash: _hash(next || {}),
         diffSize: Math.abs(JSON.stringify(next).length - JSON.stringify(prev || {}).length),
@@ -234,6 +266,11 @@ async function importPolicy(req, res) {
 }
 
 module.exports = {
-  getPolicy, validatePolicy, upsertPolicy, tryPolicy, getAudit,
-  exportPolicy, importPolicy
+  getPolicy:      safe(getPolicy),
+  validatePolicy: safe(validatePolicy),
+  upsertPolicy:   safe(upsertPolicy),
+  tryPolicy:      safe(tryPolicy),
+  getAudit:       safe(getAudit),
+  exportPolicy:   safe(exportPolicy),
+  importPolicy:   safe(importPolicy),
 };

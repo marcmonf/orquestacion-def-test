@@ -36,7 +36,8 @@ router.post('/:merchantId', adminAuth, async (req, res) => {
   rawSecret:    result.rawSecret
 });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('❌ [api-keys POST]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -47,15 +48,16 @@ router.get('/:merchantId', adminAuth, async (req, res) => {
     const keys = await listApiKeys(merchantId);
     return res.status(200).json({ success: true, merchantId, keys });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('❌ [api-keys GET]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
 // DELETE /api-keys/:merchantId/:keyId — revocar key
 router.delete('/:merchantId/:keyId', adminAuth, async (req, res) => {
-  const { keyId } = req.params;
+  const { keyId, merchantId } = req.params;
   try {
-    const revoked = await revokeApiKey(keyId);
+    const revoked = await revokeApiKey(keyId, merchantId);
     if (!revoked) {
       return res.status(404).json({ success: false, error: 'Key no encontrada' });
     }
@@ -66,7 +68,8 @@ router.delete('/:merchantId/:keyId', adminAuth, async (req, res) => {
       revokedAt: revoked.revokedAt
     });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('❌ [api-keys DELETE]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 

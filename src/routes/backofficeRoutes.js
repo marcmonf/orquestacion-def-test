@@ -24,7 +24,19 @@ const mailer = require('../services/mailer');
 const { PLANS, defaultsFor } = require('../utils/pricingDefaults');
 const { toPublicUser }         = require('../utils/publicUser');
 const { generateTempPassword } = require('../utils/tempPassword');
-const { getConnector } = require('../services/connectorRegistry');
+const lifecycle = require('../services/paymentLifecycleService');
+const merchantSchemas = require('../validators/merchantSchema');
+const { generateSigningSecret } = require('../services/webhookDispatcher');
+const { SUCCESSFUL_STATUSES, FAILED_STATUSES } = require('../utils/paymentStatus');
+
+// Búsquedas de texto: se escapa la entrada (antes iba cruda a $regex / new
+// RegExp: un patrón patológico disparaba la CPU de Atlas y uno inválido daba 500).
+function escapeRegex(value) {
+  return String(value).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function scopeOf(user) {
+  return Array.isArray(user && user.merchantScope) ? user.merchantScope : [];
+}
 const { createApiKey, listApiKeys, revokeApiKey } = require('../services/apiKeyService');
 const {
   getPolicy: rulesGetPolicy,
@@ -50,35 +62,48 @@ router.use(backofficeAuth);
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    const { merchantScope } = req.backofficeUser;
-    const days  = parseInt(req.query.days || '30');
+    const merchantScope = scopeOf(req.backofficeUser);
+    // days acotado: antes ?days=100000 cargaba en memoria toda la colección.
+    const days  = Math.min(366, Math.max(1, parseInt(req.query.days, 10) || 30));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     const matchFilter = { createdAt: { $gte: since } };
     if (!merchantScope.includes('all')) matchFilter.merchantId = { $in: merchantScope };
 
-    const txs = await Transaction.find(matchFilter)
-      .select('amount currency status fallbackUsed processor createdAt')
-      .lean();
+    // Agregado en la base de datos (antes: find() de todas las tx a memoria).
+    // "Aprobadas" = cualquier pago que el adquirente aprobó (authorized,
+    // captured, refunded...), no solo el estado legado 'approved'.
+    const [agg] = await Transaction.aggregate([
+      { $match: matchFilter },
+      { $group: {
+        _id: null,
+        total:    { $sum: 1 },
+        approved: { $sum: { $cond: [{ $in: ['$status', SUCCESSFUL_STATUSES] }, 1, 0] } },
+        refunded: { $sum: { $cond: [{ $in: ['$status', ['refunded', 'partially_refunded']] }, 1, 0] } },
+        declined: { $sum: { $cond: [{ $in: ['$status', FAILED_STATUSES] }, 1, 0] } },
+        fallback: { $sum: { $cond: ['$fallbackUsed', 1, 0] } },
+        volume:   { $sum: { $cond: [{ $in: ['$status', SUCCESSFUL_STATUSES] }, '$amount', 0] } },
+      } },
+    ]);
 
-    const total    = txs.length;
-    const approved = txs.filter(t => ['approved','authorized'].includes(t.status)).length;
-    const refunded = txs.filter(t => ['refunded','partially_refunded'].includes(t.status)).length;
-    const declined = txs.filter(t => ['declined','error'].includes(t.status)).length;
-    const fallback = txs.filter(t => t.fallbackUsed).length;
-    const volume   = txs.reduce((s, t) => s + (t.amount || 0), 0);
+    const total    = agg?.total    || 0;
+    const approved = agg?.approved || 0;
+    const refunded = agg?.refunded || 0;
+    const declined = agg?.declined || 0;
+    const fallback = agg?.fallback || 0;
+    const volume   = agg?.volume   || 0;
 
     return res.json({
       success: true,
       period: { days, since },
       kpis: {
         totalTransactions:  total,
-        volume:             Math.round(volume * 100) / 100,
+        volume:             volume,
         approvalRate:       total ? Math.round(approved / total * 10000) / 100 : 0,
         declineRate:        total ? Math.round(declined / total * 10000) / 100 : 0,
         refundRate:         total ? Math.round(refunded / total * 10000) / 100 : 0,
         fallbackRate:       total ? Math.round(fallback / total * 10000) / 100 : 0,
-        avgTicket:          total ? Math.round(volume / total * 100) / 100 : 0,
+        avgTicket:          approved ? Math.round(volume / approved) : 0,
         approved, declined, refunded, fallback
       }
     });
@@ -93,23 +118,24 @@ router.get('/dashboard', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/transactions', async (req, res) => {
   try {
-    const { merchantScope } = req.backofficeUser;
-    const page  = Math.max(1, parseInt(req.query.page  || '1'));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20')));
+    const merchantScope = scopeOf(req.backofficeUser);
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip  = (page - 1) * limit;
 
+    const str = (v) => (typeof v === 'string' && v.length <= 100 ? v : null);
     const filter = {};
     if (!merchantScope.includes('all')) filter.merchantId = { $in: merchantScope };
-    if (req.query.status)    filter.status        = req.query.status;
-    if (req.query.processor) filter.processor     = req.query.processor;
-    if (req.query.country)   filter.issuerCountry = req.query.country;
+    if (str(req.query.status))    filter.status        = str(req.query.status);
+    if (str(req.query.processor)) filter.processor     = str(req.query.processor);
+    if (str(req.query.country))   filter.issuerCountry = str(req.query.country);
     if (req.query.from || req.query.to) {
       filter.createdAt = {};
-      if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
-      if (req.query.to)   filter.createdAt.$lte = new Date(req.query.to);
+      if (req.query.from) filter.createdAt.$gte = new Date(String(req.query.from));
+      if (req.query.to)   filter.createdAt.$lte = new Date(String(req.query.to));
     }
-    if (req.query.q) {
-      const q = req.query.q.trim();
+    if (str(req.query.q) && str(req.query.q).trim()) {
+      const q = escapeRegex(str(req.query.q).trim());
       filter.$or = [
         { paymentId:          { $regex: q, $options: 'i' } },
         { merchantReference:  { $regex: q, $options: 'i' } },
@@ -138,8 +164,8 @@ router.get('/transactions', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/transactions/:paymentId', async (req, res) => {
   try {
-    const { merchantScope } = req.backofficeUser;
-    const tx = await Transaction.findOne({ paymentId: req.params.paymentId }).lean();
+    const merchantScope = scopeOf(req.backofficeUser);
+    const tx = await Transaction.findOne({ paymentId: String(req.params.paymentId) }).lean();
     if (!tx) return res.status(404).json({ success: false, error: 'not_found' });
 
     // Verificar scope
@@ -150,10 +176,20 @@ router.get('/transactions/:paymentId', async (req, res) => {
     let operations = [];
     try { operations = await Operation.find({ paymentId: tx.paymentId }).sort({ createdAt: -1 }).lean(); } catch {}
 
-    // Calcular importe ya reembolsado
-    const refundedOps = operations.filter(o => o.type === 'refund' && o.status === 'succeeded');
-    const totalRefunded = refundedOps.reduce((s, o) => s + (o.amount || 0), 0);
-    const refundableAmount = Math.max((tx.amount || 0) - totalRefunded, 0);
+    // Reembolsable con las MISMAS reglas que paymentLifecycleService: lo
+    // capturado menos lo reembolsado. Un 'authorized' sin captura (DEFERRED)
+    // no es reembolsable: se cancela.
+    const sum = (type) => operations
+      .filter(o => o.type === type && o.status === 'succeeded')
+      .reduce((acc, o) => acc + (o.amount || 0), 0);
+    const captured = sum('capture');
+    const refunded = sum('refund');
+    let base = 0;
+    if (captured > 0) base = captured;
+    else if (['approved', 'captured'].includes(tx.status)) base = tx.amount || 0;
+    const refundableAmount = lifecycle.REFUNDABLE_STATUSES.includes(tx.status)
+      ? Math.max(base - refunded, 0)
+      : 0;
 
     return res.json({ success: true, transaction: tx, operations, refundableAmount });
   } catch (err) {
@@ -163,133 +199,71 @@ router.get('/transactions/:paymentId', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /backoffice/transactions/:paymentId/refund
-// Requiere rol operator o superior.
-// Body: { amount (opcional, si no se envía = refund total), reason }
+// POST /backoffice/transactions/:paymentId/refund   (rol operator o superior)
+// Body: { amount (céntimos, opcional: si falta = todo lo reembolsable), reason }
+// Cabecera opcional Idempotency-Key (el dashboard manda una por intento).
+//
+// Delegado en paymentLifecycleService (26 sep 2026): mismas reglas, bloqueo e
+// idempotencia que la API del merchant. Antes este handler tenía su propia
+// lógica: clave de idempotencia con Date.now() (dos clics = dos reembolsos
+// reales), caída a 'dummyCard' si el pago no tenía processor (marcaba
+// "refunded" sin reembolsar) y estados permitidos distintos a los de la API.
 // ─────────────────────────────────────────────────────────────────────────────
+function backofficeIdempotencyKey(req, op) {
+  const raw = req.header('Idempotency-Key');
+  if (raw && /^[a-zA-Z0-9-]{8,64}$/.test(String(raw).trim())) return String(raw).trim();
+  return `bo-${op}-${require('crypto').randomUUID()}`;
+}
+
+async function loadScopedTx(req, res) {
+  const { merchantScope } = req.backofficeUser;
+  const tx = await Transaction.findOne({ paymentId: String(req.params.paymentId) }).lean();
+  if (!tx) { res.status(404).json({ success: false, error: 'not_found' }); return null; }
+  const scope = Array.isArray(merchantScope) ? merchantScope : [];
+  if (!scope.includes('all') && !scope.includes(tx.merchantId)) {
+    res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+    return null;
+  }
+  return tx;
+}
+
 router.post('/transactions/:paymentId/refund', requireRole('operator'), async (req, res) => {
   try {
-    const { merchantScope, email } = req.backofficeUser;
-    const tx = await Transaction.findOne({ paymentId: req.params.paymentId });
-    if (!tx) return res.status(404).json({ success: false, error: 'not_found' });
+    const tx = await loadScopedTx(req, res);
+    if (!tx) return;
 
-    // Verificar scope
-    if (!merchantScope.includes('all') && !merchantScope.includes(tx.merchantId)) {
-      return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
-    }
-
-    // Solo se pueden reembolsar transacciones aprobadas/autorizadas/parcialmente reembolsadas
-    const refundableStatuses = ['approved', 'authorized', 'partially_refunded'];
-    if (!refundableStatuses.includes(tx.status)) {
-      return res.status(409).json({
-        success: false,
-        error: 'not_refundable',
-        currentStatus: tx.status,
-        allowed: refundableStatuses
-      });
-    }
-
-    // Calcular importe ya reembolsado
-    const prevOps = await Operation.find({ paymentId: tx.paymentId, type: 'refund', status: 'succeeded' }).lean();
-    const alreadyRefunded = prevOps.reduce((s, o) => s + (o.amount || 0), 0);
-    const maxRefundable   = Math.round((tx.amount - alreadyRefunded) * 100) / 100;
-
-    if (maxRefundable <= 0) {
-      return res.status(409).json({ success: false, error: 'already_fully_refunded' });
-    }
-
-    // Determinar importe del refund
-    let refundAmount = req.body.amount !== undefined ? Number(req.body.amount) : maxRefundable;
-    refundAmount = Math.round(refundAmount * 100) / 100;
-
-    if (isNaN(refundAmount) || refundAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'invalid_amount' });
-    }
-    // No se puede reembolsar más del importe original
-    if (refundAmount > maxRefundable) {
-      return res.status(409).json({
-        success: false,
-        error: 'amount_exceeds_refundable',
-        requested: refundAmount,
-        maxRefundable
-      });
-    }
-
-    const reason = req.body.reason || 'backoffice_refund';
-
-    // ── Llamar al conector real ──────────────────────────────────────────────
-    let connectorResult = null;
-    const connectorName = tx.processor || 'dummyCard';
-
-    try {
-      const connector = getConnector(connectorName);
-      if (typeof connector.refund === 'function') {
-        connectorResult = await connector.refund({
-          processorReference: tx.processorReference,
-          paymentId:          tx.paymentId,
-          amount:             refundAmount,
-          currency:           tx.currency,
-          reason,
-        });
+    let amount;
+    if (req.body?.amount !== undefined && req.body?.amount !== null && req.body?.amount !== '') {
+      amount = Number(req.body.amount);
+      if (!Number.isInteger(amount) || amount <= 0) {
+        return res.status(400).json({ success: false, error: 'invalid_amount', detail: 'amount en céntimos, entero > 0' });
       }
-    } catch (connErr) {
-      console.error('❌ [backoffice/refund] connector error:', connErr.message);
-      connectorResult = { success: false, error: connErr.message };
     }
 
-    // Si el conector falla (solo para conectores reales, no dummy), abortar
-    if (connectorResult && !connectorResult.success && connectorName !== 'dummyCard') {
-      return res.status(502).json({
-        success: false,
-        error: 'connector_refund_failed',
-        detail: connectorResult.error
-      });
+    const out = await lifecycle.refund({
+      paymentId:      tx.paymentId,
+      merchantId:     tx.merchantId,
+      idempotencyKey: backofficeIdempotencyKey(req, 'refund'),
+      amount,
+      reason:         String(req.body?.reason || 'backoffice_refund').slice(0, 200),
+      operatorId:     req.backofficeUser.email || 'backoffice',
+      actor:          `backoffice:${req.backofficeUser.email || 'unknown'}`,
+    });
+
+    if (out.httpStatus !== 200) {
+      return res.status(out.httpStatus).json({ success: false, error: out.body.message || 'refund_failed', detail: out.body.detail });
     }
 
-    // ── Actualizar estado en MongoDB ─────────────────────────────────────────
-    const totalRefundedAfter = Math.round((alreadyRefunded + refundAmount) * 100) / 100;
-    const fullyRefunded = totalRefundedAfter >= tx.amount;
-    tx.status    = fullyRefunded ? 'refunded' : 'partially_refunded';
-    tx.updatedAt = new Date();
-    await tx.save();
-
-    // ── Registrar en Operation ───────────────────────────────────────────────
-    let operation = null;
-    try {
-      operation = await Operation.create({
-        paymentId:        tx.paymentId,
-        type:             'refund',
-        idempotencyKey:   `refund-${tx.paymentId}-${Date.now()}`,
-        amount:           refundAmount,
-        currencyCode:     tx.currency,
-        isFinal:          fullyRefunded,
-        reason,
-        operatorId:       email || 'backoffice',
-        status:           'succeeded',
-        responseSnapshot: {
-          connectorResult,
-          prevStatus:          tx.status,
-          alreadyRefunded,
-          refundAmount,
-          totalRefundedAfter,
-          fullyRefunded
-        },
-        createdAt: new Date(),
-      });
-    } catch (opErr) {
-      console.error('⚠️ [backoffice/refund] Operation.create failed:', opErr.message);
-    }
-
+    // Forma de respuesta que ya consume el dashboard.
+    const totals = await lifecycle.getTotals(tx.paymentId);
     return res.json({
-      success: true,
-      paymentId:          tx.paymentId,
-      refundAmount,
-      totalRefunded:      totalRefundedAfter,
-      remainingRefundable: Math.round((tx.amount - totalRefundedAfter) * 100) / 100,
-      newStatus:          tx.status,
-      fullyRefunded,
-      connector:          connectorName,
-      operationId:        operation?._id || null,
+      success:             true,
+      paymentId:           tx.paymentId,
+      refundAmount:        out.body.refundedAmount,
+      totalRefunded:       totals.refundedAmount,
+      newStatus:           out.body.status,
+      fullyRefunded:       out.body.status === 'refunded',
+      connector:           tx.processor,
     });
   } catch (err) {
     console.error('❌ [backoffice/refund]', err);
@@ -298,46 +272,34 @@ router.post('/transactions/:paymentId/refund', requireRole('operator'), async (r
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /backoffice/transactions/:paymentId/cancel
-// Requiere rol operator o superior.
+// POST /backoffice/transactions/:paymentId/cancel   (rol operator o superior)
+//
+// - Pago AUTORIZADO sin capturar → anulación REAL en el adquirente (void).
+// - Checkout sin completar (sin orden en el adquirente) → anulación en local.
+// - Pago en curso (processing / pending_3ds) → 409: podría autorizarse después.
+// - Pago capturado → 409: se devuelve con refund.
+// Antes solo cambiaba el estado en Mongo, también para pagos autorizados: la
+// retención al comprador nunca se liberaba.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/transactions/:paymentId/cancel', requireRole('operator'), async (req, res) => {
   try {
-    const { merchantScope, email } = req.backofficeUser;
-    const tx = await Transaction.findOne({ paymentId: req.params.paymentId });
-    if (!tx) return res.status(404).json({ success: false, error: 'not_found' });
+    const tx = await loadScopedTx(req, res);
+    if (!tx) return;
 
-    if (!merchantScope.includes('all') && !merchantScope.includes(tx.merchantId)) {
-      return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+    const out = await lifecycle.cancel({
+      paymentId:      tx.paymentId,
+      merchantId:     tx.merchantId,
+      idempotencyKey: backofficeIdempotencyKey(req, 'cancel'),
+      allowLocal:     true,
+      reason:         String(req.body?.reason || 'backoffice_cancel').slice(0, 200),
+      operatorId:     req.backofficeUser.email || 'backoffice',
+      actor:          `backoffice:${req.backofficeUser.email || 'unknown'}`,
+    });
+
+    if (out.httpStatus !== 200) {
+      return res.status(out.httpStatus).json({ success: false, error: out.body.message || 'cancel_failed', detail: out.body.detail, currentStatus: tx.status });
     }
-
-    const cancellable = ['initialized','hosted_pending','processing','authorized','approved','pending'];
-    if (!cancellable.includes(tx.status)) {
-      return res.status(409).json({ success: false, error: 'not_cancellable', currentStatus: tx.status });
-    }
-
-    const prevStatus = tx.status;
-    tx.status    = 'cancelled';
-    tx.updatedAt = new Date();
-    await tx.save();
-
-    try {
-      await Operation.create({
-        paymentId:        tx.paymentId,
-        type:             'cancel',
-        idempotencyKey:   `cancel-${tx.paymentId}-${Date.now()}`,
-        amount:           tx.amount,
-        currencyCode:     tx.currency,
-        isFinal:          true,
-        reason:           req.body?.reason || 'backoffice_cancel',
-        operatorId:       email || 'backoffice',
-        status:           'succeeded',
-        responseSnapshot: { prevStatus, newStatus: 'cancelled' },
-        createdAt:        new Date(),
-      });
-    } catch {}
-
-    return res.json({ success: true, paymentId: tx.paymentId, prevStatus, newStatus: 'cancelled' });
+    return res.json({ success: true, paymentId: tx.paymentId, prevStatus: out.body.prevStatus || tx.status, newStatus: out.body.status });
   } catch (err) {
     console.error('❌ [backoffice/cancel]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
@@ -454,21 +416,28 @@ router.post('/users', requireRole('superadmin'), async (req, res) => {
   if (!['superadmin','admin','operator','viewer'].includes(role)) {
     return res.status(400).json({ success: false, error: 'invalid_role' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ success: false, error: 'password_min_8_chars' });
+  if (typeof password !== 'string' || password.length < 12) {
+    return res.status(400).json({ success: false, error: 'password_min_12_chars' });
   }
+  // Alcance por merchants: explícito. Antes, sin merchantScope, el usuario nuevo
+  // veía TODOS los merchants (['all']) por defecto. Ahora: superadmin → todo;
+  // resto → solo lo que se indique (por defecto, ninguno).
+  let scope;
+  if (role === 'superadmin') scope = ['all'];
+  else if (Array.isArray(merchantScope)) scope = merchantScope.filter(m => typeof m === 'string' && m.length <= 64).slice(0, 500);
+  else scope = [];
 
   try {
-    const existing = await BackofficeUser.findOne({ email: email.toLowerCase().trim() });
+    const existing = await BackofficeUser.findOne({ email: String(email).toLowerCase().trim() });
     if (existing) return res.status(409).json({ success: false, error: 'email_already_exists' });
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const user = await BackofficeUser.create({
-      email:         email.toLowerCase().trim(),
+      email:         String(email).toLowerCase().trim(),
       passwordHash:  hash,
       name,
       role,
-      merchantScope: merchantScope || ['all'],
+      merchantScope: scope,
       createdBy:     req.backofficeUser.email,
     });
 
@@ -535,20 +504,22 @@ const MERCHANT_SAFE_PROJECTION = { signingSecret: 0, hmacSecret: 0, secret: 0, p
 // GET /backoffice/merchants
 router.get('/merchants', requireRole('superadmin'), async (req, res) => {
   try {
-    const { search, status, plan, page = 1, limit = 20 } = req.query;
+    const { search, status, plan } = req.query;
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const query = {};
-    if (status) query.status = status;
-    if (plan)   query.plan   = plan;
-    if (search) {
-      const regex = new RegExp(search, 'i');
+    if (typeof status === 'string') query.status = status;
+    if (typeof plan === 'string')   query.plan   = plan;
+    if (typeof search === 'string' && search.trim()) {
+      const regex = new RegExp(escapeRegex(search.trim()), 'i');
       query.$or = [{ name: regex }, { merchantId: regex }, { country: regex }];
     }
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (page - 1) * limit;
     const [total, merchants] = await Promise.all([
       Merchant.countDocuments(query),
-      Merchant.find(query, MERCHANT_SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(parseInt(limit)).lean(),
+      Merchant.find(query, MERCHANT_SAFE_PROJECTION).sort({ merchantId: 1 }).skip(skip).limit(limit).lean(),
     ]);
-    return res.json({ success: true, page: parseInt(page), limit: parseInt(limit), total, merchants });
+    return res.json({ success: true, page, limit, total, merchants });
   } catch (err) {
     console.error('❌ [backoffice/merchants GET]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
@@ -558,26 +529,51 @@ router.get('/merchants', requireRole('superadmin'), async (req, res) => {
 // POST /backoffice/merchants — crear
 router.post('/merchants', requireRole('superadmin'), async (req, res) => {
   try {
-    const { merchantId, name, country, plan, status, webhookUrl } = req.body || {};
-    if (!merchantId) return res.status(400).json({ success: false, error: 'merchantId_required' });
+    const body = req.body || {};
+    const input = {
+      merchantId: body.merchantId,
+      name:       body.name || '',
+      country:    body.country || '',
+      plan:       body.plan   || 'starter',
+      status:     body.status || 'active',
+      webhookUrl: body.webhookUrl || null,
+    };
+    const { error, value } = merchantSchemas.createSchema.validate(input);
+    if (error) return res.status(400).json({ success: false, error: 'validation_error', detail: error.details[0].message });
 
-    const exists = await Merchant.findOne({ merchantId }).lean();
+    const exists = await Merchant.findOne({ merchantId: value.merchantId }).lean();
     if (exists) return res.status(409).json({ success: false, error: 'merchant_already_exists' });
 
-    const merchant = await Merchant.create({
-      merchantId,
-      name:       name || '',
-      country:    country || '',
-      plan:       plan   || 'starter',
-      status:     status || 'active',
-      webhookUrl: webhookUrl || null,
-    });
+    // Secreto de firma de webhooks generado en el alta. Antes el alta desde
+    // /admin no lo generaba: sin él (y sin WEBHOOK_SECRET global) el merchant
+    // no recibía NINGÚN webhook.
+    const signingSecret = generateSigningSecret();
+    const merchant = await Merchant.create({ ...value, webhookUrl: value.webhookUrl || null, signingSecret });
 
     const out = merchant.toObject();
     delete out.signingSecret; delete out.hmacSecret; delete out.secret; delete out.passwordHash;
-    return res.status(201).json({ success: true, merchant: out });
+    // Se muestra UNA sola vez, igual que el rawSecret de las API keys.
+    return res.status(201).json({ success: true, merchant: out, webhookSigningSecret: signingSecret });
   } catch (err) {
     console.error('❌ [backoffice/merchants POST]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// POST /backoffice/merchants/:merchantId/webhook-secret — genera (o rota) el
+// secreto de firma de los webhooks del merchant y lo devuelve UNA vez.
+router.post('/merchants/:merchantId/webhook-secret', requireRole('superadmin'), async (req, res) => {
+  try {
+    const signingSecret = generateSigningSecret();
+    const merchant = await Merchant.findOneAndUpdate(
+      { merchantId: String(req.params.merchantId) },
+      { $set: { signingSecret, updatedAt: new Date() } },
+      { new: true, projection: { merchantId: 1 } }
+    ).lean();
+    if (!merchant) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    return res.json({ success: true, merchantId: merchant.merchantId, webhookSigningSecret: signingSecret });
+  } catch (err) {
+    console.error('❌ [backoffice/merchants webhook-secret]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
@@ -588,6 +584,9 @@ router.patch('/merchants/:merchantId', requireRole('superadmin'), async (req, re
     const allowed = ['name', 'country', 'plan', 'status', 'webhookUrl'];
     const update = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+    if (update.webhookUrl === '') update.webhookUrl = null;
+    const { error } = merchantSchemas.updateSchema.validate(update);
+    if (error) return res.status(400).json({ success: false, error: 'validation_error', detail: error.details[0].message });
 
     const merchant = await Merchant.findOneAndUpdate(
       { merchantId: req.params.merchantId },
@@ -643,7 +642,7 @@ router.post('/merchants/:merchantId/api-keys', requireRole('superadmin'), async 
 // DELETE /backoffice/merchants/:merchantId/api-keys/:keyId — revocar
 router.delete('/merchants/:merchantId/api-keys/:keyId', requireRole('superadmin'), async (req, res) => {
   try {
-    const revoked = await revokeApiKey(req.params.keyId);
+    const revoked = await revokeApiKey(req.params.keyId, req.params.merchantId);
     if (!revoked) return res.status(404).json({ success: false, error: 'key_not_found' });
     return res.json({ success: true, message: 'key_revoked', keyPrefix: revoked.keyPrefix, revokedAt: revoked.revokedAt });
   } catch (err) {

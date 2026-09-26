@@ -26,13 +26,34 @@
 
 const express    = require('express');
 const router     = express.Router({ mergeParams: true });
-const rateLimiter = require('../middleware/rateLimiterPayments');
+// Límite por IP y por paymentId (endpoints públicos del navegador del comprador).
+const rateLimiter = require('../middleware/rateLimiterCheckout');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
 const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
 const logger      = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['initialized', 'hosted_pending'];
+
+// Metadatos NO sensibles de la tarjeta que devuelve el Proxy PCI (el PAN llega
+// ENMASCARADO). Se guardan BIN (6), últimos 4, marca, banco y país: permitido
+// por PCI DSS (truncado) y necesario para el coste real (interchange por marca/
+// tipo/región), las analíticas y, más adelante, el routing por BIN. Antes no se
+// guardaba nada y el "Coste real" salía con interchange 0 en todos los pagos.
+function cardMetadata(tokenResult) {
+  const out = {};
+  const masked = String(tokenResult?.pan || tokenResult?.masked_pan || '');
+  const digits = masked.replace(/[^0-9*Xx•]/g, '');
+  const firstSix = digits.slice(0, 6);
+  const lastFour = digits.slice(-4);
+  if (/^\d{6}$/.test(firstSix)) out.bin = firstSix;
+  if (/^\d{4}$/.test(lastFour) && digits.length >= 10) out.cardLast4 = lastFour;
+  if (tokenResult?.brand)   out.cardBrand     = String(tokenResult.brand).toLowerCase().slice(0, 32);
+  if (tokenResult?.type)    out.cardType      = String(tokenResult.type).toLowerCase().slice(0, 32);
+  if (tokenResult?.bank)    out.issuerName    = String(tokenResult.bank).slice(0, 128);
+  if (tokenResult?.country) out.issuerCountry = String(tokenResult.country).toUpperCase().slice(0, 3);
+  return out;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /:merchantId/proxy-pci/session
@@ -42,7 +63,7 @@ router.post('/session', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
   const { paymentId }  = req.body || {};
 
-  if (!paymentId) {
+  if (!paymentId || typeof paymentId !== 'string') {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
   }
 
@@ -91,50 +112,84 @@ router.post('/charge', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
   const { paymentId, expiryMonth, expiryYear, cardHolder } = req.body || {};
 
-  if (!paymentId) {
+  if (!paymentId || typeof paymentId !== 'string') {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
   }
 
+  // ── Paso 0: RESERVA ATÓMICA del cobro (anti doble cobro) ────────────────────
+  // Antes se leía el estado, se cobraba en Paylands y se guardaba después. Dos
+  // "Pagar" casi simultáneos (doble clic, reintento del navegador) pasaban los
+  // dos la comprobación → DOS órdenes en Paylands → doble retención al comprador,
+  // y la primera orden quedaba huérfana (su processorReference se pisaba).
+  // Ahora solo UNA petición consigue pasar el pago a 'processing'.
+  let tx;
   try {
-    const tx = await Transaction.findOne({ paymentId, merchantId }).lean(false);
+    tx = await Transaction.findOneAndUpdate(
+      { paymentId, merchantId, status: { $in: ALLOWED_STATUSES } },
+      { $set: { status: 'processing', updatedAt: new Date() } },
+      { new: true }
+    );
+  } catch (err) {
+    logger.error('PROXY_PCI_CHARGE_RESERVE_ERROR', {
+      component: 'proxyPciRoutes',
+      data: { merchantId, paymentId, error: err.message },
+    });
+    return res.status(500).json({ success: false, message: 'Error al procesar el pago' });
+  }
 
-    if (!tx) {
+  if (!tx) {
+    const existing = await Transaction.findOne({ paymentId, merchantId }).lean().catch(() => null);
+    if (!existing) {
       return res.status(404).json({ success: false, message: 'Transacción no encontrada' });
     }
+    return res.status(409).json({
+      success: false,
+      message: `Transacción en estado no válido: ${existing.status}`,
+    });
+  }
 
-    if (!ALLOWED_STATUSES.includes(tx.status)) {
-      return res.status(409).json({
-        success: false,
-        message: `Transacción en estado no válido: ${tx.status}`,
-      });
-    }
+  // Si algo falla ANTES de llegar a Paylands, se devuelve el pago a su estado
+  // inicial para que el comprador pueda volver a intentarlo.
+  async function releaseReservation() {
+    try {
+      await Transaction.updateOne(
+        { paymentId, merchantId, status: 'processing' },
+        { $set: { status: 'hosted_pending', updatedAt: new Date() } }
+      );
+    } catch (_) { /* no-op */ }
+  }
 
+  let chargeStarted = false;
+  try {
     // Paso 1: Obtener el token PCI generado por ProxyFields tras el submit del browser
-    const tokenResult = await pciProxy.getTokenizationResults(paymentId);
+    let tokenResult = null;
+    try {
+      tokenResult = await pciProxy.getTokenizationResults(paymentId);
+    } catch (e) {
+      tokenResult = null;
+    }
 
     if (!tokenResult || !tokenResult.token) {
       logger.error('PROXY_PCI_CHARGE_NO_TOKEN', {
         component: 'proxyPciRoutes',
         data: { paymentId, merchantId },
       });
+      await releaseReservation();
       return res.status(422).json({
         success: false,
         message: 'No se encontró token PCI para esta transacción. El usuario no ha completado el formulario.',
       });
     }
 
-    // Scope PCI SAQ A: aqui no entra ni el PAN ni el token de tarjeta, solo ids.
-    // El sanitizador de logger.js es una red de seguridad, no la primera linea.
+    // Scope PCI SAQ A: aquí no entra ni el PAN ni el token de tarjeta, solo ids.
+    // (El token de tarjeta es cobrable: no se registra en logs.)
     logger.info('PROXY_PCI_TOKEN_RETRIEVED', {
       component: 'proxyPciRoutes',
-      data: {
-        paymentId,
-        merchantId,
-        cardUuid:    tokenResult.card_uuid || tokenResult.uuid || tokenResult.source_uuid || 'N/A',
-      },
+      data: { paymentId, merchantId, brand: tokenResult.brand || null },
     });
 
     // Paso 2: Cobrar directamente en Paylands con el token PCI
+    chargeStarted = true;
     const chargeResult = await chargeWithToken({
       paymentId:   tx.paymentId,
       merchantId:  tx.merchantId,
@@ -146,14 +201,21 @@ router.post('/charge', rateLimiter, async (req, res) => {
       cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
 
+    const meta = cardMetadata(tokenResult);
+
     // Paso 3: Determinar status correcto y guardar UNA sola vez
     // Primero verificamos si hay 3DS pendiente para no guardar 'declined' prematuramente
     if (chargeResult.requires3DS && chargeResult.threeDsUrl) {
-      tx.status             = 'pending_3ds';
-      tx.processorReference = chargeResult.processorReference || null;
-      tx.processor          = 'payNoPain';
-      tx.updatedAt          = new Date();
-      await tx.save();
+      await Transaction.updateOne(
+        { paymentId, merchantId, status: 'processing' },
+        { $set: {
+          status:             'pending_3ds',
+          processorReference: chargeResult.processorReference || null,
+          processor:          'payNoPain',
+          updatedAt:          new Date(),
+          ...meta,
+        } }
+      );
 
       logger.info('PROXY_PCI_CHARGE_RESULT', {
         component: 'proxyPciRoutes',
@@ -169,21 +231,27 @@ router.post('/charge', rateLimiter, async (req, res) => {
     }
 
     // Sin 3DS: pago aprobado o rechazado directamente
-    tx.status             = chargeResult.success ? 'approved' : 'declined';
-    tx.processorReference = chargeResult.processorReference || null;
-    tx.processor          = 'payNoPain';
-    tx.updatedAt          = new Date();
-    await tx.save();
+    const finalStatus = chargeResult.success ? 'authorized' : 'declined';
+    await Transaction.updateOne(
+      { paymentId, merchantId, status: 'processing' },
+      { $set: {
+        status:             finalStatus,
+        processorReference: chargeResult.processorReference || null,
+        processor:          'payNoPain',
+        updatedAt:          new Date(),
+        ...meta,
+      } }
+    );
 
     logger.info('PROXY_PCI_CHARGE_RESULT', {
       component: 'proxyPciRoutes',
-      data: { paymentId, merchantId, success: chargeResult.success, status: tx.status },
+      data: { paymentId, merchantId, success: chargeResult.success, status: finalStatus },
     });
 
     if (!chargeResult.success) {
       return res.status(200).json({
         success: false,
-        message: chargeResult.error || 'Pago rechazado por el banco.',
+        message: 'Pago rechazado por el banco.',
         paymentId,
       });
     }
@@ -191,7 +259,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
     return res.status(200).json({
       success:   true,
       paymentId: tx.paymentId,
-      status:    'approved',
+      status:    finalStatus,
     });
 
   } catch (err) {
@@ -200,15 +268,23 @@ router.post('/charge', rateLimiter, async (req, res) => {
       data: { merchantId, paymentId, error: err.message },
     });
 
-    try {
-      await Transaction.updateOne(
-        { paymentId, merchantId },
-        { $set: { status: 'error', updatedAt: new Date() } }
-      );
-    } catch (_) { /* no-op */ }
+    if (!chargeStarted) {
+      await releaseReservation();
+    } else {
+      // La llamada a Paylands pudo llegar a crear la orden: estado 'error'. Si
+      // Paylands notifica después el resultado, el webhook lo corrige (ver
+      // utils/paymentStatus: 'error' admite pasar a authorized/declined).
+      try {
+        await Transaction.updateOne(
+          { paymentId, merchantId, status: 'processing' },
+          { $set: { status: 'error', updatedAt: new Date() } }
+        );
+      } catch (_) { /* no-op */ }
+    }
 
     return res.status(500).json({ success: false, message: 'Error al procesar el pago' });
   }
 });
 
 module.exports = router;
+module.exports._test = { cardMetadata };

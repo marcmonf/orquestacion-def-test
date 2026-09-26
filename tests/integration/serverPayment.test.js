@@ -21,6 +21,12 @@ jest.mock('../../src/models/Transaction', () => {
   return MockTransaction;
 });
 
+// Ficha del merchant: se consulta para el webhookUrl por defecto cuando el pago
+// no trae uno propio (26 sep 2026). Sin mock, Mongoose esperaría conexión.
+jest.mock('../../src/models/Merchant', () => ({
+  findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ webhookUrl: 'https://merchant.example.com/wh' }) }),
+}));
+
 jest.mock('../../src/services/paymentService', () => ({
   processCardPayment: jest.fn().mockResolvedValue({
     success: true,

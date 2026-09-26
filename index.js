@@ -1,18 +1,31 @@
+// dotenv PRIMERO: varios módulos leen process.env al cargarse (conector de
+// Paylands, rate limiters, secretos). Antes se cargaba después de requerir las
+// rutas de pago y, en local, esos módulos no veían el .env.
+require('dotenv').config();
+
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const cors = require('cors');
 const helmet = require('helmet');
 const mongoose = require('mongoose');
 const serverPaymentRoutes = require('./src/routes/serverPaymentRoutes');
 const hostedCheckoutRoutes = require('./src/routes/hostedCheckoutRoutes');
 const proxyPciRoutes = require('./src/routes/proxyPciRoutes');
+const webhookDispatcher = require('./src/services/webhookDispatcher');
+const { isDevOrTest } = require('./src/utils/runtimeSecrets');
 
 let morgan = null;
 try { morgan = require('morgan'); }
 catch { console.warn('⚠️ [WARN] morgan no está instalado. Logging HTTP desactivado.'); }
 
-require('dotenv').config();
 const app = express();
+
+/* Render/Proxies: req.ip = IP real del cliente (primer salto). Todo lo que
+ * necesite la IP (rate limits, auditoría) usa req.ip — nunca X-Forwarded-For a
+ * mano, que lo controla el cliente. */
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 /* ===== Helpers para dependencias opcionales (no romper si no están) ===== */
 function tryRequire(name) { try { return require(name); } catch { return null; } }
@@ -22,6 +35,34 @@ const hpp           = tryRequire('hpp');
 let rateLimiterGlobal = null;
 try { rateLimiterGlobal = require('./src/middleware/rateLimiterGlobal'); } catch {}
 
+/* ===== Contexto de petición (request-id) — lo primero de todo ===== */
+const logger = require('./src/utils/logger');
+app.use((req, res, next) => {
+  // Se acepta el x-request-id del cliente solo si es un identificador sano
+  // (evita inyección de líneas en logs); si no, se genera uno.
+  const incoming = String(req.headers['x-request-id'] || '').trim();
+  const rid = /^[A-Za-z0-9._-]{1,64}$/.test(incoming) ? incoming : crypto.randomUUID();
+  req.context = {
+    requestId: rid,
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  };
+  res.setHeader('x-request-id', rid);
+  // Traza HTTP a nivel debug: con LOG_LEVEL=info (por defecto) no se escribe en
+  // Mongo. Antes eran DOS escrituras en `tracelogs` por cada petición (HTTP IN
+  // y HTTP OUT), sin caducidad — la colección crecía sin límite. morgan ya
+  // imprime cada petición en la consola de Render.
+  res.on('finish', () => {
+    logger.debug('HTTP OUT', {
+      requestId: rid,
+      component: 'http',
+      event: `${req.method} ${req.originalUrl}`,
+      data: { statusCode: res.statusCode }
+    });
+  });
+  next();
+});
+
 /* ===== Middlewares globales ===== */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
@@ -30,7 +71,7 @@ app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     if (!allowedOrigins.length || allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS'), false);
+    return cb(Object.assign(new Error('Not allowed by CORS'), { status: 403 }), false);
   },
   credentials: false
 }));
@@ -39,6 +80,20 @@ app.use(helmet());
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+/* ===== Healthcheck ===== */
+app.get('/health', (req, res) => res.status(200).json({
+  status: 'ok',
+  db: mongoose.connection.readyState === 1 ? 'up' : 'down',
+}));
+
+/* ===== Webhooks entrantes de PSPs — ANTES de sanitizadores y rate limit global =====
+ * xss-clean y mongo-sanitize REESCRIBEN el body; cualquier cambio invalida el
+ * validation_hash de Paylands y el pago se quedaba colgado. Y Paylands notifica
+ * desde pocas IPs: el límite global por IP acabaría devolviéndole 429.
+ * La ruta verifica la firma antes de usar nada del body. */
+app.use('/webhooks', require('./src/routes/webhooks'));
+
 if (mongoSanitize) app.use(mongoSanitize());
 if (xssClean)      app.use(xssClean());
 if (hpp)           app.use(hpp());
@@ -53,34 +108,8 @@ try {
   console.warn('⚠️ [WARN] i18nMiddleware no cargado:', e.message);
 }
 
-/* Render/Proxies: evita warnings de X-Forwarded-For si activas rate-limits */
-app.set('trust proxy', 1);
-
-/* ===== Contexto de petición (request-id) ===== */
-const logger = require('./src/utils/logger');
-app.use((req, res, next) => {
-  const rid = req.headers['x-request-id']?.toString().trim() || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  req.context = {
-    requestId: rid,
-    ip: req.ip,
-    userAgent: req.headers['user-agent']
-  };
-  res.setHeader('x-request-id', rid);
-  logger.info('HTTP IN', { requestId: rid, component: 'http', event: `${req.method} ${req.originalUrl}` });
-  res.on('finish', () => {
-    logger.info('HTTP OUT', {
-      requestId: rid,
-      component: 'http',
-      event: `${req.method} ${req.originalUrl}`,
-      data: { statusCode: res.statusCode }
-    });
-  });
-  next();
-});
-
 /* ===== Utilidad ensureRouter ===== */
 const ensureRouter = (moduleExport, moduleName) => {
-  const express = require('express');
   const looksLikeExpress =
     moduleExport &&
     (typeof moduleExport === 'function' || typeof moduleExport === 'object') &&
@@ -98,22 +127,17 @@ const ensureRouter = (moduleExport, moduleName) => {
   return router;
 };
 
-/* ===== Healthcheck ===== */
-app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
-
 /* ===== Rutas principales ===== */
 // /initialize retirado (17 jul 2026): stack legacy pre-Hosted-Checkout.
 // Nada del front ni de los flujos actuales lo llamaba. El flujo real de
 // creación de pagos es POST /:merchantId/payments/hosted (y S2S).
 
-// Iframe: mismo router para /iframe y /iframe-process
+// Iframe de pago (solo GET). /iframe-process retirado el 26 sep 2026: era un
+// endpoint público que aceptaba PAN y aprobaba con el conector simulado. Ver
+// src/routes/iframe.js y DEV-LOG §4.
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
-app.use('/iframe-process', iframeRouter);
-
-// Versiones con merchantId en la URL para el iframe
 app.use('/:merchantId/iframe', iframeRouter);
-app.use('/:merchantId/iframe-process', iframeRouter);
 
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
@@ -126,12 +150,9 @@ app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 // en MongoDB (bóveda propia = scope SAQ D). La tokenización real la hace
 // ProxyFields de Paylands; Monetiser nunca debe almacenar PAN.
 
-// Orquestración + reglas
+// Orquestación + reglas (internos, X-Admin-Token)
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
 app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
-
-// Webhooks entrantes de PSPs
-app.use('/webhooks', ensureRouter(require('./src/routes/webhooks'), 'webhooks'));
 
 // Transactions
 try {
@@ -193,8 +214,7 @@ app.use('/portal-app', express.static(path.join(__dirname, 'public/portal')));
 
 /* ===== Documentación pública de la API (M4, pendiente desde el 16 jul 2026) =====
  * Swagger UI sobre openapi.yaml. Sin dependencias npm nuevas: el bundle viene de
- * CDN (ver comentario en public/docs.html — este repo versiona node_modules y
- * añadir swagger-ui-express obligaría a commitear su árbol entero).
+ * CDN (ver comentario en public/docs.html).
  * Se puede apagar con DOCS_ENABLED=false en Render.
  */
 if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
@@ -222,12 +242,46 @@ if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* ===== Error handler global ===== */
+/* ===== Error handler global =====
+ * Respeta el código de los errores "esperables" (JSON mal formado → 400, body
+ * demasiado grande → 413, origen CORS no permitido → 403). Antes todo salía como
+ * 500 y el integrador no sabía qué había hecho mal. Nunca devuelve detalles
+ * internos. */
 app.use((err, req, res, next) => { // eslint-disable-line
-  console.error('❌ [ERROR] ', err);
-  logger.error('UNCAUGHT', { component: 'http', requestId: req?.context?.requestId, data: { error: err?.message } });
-  res.status(500).json({ error: 'Internal Server Error' });
+  const status = Number(err && (err.status || err.statusCode));
+  const code = Number.isInteger(status) && status >= 400 && status < 500 ? status : 500;
+  if (code === 500) {
+    console.error('❌ [ERROR] ', err);
+    logger.error('UNCAUGHT', { component: 'http', requestId: req?.context?.requestId, data: { error: err?.message } });
+  }
+  if (res.headersSent) return;
+  const error = code === 400 ? 'bad_request'
+    : code === 403 ? 'forbidden'
+    : code === 413 ? 'payload_too_large'
+    : code === 500 ? 'internal_server_error'
+    : 'request_error';
+  res.status(code).json({ success: false, error });
 });
+
+/* ===== Comprobación de configuración al arrancar =====
+ * No tumba el proceso (los pagos deben seguir funcionando), pero deja claro en
+ * el log de Render qué falta. Los planos afectados responden 503 hasta que se
+ * configure (fail-closed). */
+function configWarnings() {
+  const w = [];
+  if (!process.env.ADMIN_TOKEN) w.push('ADMIN_TOKEN no definido → /rules, /merchants, /api-keys, /diag y GET /webhooks responden 503');
+  else if (process.env.ADMIN_TOKEN.length < 32) w.push('ADMIN_TOKEN demasiado corto (< 32 caracteres)');
+  if (!isDevOrTest()) {
+    if (!process.env.BACKOFFICE_JWT_SECRET) w.push('BACKOFFICE_JWT_SECRET no definido → /admin (backoffice) responde 503');
+    if (!process.env.PORTAL_JWT_SECRET) w.push('PORTAL_JWT_SECRET no definido → portal del merchant responde 503');
+  }
+  if (process.env.BACKOFFICE_JWT_SECRET && process.env.BACKOFFICE_JWT_SECRET === process.env.PORTAL_JWT_SECRET) {
+    w.push('BACKOFFICE_JWT_SECRET y PORTAL_JWT_SECRET son IGUALES: deben ser distintos');
+  }
+  if (!process.env.PAYNOPAIN_SIGNATURE) w.push('PAYNOPAIN_SIGNATURE no definido → los webhooks de Paylands responden 500');
+  if (!process.env.HPP_SIGNING_SECRET) w.push('HPP_SIGNING_SECRET no definido → secreto aleatorio por proceso (definirlo si hay >1 instancia)');
+  for (const msg of w) console.warn(`⚠️ [CONFIG] ${msg}`);
+}
 
 /* ===== Conexión a MongoDB + arranque ===== */
 const PORT = process.env.PORT || 3000;
@@ -238,26 +292,52 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
+configWarnings();
+
 mongoose.set('bufferCommands', false);
 mongoose.set('strictQuery', true);
 
+let server = null;
+
 mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
   serverSelectionTimeoutMS: 7000,
   socketTimeoutMS: 20000,
-  maxPoolSize: 5,
+  maxPoolSize: parseInt(process.env.MONGO_MAX_POOL || '20', 10),
   retryWrites: true,
 })
 .then(() => {
   console.log('✅ MongoDB conectado');
-  app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+  server = app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+  // Reintentos persistentes de webhooks salientes (ver webhookDispatcher.js).
+  webhookDispatcher.startWorker();
 })
 .catch(err => {
   console.error('❌ Error conectando a MongoDB:', err);
   process.exit(1);
 });
 
-process.on('SIGINT', async () => {
-  try { await mongoose.connection.close(); } finally { process.exit(0); }
+/* ===== Robustez del proceso ===== */
+// Una promesa rechazada sin capturar (p. ej. un handler async sin try/catch)
+// ya no TUMBA el proceso entero — antes bastaba un fallo de Mongo en una ruta
+// para reiniciar el servidor y cortar todos los pagos en curso.
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [unhandledRejection]', reason && reason.message ? reason.message : reason);
+  try { logger.error('UNHANDLED_REJECTION', { component: 'process', data: { error: String(reason && reason.message || reason) } }); } catch {}
 });
+
+// Parada ordenada (Render envía SIGTERM en cada despliegue): deja de aceptar
+// conexiones, termina las peticiones en curso y cierra Mongo.
+async function shutdown(signal) {
+  console.log(`⏹️  ${signal} recibido: parada ordenada`);
+  webhookDispatcher.stopWorker();
+  const force = setTimeout(() => process.exit(0), 10000);
+  if (force.unref) force.unref();
+  try {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await mongoose.connection.close();
+  } finally {
+    process.exit(0);
+  }
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

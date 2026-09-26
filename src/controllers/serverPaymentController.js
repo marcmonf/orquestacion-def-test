@@ -3,6 +3,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const Transaction  = require('../models/Transaction');
+const Merchant     = require('../models/Merchant');
 const logger       = require('../utils/logger');
 const auditLogger  = require('../logs/auditLogger');
 const { processCardPayment } = require('../services/paymentService');
@@ -29,11 +30,6 @@ function mapStatusToStatusOutput(status) {
     default:
       return { statusCode: 'UNKNOWN',    isFinal: false, statusCategory: 'UNKNOWN' };
   }
-}
-
-function shouldRequire3DSChallenge(amount) {
-  const threshold = Number(process.env.THREEDS_CHALLENGE_THRESHOLD || 0);
-  return threshold > 0 ? amount >= threshold : false;
 }
 
 function resolveMerchantIdFromRequest(req) {
@@ -126,23 +122,20 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
   const paymentId = uuidv4();
 
   try {
-    // ── 1. Decidir si requiere 3DS challenge ────────────────────────────────
-    const requiresChallenge = shouldRequire3DSChallenge(amount);
+    // El 3DS lo decide el ADQUIRENTE (el conector devuelve requires3DS + URL).
+    // Retirado el 26 sep 2026 un 3DS simulado por umbral de importe
+    // (THREEDS_CHALLENGE_THRESHOLD) que redirigía a /3ds-challenge, ruta que no
+    // existe: el pago se quedaba en pending_3ds para siempre.
+    let merchantAction = { actionType: null, redirectData: null };
+    let internalStatus = 'pending'; // provisional hasta que el conector responda
 
-    let merchantAction;
-    let internalStatus;
-
-    if (requiresChallenge) {
-      const base3DS   = process.env.THREEDS_CHALLENGE_BASE_URL || '';
-      const redirectURL = base3DS
-        ? `${base3DS.replace(/\/$/, '')}/3ds-challenge?paymentId=${encodeURIComponent(paymentId)}`
-        : `/3ds-challenge?paymentId=${encodeURIComponent(paymentId)}`;
-
-      merchantAction = { actionType: 'REDIRECT', redirectData: { redirectURL } };
-      internalStatus = 'pending_3ds';
-    } else {
-      merchantAction = { actionType: null, redirectData: null };
-      internalStatus = 'pending'; // provisional hasta que el conector responda
+    // webhookUrl de la ficha del merchant si el pago no trae uno propio.
+    let finalCallbackUrl = callbackUrl;
+    if (!finalCallbackUrl) {
+      try {
+        const m = await Merchant.findOne({ merchantId }, { webhookUrl: 1, _id: 0 }).lean();
+        finalCallbackUrl = m?.webhookUrl || null;
+      } catch { /* sin ficha: sin webhook */ }
     }
 
     // ── 2. Guardar transacción en MongoDB (estado provisional) ──────────────
@@ -154,7 +147,7 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
       method: 'card',
       status: internalStatus,
       returnUrl,
-      callbackUrl: callbackUrl || null,
+      callbackUrl: finalCallbackUrl || null,
       hostedTokenizationId:  hostedTokenizationId  || null,
       hostedFieldsSessionId: hostedFieldsSessionId || null,
       merchantReference:     merchantReference     || null,
@@ -162,10 +155,10 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
     });
     await txn.save();
 
-    // ── 3. Si no requiere 3DS → llamar al conector a través del rule engine ──
+    // ── 3. Llamar al conector a través del rule engine ──────────────────────
     let connectorUsed = null;
 
-    if (!requiresChallenge) {
+    {
       // paymentData TOKENS-ONLY: se pasa el source_uuid de ProxyFields como
       // cardToken. Ningún dato de tarjeta en crudo — el PAN ya fue rechazado
       // arriba. El conector payNoPain lo envía a Paylands como source_uuid.
@@ -236,7 +229,7 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
       currency,
       method:       'card',
       status:       internalStatus,
-      connectorUsed: connectorUsed || 'dummyCard',
+      connectorUsed: connectorUsed || null,
       merchantAction,
       statusOutput,
       timestamp:    timestamp.toISOString()
@@ -253,23 +246,25 @@ const { cardPaymentMethodSpecificInput, order, hostedTokenizationId, hostedField
     });
     return res.status(500).json({
       success: false,
-      error: 'internal_error',
-      detail: e.message
+      error: 'internal_error'
     });
   }
 }
 
 // ─── GET /:merchantId/payments/server/:paymentId ─────────────────────────────
+// AISLAMIENTO: filtra por el merchant autenticado. Antes buscaba solo por
+// paymentId: un merchant podía leer los pagos de otro.
 
 async function getServerPaymentStatus(req, res) {
   const { paymentId } = req.params;
+  const merchantId = resolveMerchantIdFromRequest(req);
 
-  if (!paymentId) {
+  if (!paymentId || !merchantId) {
     return res.status(400).json({ success: false, error: 'validation_error', detail: 'paymentId is required' });
   }
 
   try {
-    const tx = await Transaction.findOne({ paymentId }).lean();
+    const tx = await Transaction.findOne({ paymentId, merchantId }).lean();
     if (!tx) {
       return res.status(404).json({ success: false, error: 'not_found', detail: 'Payment not found' });
     }
@@ -279,7 +274,8 @@ async function getServerPaymentStatus(req, res) {
     return res.status(200).json(responsePayload);
 
   } catch (e) {
-    return res.status(500).json({ success: false, error: 'internal_error', detail: e.message });
+    logger.error('Error in getServerPaymentStatus', { error: e.message });
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 }
 
