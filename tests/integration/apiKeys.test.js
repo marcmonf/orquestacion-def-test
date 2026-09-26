@@ -42,9 +42,12 @@ jest.mock('../../src/services/apiKeyService', () => {
   };
 });
 
-const { signBackofficeToken } = require('../../src/middleware/backofficeAuth');
-const superadmin = () => `Bearer ${signBackofficeToken({ userId: 'u1', email: 'boss@x.test', role: 'superadmin', merchantScope: ['all'] })}`;
-const operator   = () => `Bearer ${signBackofficeToken({ userId: 'u2', email: 'op@x.test', role: 'operator', merchantScope: ['all'] })}`;
+// Sesión de backoffice: backofficeAuth comprueba el usuario en cada petición.
+jest.mock('../../src/models/BackofficeUser', () => require('../helpers/memoryModel')());
+
+const { backofficeToken } = require('../helpers/sessionUsers');
+const superadmin = () => `Bearer ${backofficeToken({ userId: 'u1', email: 'boss@x.test', role: 'superadmin', merchantScope: ['all'] })}`;
+const operator   = () => `Bearer ${backofficeToken({ userId: 'u2', email: 'op@x.test', role: 'operator', merchantScope: ['all'] })}`;
 
 function buildApp() {
   const app = express();

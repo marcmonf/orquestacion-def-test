@@ -10,6 +10,8 @@ const express = require('express');
 const request = require('supertest');
 
 jest.mock('../../src/models/Merchant', () => require('../helpers/memoryModel')());
+// Sesión del portal: portalAuth comprueba el usuario en cada petición.
+jest.mock('../../src/models/MerchantUser', () => require('../helpers/memoryModel')());
 jest.mock('../../src/models/Transaction', () => require('../helpers/memoryModel')());
 jest.mock('../../src/models/PricingPlan', () => require('../helpers/memoryModel')());
 jest.mock('../../src/models/BillingRecord', () => require('../helpers/memoryModel')());
@@ -19,7 +21,7 @@ jest.mock('../../src/models/TaxRate', () => require('../helpers/memoryModel')())
 const Merchant    = require('../../src/models/Merchant');
 const Transaction = require('../../src/models/Transaction');
 const PricingPlan = require('../../src/models/PricingPlan');
-const { signPortalToken } = require('../../src/middleware/portalAuth');
+const { portalToken } = require('../helpers/sessionUsers');
 
 function buildApp() {
   const app = express();
@@ -28,7 +30,7 @@ function buildApp() {
   return app;
 }
 function token(merchantId, role = 'merchant_admin') {
-  return signPortalToken({ userId: `u-${merchantId}`, merchantId, email: `x@${merchantId}.com`, role, mustChangePassword: false });
+  return portalToken({ userId: `u-${merchantId}-${role}`, merchantId, email: `x@${merchantId}.com`, role, mustChangePassword: false });
 }
 
 describe('Portal billing (M7 Fase 1)', () => {

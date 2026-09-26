@@ -24,6 +24,8 @@ const HierarchyNode = require('../models/HierarchyNode');
 const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
 const { NODE_TYPES, RANK } = require('../utils/hierarchyLevels');
+const hierarchyScope = require('../utils/hierarchyScope');
+const { subtreeIds } = hierarchyScope;
 
 function toPublicNode(n) {
   if (!n) return null;
@@ -60,30 +62,10 @@ async function resolveParent(merchantId, parentId, childType) {
 // no llevan referencia de nodo todavía, así que su visibilidad sigue siendo a
 // nivel de merchant (mejora futura: etiquetar transacciones con un nodo).
 
-// Ids del subárbol que cuelga de rootId (incluido rootId), a partir de la lista
-// completa de nodos del merchant.
-function subtreeIds(nodes, rootId) {
-  const childrenOf = {};
-  nodes.forEach(n => {
-    const p = n.parentId ? String(n.parentId) : 'null';
-    (childrenOf[p] = childrenOf[p] || []).push(String(n._id));
-  });
-  const out = new Set();
-  const stack = [String(rootId)];
-  while (stack.length) {
-    const cur = stack.pop();
-    if (out.has(cur)) continue;
-    out.add(cur);
-    (childrenOf[cur] || []).forEach(c => stack.push(c));
-  }
-  return out;
-}
-
-// null = usuario no restringido (ve todo su merchant). Set = ids de su subárbol.
+// subtreeIds / allowedNodeIds viven en utils/hierarchyScope.js: /portal/users
+// aplica las mismas reglas (un admin restringido solo gestiona SU subárbol).
 async function allowedNodeIds(req) {
-  if (!req.portalUser.hierarchyNodeId) return null;
-  const all = await HierarchyNode.find({ merchantId: req.portalUser.merchantId }).lean();
-  return subtreeIds(all, req.portalUser.hierarchyNodeId);
+  return hierarchyScope.allowedNodeIds(req.portalUser);
 }
 
 router.use(portalAuth);

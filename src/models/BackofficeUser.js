@@ -25,6 +25,13 @@ const backofficeUserSchema = new mongoose.Schema({
 
   // Estado
   active:       { type: Boolean, default: true },
+
+  // Revocación de sesiones: cada JWT lleva la versión con la que se emitió
+  // (claim `tv`) y backofficeAuth la compara con esta. Subirla (desactivar,
+  // cambiar rol/alcance, resetear la contraseña, cerrar sesión) invalida en el
+  // acto TODOS los tokens anteriores. Antes un token seguía valiendo hasta 12 h
+  // aunque se desactivase al usuario.
+  tokenVersion: { type: Number, default: 0 },
   createdBy:    { type: String, default: null },   // email del superadmin que lo creó
   lastLoginAt:  { type: Date,   default: null },
   lastLoginIp:  { type: String, default: null },

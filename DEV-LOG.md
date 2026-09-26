@@ -227,6 +227,7 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 | **Tras el 3DS el comprador se quedaba en una página de Paylands** (26 sep 2026) | `chargeWithToken` no enviaba `url_ok`/`url_ko` (parámetros documentados de `POST /payment`): Paylands no sabía adónde devolver al comprador. Ni él ni la web del comercio se enteraban del resultado; el comercio solo lo sabía por webhook (servidor a servidor, no en la pantalla del cliente). | Página de resultado `/checkout/result/:paymentId` (URL firmada y con caducidad) como `url_ok`/`url_ko`. Ver sesión del 26 sep → "Vuelta del comprador tras pagar". |
 | **La sesión del Hosted Checkout no caducaba nunca** (26 sep 2026) | `sessionExpiresAt` no estaba declarado en el schema de `Transaction` → Mongoose lo descartaba al guardar: el MISMO patrón que `hostedCheckoutId` (primera fila de esta tabla) y `lastWebhookAt`. `/hpp` no devolvía nunca 410 y `GET status` decía `expired:false` siempre, aunque la API anunciaba `session.expiresAt`. Los tests no lo veían porque mockean el modelo. | Campo declarado + test contra el schema REAL (`jest.requireActual`). |
 | **El botón "Cargar" de `test-checkout.html` no hacía nada** (26 sep 2026) | Su JavaScript iba EN LÍNEA y la CSP por defecto de helmet (`script-src 'self'`) lo bloquea. Además, esa CSP (sin `frame-src`) habría bloqueado el 3DS dentro del iFrame: la CSP de una página manda también sobre las navegaciones DENTRO de sus iFrames (comprobado en Chromium: *"Refused to frame … default-src 'self'"*). | Script externo `/test-checkout.js` + CSP propia para esa página (`frame-src 'self' https:`). Aviso para comercios con CSP propia en la sesión del 26 sep. |
+| **Un admin del portal restringido a un nodo podía quitarse la restricción** (26 sep 2026) | Los permisos por nodo (M6 Fase 4) solo se aplicaban en `/portal/hierarchy`. En `/portal/users` un `merchant_admin` restringido podía editar a CUALQUIER usuario del merchant, incluido él mismo: `PATCH { hierarchyNodeId: null }` y pasaba a ver todo el merchant. También podía crear usuarios sin nodo (sin restricción). Y como el nodo viajaba en el JWT, los cambios no surtían efecto hasta 12 h después. | Mismas reglas de subárbol en `/portal/users` (`src/utils/hierarchyScope.js`, compartido con la jerarquía): nadie cambia su propio nodo, un admin restringido solo ve/gestiona su subárbol y nunca deja a nadie sin restricción; el nodo se lee de la base de datos en cada petición. |
 
 ---
 
@@ -251,7 +252,7 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 | ~~test-checkout.html no carga con iframe~~ | ✅ **RESUELTO — 26 sep 2026** | La causa era la CSP (JavaScript en línea bloqueado), no el iFrame: ver §4. Ahora además enseña el aviso `checkout.result` que recibiría la web del comercio. |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **372/372** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **394/394** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -1192,11 +1193,47 @@ en el navegador (los tests pasaban): un comentario del HTML mencionaba la etique
 válido". Arreglado (se inserta ante el último cierre) y el test ahora ignora los
 comentarios, así que no puede repetirse sin que falle.
 
+#### Sesiones revocables y admin restringido (Fase 1)
+
+**El problema.** Los paneles (`/admin` y el portal del comercio) daban un token que
+valía 12 h pasara lo que pasara: desactivar a un empleado, quitarle permisos,
+resetearle la contraseña o pulsar "Salir" no le echaba. Y un admin del portal
+limitado a una tienda/región podía quitarse la limitación él solo (ver §4).
+
+**Qué hace ahora.**
+1. Cada usuario tiene una "versión de sesión" (`tokenVersion`) que va dentro de su
+   token (`tv`). En CADA petición se comprueba contra la base de datos: el usuario
+   tiene que existir, estar activo y tener la misma versión. Si no → `401
+   session_revoked` y la pantalla vuelve al login.
+2. La versión sube (y todas sus sesiones mueren al momento) al: desactivarle,
+   cambiarle el rol, el alcance de merchants (backoffice) o el nodo (portal),
+   resetear o cambiar su contraseña (en el portal, la sesión desde la que la cambia
+   sigue con un token nuevo) y al pulsar "Salir" (ahora cierra de verdad).
+3. Rol, alcance, nodo y "cambio de contraseña pendiente" se leen de la BASE DE DATOS,
+   no del token: lo que diga un token manipulado o viejo no cuenta.
+4. Si Mongo no responde, los paneles contestan 503: nunca se deja pasar sin comprobar.
+5. Backoffice: el `PATCH` de usuarios valida los datos y un superadmin ya no puede
+   quitarse el rol ni desactivarse a sí mismo por ahí (el `DELETE` ya lo impedía):
+   así siempre queda al menos un superadmin, quien hace el cambio. El alta en /admin
+   pedía 8 caracteres y el servidor 12: ahora avisa de 12, y los errores del
+   servidor se ven en pantalla (`email_already_exists`…) en vez de "HTTP 400".
+
+Coste: una lectura de Mongo por petición de panel (por `_id`, indexada). No afecta a
+la API de pagos ni al checkout. Tokens emitidos antes del despliegue siguen valiendo
+(cuentan como versión 0) hasta que caduquen o se revoquen.
+
+**Verificación:** **394/394** tests (+22: `tests/security/sessionRevocation.test.js`
+—16— y 6 nuevos en `portalNodePerms`; los tests que firmaban tokens "sueltos" ahora
+siembran el usuario con `tests/helpers/sessionUsers.js`, porque un token sin usuario
+detrás ya no vale). En Chromium real: login en `/admin` y en `/portal-app`, "Salir"
+envía la petición con el token y ese mismo token pasa a dar `401 session_revoked`; el
+aviso de contraseña corta dice 12 y el error del servidor se muestra.
+
 **Pendiente (Fase 1 en adelante, ver informe):** entorno de producción separado, API
-simplificada para el comercio (con snippet `monetiser.js`), revocación de sesiones
-(tokenVersion), 2FA de superadmin, numeración de facturas en transacción, routing del
-portal conectado al flujo real, conector #2. `RETURNMAC` (respuesta del alta del
-Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se retira.
+simplificada para el comercio (con snippet `monetiser.js`), 2FA de superadmin,
+numeración de facturas en transacción, routing del portal conectado al flujo real,
+conector #2. `RETURNMAC` (respuesta del alta del Hosted Checkout) no se usa en ningún
+sitio: decidir en la API simple si se retira.
 
 ---
 
@@ -1233,6 +1270,8 @@ Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se reti
 | SSRF en webhooks salientes | `src/utils/safeUrl.js` | Solo https y nunca direcciones privadas/loopback/link-local; conexión a la IP validada. |
 | Escapado XSS en /admin | `public/admin/dashboard.js` | `esc()` en todo dato dinámico (el portal ya escapaba). |
 | Rate limits por merchant autenticado y por pago | `rateLimiterPayments.js`, `rateLimiterCheckout.js`, `rateLimiterLogin.js` | Un tercero sin credenciales ya no puede agotar el cupo de un merchant; login limitado por IP+email y por email. |
+| Revocación de sesiones (26 sep 2026) | `src/middleware/backofficeAuth.js`, `src/middleware/portalAuth.js` | Versión de sesión (`tokenVersion` ↔ claim `tv`) comprobada en cada petición contra el usuario activo; se sube al desactivar, cambiar permisos/nodo, cambiar o resetear la contraseña y al cerrar sesión. Rol/alcance/nodo leídos de la base de datos. Mongo caído → 503. |
+| Permisos por nodo en la gestión de usuarios del portal (26 sep 2026) | `src/routes/portalRoutes.js`, `src/utils/hierarchyScope.js` | Un admin restringido solo ve/gestiona usuarios de su subárbol, no cambia su propio nodo y no deja a nadie sin restricción. |
 | Página de resultado firmada (26 sep 2026) | `src/utils/checkoutResult.js`, `src/routes/checkoutResult.js` | URL firmada (HMAC con `HPP_SIGNING_SECRET`) y con caducidad (24 h la página, 1 h la consulta de estado), firmas distintas para cada una; resultado siempre del estado guardado; CSP sin JavaScript en línea; límite por IP y por paymentId; fuera del filtro CORS (es destino de navegación, y así ninguna otra web puede leer su estado). |
 
 ### Pendientes
@@ -1245,7 +1284,7 @@ Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se reti
 | Revocar los PAT de GitHub expuestos. **Son DOS: (1) el publicado en `CLAUDE.md` (11-16 jul 2026), que sigue sin revocar; (2) uno nuevo pegado en el chat de sesión el 4 ago 2026.** Este repo es PÚBLICO. Un PAT pegado en un chat se considera quemado en el momento en que se pega. Revocar ambos en GitHub → Settings → Developer settings → Fine-grained tokens, y emitir uno nuevo que NO se escriba en ningún sitio persistente. | **Alta — acción de Marcos** |
 | **Revocar la API key de demo-merchant** cuyo `rawSecret` estuvo escrito en este DEV-LOG (repo público) hasta el 26 sep 2026, y crear otra en /admin → Merchants → API Keys. | **Alta — acción de Marcos** |
 | **Rotar la contraseña del usuario de MongoDB Atlas** si coincide con la de ejemplo que había en `.env.example` (`admin` / `admin12345`) y revisar el acceso de red de Atlas. | **Alta — acción de Marcos (verificar)** |
-| Revocación de sesiones: hoy un JWT de backoffice/portal sigue valiendo hasta que caduca aunque se desactive el usuario o se cambie su contraseña (añadir `tokenVersion`). | Alta |
+| ~~Revocación de sesiones (`tokenVersion`)~~ → ✅ HECHO 26 sep 2026 (ver sesión del 26 sep → "Sesiones revocables y admin restringido"). | — |
 | 2FA para panel admin | Media |
 | Rotación de PAYNOPAIN_SIGNATURE | Media |
 

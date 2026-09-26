@@ -14,6 +14,7 @@
 // Soporta lo que el código real invoca:
 //   create(data) · findOne(query) · findById(id) · countDocuments(query)
 //   find(query).select().sort().lean()  (y find(query) awaitable)
+//   findOneAndUpdate / updateOne con $set, $inc (y upsert en el primero)
 // El matcher entiende igualdad y los operadores $ne / $in.
 //
 let _seq = 1;
@@ -140,6 +141,18 @@ module.exports = function makeMemoryModel() {
       if (update.$inc) Object.entries(update.$inc).forEach(([k, n]) => { doc[k] = (Number(doc[k]) || 0) + n; });
       doc.updatedAt = new Date();
       return { ...doc };
+    },
+
+    // updateOne MÍNIMO: mismo tratamiento de $set / $inc / objeto plano que
+    // findOneAndUpdate (lo usa, p. ej., el login de backoffice para lastLoginAt).
+    async updateOne(query = {}, update = {}) {
+      const doc = store.find(d => matches(d, query));
+      if (!doc) return { matchedCount: 0, modifiedCount: 0 };
+      const hasOps = Object.keys(update).some(k => k.startsWith('$'));
+      Object.assign(doc, update.$set || (hasOps ? {} : update));
+      if (update.$inc) Object.entries(update.$inc).forEach(([k, n]) => { doc[k] = (Number(doc[k]) || 0) + n; });
+      doc.updatedAt = new Date();
+      return { matchedCount: 1, modifiedCount: 1 };
     },
 
     // aggregate MÍNIMO: soporta $match y $group con _id:null y acumuladores

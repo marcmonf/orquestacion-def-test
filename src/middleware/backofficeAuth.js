@@ -6,6 +6,7 @@ try { jwt = require('jsonwebtoken'); } catch {
   console.error('❌ jsonwebtoken no instalado.');
 }
 const { resolveSecret } = require('../utils/runtimeSecrets');
+const BackofficeUser = require('../models/BackofficeUser');
 
 // FAIL-CLOSED: sin BACKOFFICE_JWT_SECRET (fuera de development/test) el
 // backoffice responde 503 en vez de firmar con un secreto público. Ver
@@ -32,8 +33,43 @@ function signBackofficeToken(payload) {
   return jwt.sign(payload, SECRET, { algorithm: ALGORITHM, audience: AUDIENCE, expiresIn: EXPIRES });
 }
 
+// Verifica firma, audience y caducidad. Devuelve los claims o lanza.
+function verifyBackofficeToken(token) {
+  return jwt.verify(token, SECRET, { algorithms: [ALGORITHM], audience: AUDIENCE });
+}
+
+// Usuario de la sesión, leído de Mongo en CADA petición (revocación de sesiones).
+// Un userId que no es un ObjectId (token falso o de otra época) = sin usuario.
+async function loadSessionUser(claims) {
+  if (!claims || !claims.userId) return null;
+  try {
+    return await BackofficeUser.findOne({ _id: claims.userId })
+      .select('email name role merchantScope active tokenVersion')
+      .lean();
+  } catch (err) {
+    if (err && err.name === 'CastError') return null;
+    throw err;
+  }
+}
+
+function sessionIsCurrent(user, claims) {
+  return Boolean(user) && user.active !== false &&
+    (Number(user.tokenVersion) || 0) === (Number(claims.tv) || 0);
+}
+
 /**
- * Middleware base — valida JWT e inyecta req.backofficeUser
+ * Middleware base — valida el JWT e inyecta req.backofficeUser.
+ *
+ * REVOCACIÓN DE SESIONES (26 sep 2026). Antes bastaba con la firma: un usuario
+ * desactivado, degradado o con la contraseña reseteada seguía entrando con su
+ * token hasta que caducaba (12 h). Ahora, en cada petición:
+ *   - el usuario tiene que existir y estar activo;
+ *   - la versión del token (`tv`) tiene que coincidir con la del usuario
+ *     (`tokenVersion`, que se sube al desactivar, cambiar rol/alcance, resetear
+ *     la contraseña o cerrar sesión) → si no, 401 `session_revoked`;
+ *   - rol y alcance se toman de la BASE DE DATOS, no del token: un cambio de
+ *     permisos se aplica en la siguiente petición.
+ * Si Mongo no responde → 503 (nunca se deja pasar sin comprobar).
  */
 function backofficeAuth(req, res, next) {
   if (!jwt) return res.status(500).json({ success: false, error: 'jwt_unavailable' });
@@ -41,13 +77,41 @@ function backofficeAuth(req, res, next) {
   const authHeader = req.headers['authorization'] || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ success: false, error: 'missing_token' });
+
+  let claims;
   try {
-    req.backofficeUser = jwt.verify(token, SECRET, { algorithms: [ALGORITHM], audience: AUDIENCE });
-    return next();
+    claims = verifyBackofficeToken(token);
   } catch (err) {
     const msg = err.name === 'TokenExpiredError' ? 'token_expired' : 'invalid_token';
     return res.status(401).json({ success: false, error: msg });
   }
+
+  return loadSessionUser(claims).then((user) => {
+    if (!sessionIsCurrent(user, claims)) {
+      return res.status(401).json({ success: false, error: 'session_revoked' });
+    }
+    req.backofficeUser = {
+      userId:        String(user._id),
+      email:         user.email,
+      name:          user.name,
+      role:          user.role,
+      merchantScope: Array.isArray(user.merchantScope) ? user.merchantScope : [],
+    };
+    return next();
+  }).catch((err) => {
+    console.error('❌ [backofficeAuth] comprobación de sesión:', err && err.message);
+    return res.status(503).json({ success: false, error: 'session_check_unavailable' });
+  });
+}
+
+/**
+ * Invalida TODAS las sesiones abiertas de un usuario (sube tokenVersion).
+ * Se llama al desactivar, cambiar rol/alcance, resetear la contraseña o cerrar
+ * sesión.
+ */
+async function revokeSessions(userId) {
+  if (!userId) return;
+  await BackofficeUser.findOneAndUpdate({ _id: userId }, { $inc: { tokenVersion: 1 } });
 }
 
 /**
@@ -100,6 +164,8 @@ module.exports = backofficeAuth;
 module.exports.requireRole = requireRole;
 module.exports.requireMerchantAccess = requireMerchantAccess;
 module.exports.signBackofficeToken = signBackofficeToken;
+module.exports.verifyBackofficeToken = verifyBackofficeToken;
+module.exports.revokeSessions = revokeSessions;
 module.exports.isConfigured = isConfigured;
 module.exports.ROLE_RANK = ROLE_RANK;
 module.exports.BACKOFFICE_AUDIENCE = AUDIENCE;
