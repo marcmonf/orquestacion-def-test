@@ -988,7 +988,12 @@ S2S, rule engine) + tres auditorías en paralelo (backoffice/portal, facturació
 adquirentes, frontends). Hallazgos críticos resumidos en la fila del 26 sep de §4. El
 informe completo (con el plan al MVP y las preguntas para Marcos) se publicó aparte.
 
-**Trabajo en la rama `claude/clever-bohr-fk3164`** (NO en `main`; nada está desplegado
+**✅ FUSIONADO Y DESPLEGADO el 26 sep 2026** (PR #2 → `main`, commit `8a55689`; Manual Deploy
+de Marcos con `HPP_SIGNING_SECRET` definido y `ADMIN_TOKEN` de 64 caracteres, arranque sin
+avisos `[CONFIG]`). **Pendiente:** la prueba de sandbox de la "Vuelta del comprador" (más
+abajo), revocar la API key de demo-merchant y rellenar los datos fiscales antes de facturar.
+
+**Trabajo hecho en la rama `claude/clever-bohr-fk3164`** (entonces aún NO en `main`; nada estaba desplegado
 hasta que Marcos fusione y lance Manual Deploy). **Al terminar la Fase 0: 346/346** (+73 tests
 nuevos: `tests/security/audit2026.test.js`, `tests/unit/paymentLifecycle.test.js`,
 `tests/integration/checkoutHardening.test.js`, ampliados `webhooks.test.js` y
