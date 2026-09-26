@@ -75,13 +75,20 @@ const corsMiddleware = cors({
   },
   credentials: false
 });
-// La página de resultado del checkout es un DESTINO DE NAVEGACIÓN, no una API:
-// Paylands devuelve al comprador desde su dominio (y podría hacerlo con un
-// formulario POST, que lleva cabecera Origin). Con ALLOWED_ORIGINS definido, el
-// filtro CORS la rechazaría con 403 y el comprador vería un error tras pagar.
-// Sin cabeceras CORS, además, ninguna otra web puede leer su consulta de estado.
+// Rutas SIN CORS (sin cabeceras Access-Control-*):
+//  - La página de resultado del checkout es un DESTINO DE NAVEGACIÓN, no una
+//    API: Paylands devuelve al comprador desde su dominio (y podría hacerlo con
+//    un formulario POST, que lleva cabecera Origin). Con ALLOWED_ORIGINS
+//    definido, el filtro CORS la rechazaría con 403 y el comprador vería un
+//    error tras pagar. Sin cabeceras CORS, además, ninguna otra web puede leer
+//    su consulta de estado.
+//  - La API v1 se llama desde el SERVIDOR del comercio con su secreto: sin CORS
+//    el navegador no deja usarla desde una web, así que un secreto puesto por
+//    error en el frontend falla a la primera en vez de quedar expuesto.
 app.use((req, res, next) => (
-  req.path.startsWith('/checkout/result/') ? next() : corsMiddleware(req, res, next)
+  req.path.startsWith('/checkout/result/') || req.path.startsWith('/v1/')
+    ? next()
+    : corsMiddleware(req, res, next)
 ));
 
 app.use(helmet());
@@ -154,6 +161,20 @@ app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 // url_ko de Paylands tras el 3DS). Avisa a la web del comercio y le devuelve a
 // su returnUrl. Ver src/routes/checkoutResult.js.
 app.use('/checkout/result', ensureRouter(require('./src/routes/checkoutResult'), 'checkoutResult'));
+
+// API v1 — la integración sencilla (Bearer ms_..., JSON plano, siempre el
+// checkout con los campos de Paylands: PCI SAQ A). Ver src/routes/v1.js y la
+// guía docs/integracion.md.
+// El snippet para embeber el checkout se sirve ANTES del router (que exige
+// credencial). Se carga desde la web del comercio (otro origen): helmet pone
+// Cross-Origin-Resource-Policy: same-origin y el navegador lo bloquearía.
+app.get('/v1/monetiser.js', (req, res) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, 'public/v1/monetiser.js'));
+});
+app.use('/v1', ensureRouter(require('./src/routes/v1'), 'v1'));
 
 // /apms retirado (16 jul 2026): era un stack de pago paralelo de una version
 // antigua — publico sin auth, sin validacion efectiva y aceptaba PAN en crudo.

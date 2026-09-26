@@ -2,12 +2,27 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.11.0
+  version: 2.12.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    ## Integración recomendada: API v1
+
+    Para un comercio nuevo, **usa la API v1** (etiqueta *API v1*): una cabecera
+    `Authorization: Bearer ms_...`, JSON plano y el checkout de Monetiser con los
+    campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
+    a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
+    abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.12.0 (26 sep 2026)** — **API v1**: `POST /v1/checkout-sessions`,
+    `GET /v1/checkout-sessions/{id}`, `GET /v1/payments/{id}` y
+    `POST /v1/payments/{id}/capture|refund|cancel`, con `Bearer ms_...` (el
+    secreto identifica al merchant) e `Idempotency-Key` opcional. Snippet
+    `/v1/monetiser.js` para embeber el checkout (`Monetiser.mount`). La API v1 no
+    admite llamadas desde navegador (sin CORS) ni datos de tarjeta.
 
     **v2.11.0 (26 sep 2026)** — Vuelta del comprador tras pagar y sesiones
     revocables (ver DEV-LOG, sesión 26 sep 2026):
@@ -202,6 +217,16 @@ servers:
     description: Entorno de pruebas (Paylands sandbox). Hoy el único desplegado.
 
 tags:
+  - name: API v1
+    description: |
+      **La integración recomendada.** Tres piezas: tu servidor crea una sesión
+      (`POST /v1/checkout-sessions` → `url`), tu web muestra el checkout de esa
+      `url` (embebido con `/v1/monetiser.js` o a pantalla completa) y tu servidor
+      confirma el pago con el webhook firmado o `GET /v1/payments/{id}`.
+
+      Autenticación: `Authorization: Bearer ms_...` (el secreto de la API key; no
+      hace falta el merchantId). Solo desde servidor: sin CORS. Errores:
+      `{ success:false, error:'<código>', message }`.
   - name: Hosted Checkout
     description: |
       **Flujo recomendado y único verificado end-to-end.** El merchant crea el pago
@@ -245,6 +270,233 @@ security:
     MerchantId: []
 
 paths:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # API v1 — integración recomendada
+  # ──────────────────────────────────────────────────────────────────────
+
+  /v1/checkout-sessions:
+    post:
+      tags: [API v1]
+      summary: Crear una sesión de pago
+      operationId: v1CreateCheckoutSession
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Crea un pago y devuelve la `url` del checkout de Monetiser (se embebe con
+        `/v1/monetiser.js` o se abre a pantalla completa). Por debajo es un Hosted
+        Checkout como el de `POST /{merchantId}/payments/hosted` (flujo estable):
+        `beta` solo porque esta forma de pedirlo es nueva.
+
+        **Nunca** admite datos de tarjeta (`400 card_data_not_accepted`): el
+        comprador los escribe en los campos de Paylands (PCI DSS SAQ A).
+
+        Con `Idempotency-Key`, repetir la petición devuelve la MISMA sesión (`200`);
+        con la misma clave y otros datos, `409 idempotency_key_reused`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyV1'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V1CheckoutSessionCreate' }
+            examples:
+              minimo:
+                summary: Lo mínimo
+                value: { amount: 4999, currency: EUR }
+              completo:
+                summary: Con referencia, vuelta y webhook
+                value:
+                  amount: 4999
+                  currency: EUR
+                  reference: PEDIDO-1234
+                  returnUrl: https://tutienda.com/pedido/1234/gracias
+                  webhookUrl: https://tutienda.com/webhooks/monetiser
+      responses:
+        '201':
+          description: Sesión creada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1CheckoutSession' }
+        '200':
+          description: Reintento con la misma Idempotency-Key — la sesión ya existía.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1CheckoutSession' }
+        '400':
+          description: '`validation_error` (con `details`), `card_data_not_accepted` o `invalid_idempotency_key`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '403':
+          description: '`merchant_suspended`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+        '409':
+          description: '`idempotency_key_reused`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+        '429':
+          description: '`rate_limit_exceeded`.'
+
+  /v1/checkout-sessions/{id}:
+    get:
+      tags: [API v1]
+      summary: Consultar una sesión de pago
+      operationId: v1GetCheckoutSession
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/V1PaymentId'
+      responses:
+        '200':
+          description: Sesión con su estado actual.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1CheckoutSession' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404':
+          description: '`not_found` (no existe o es de otro merchant).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+
+  /v1/payments/{id}:
+    get:
+      tags: [API v1]
+      summary: Consultar un pago
+      operationId: v1GetPayment
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Estado del pago, importes capturado y devuelto y la tarjeta truncada
+        (marca, últimos 4, país). Es la forma de confirmar un pago si no usas
+        webhooks.
+      parameters:
+        - $ref: '#/components/parameters/V1PaymentId'
+      responses:
+        '200':
+          description: El pago.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404':
+          description: '`not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+
+  /v1/payments/{id}/capture:
+    post:
+      tags: [API v1]
+      summary: Capturar (cobrar) un pago autorizado
+      operationId: v1CapturePayment
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Cobra lo retenido (total, o una parte con `amount`). Mismo servicio que
+        `POST /payments/{paymentId}/capture` (verificado contra Paylands): bloqueo
+        por pago e idempotencia. Sin `Idempotency-Key` se genera una por petición.
+      parameters:
+        - $ref: '#/components/parameters/V1PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKeyV1'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V1AmountRequest' }
+      responses:
+        '200':
+          description: Pago actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '400': { $ref: '#/components/responses/V1BadRequest' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+        '409': { $ref: '#/components/responses/V1Conflict' }
+        '502': { $ref: '#/components/responses/V1ProcessorDeclined' }
+
+  /v1/payments/{id}/refund:
+    post:
+      tags: [API v1]
+      summary: Devolver (total o parcial)
+      operationId: v1RefundPayment
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Devuelve lo cobrado (total, o una parte con `amount`). Exige captura previa:
+        sobre un pago `authorized` sin capturar → `409 capture_required` (usa
+        `cancel`).
+      parameters:
+        - $ref: '#/components/parameters/V1PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKeyV1'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V1AmountRequest' }
+      responses:
+        '200':
+          description: Pago actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '400': { $ref: '#/components/responses/V1BadRequest' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+        '409': { $ref: '#/components/responses/V1Conflict' }
+        '502': { $ref: '#/components/responses/V1ProcessorDeclined' }
+
+  /v1/payments/{id}/cancel:
+    post:
+      tags: [API v1]
+      summary: Anular una autorización sin capturar
+      operationId: v1CancelPayment
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: Libera la retención de un pago `authorized` que no se ha capturado.
+      parameters:
+        - $ref: '#/components/parameters/V1PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKeyV1'
+      responses:
+        '200':
+          description: Pago actualizado (`cancelled`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+        '409': { $ref: '#/components/responses/V1Conflict' }
+        '502': { $ref: '#/components/responses/V1ProcessorDeclined' }
+
+  /v1/monetiser.js:
+    get:
+      tags: [API v1]
+      summary: Snippet para embeber el checkout
+      operationId: v1Snippet
+      x-madurez: beta
+      security: []
+      description: |
+        JavaScript sin dependencias para la web del comercio:
+
+        ```html
+        <div id="checkout"></div>
+        <script src="https://orquestacion-def-test.onrender.com/v1/monetiser.js"></script>
+        <script>
+          Monetiser.mount('#checkout', { url: SESSION_URL, onResult: function (r) {} });
+        </script>
+        ```
+        `onResult` recibe `{ paymentId, status, result }` (informativo). Solo acepta
+        URLs y avisos del origen de Monetiser.
+      responses:
+        '200':
+          description: El script.
+          content:
+            application/javascript:
+              schema: { type: string }
 
   # ──────────────────────────────────────────────────────────────────────
   # HOSTED CHECKOUT
@@ -1984,6 +2236,15 @@ components:
 
   securitySchemes:
 
+    BearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        **API v1.** `Authorization: Bearer ms_...` — el SECRETO de la API key (se
+        muestra una vez al crearla en /admin → Merchants → API Keys). El secreto
+        identifica al merchant: no hace falta mandar su merchantId. El `mk_...`
+        (identificador público) no autentica. Solo desde servidor.
+
     ApiKeySimple:
       type: apiKey
       in: header
@@ -2108,6 +2369,20 @@ components:
         `POST /portal/auth/change-password`.
 
   parameters:
+    V1PaymentId:
+      name: id
+      in: path
+      required: true
+      description: El `id` de la sesión = el del pago (`paymentId`).
+      schema: { type: string }
+    IdempotencyKeyV1:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Opcional pero recomendada: una repetición con la misma clave no repite la
+        operación. De 8 a 64 caracteres (letras, números, `- _ . :`).
+      schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{8,64}$' }
 
     MerchantIdPath:
       name: merchantId
@@ -2143,6 +2418,35 @@ components:
       example: cnl-final-001
 
   responses:
+    V1Unauthorized:
+      description: '`unauthorized` — falta `Authorization: Bearer ms_...`, es errónea o la key está revocada.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/V1Error' }
+    V1BadRequest:
+      description: '`validation_error` (importe entero ≥ 1) o `invalid_idempotency_key`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/V1Error' }
+    V1NotFound:
+      description: '`not_found` — el pago no existe o es de otro merchant.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/V1Error' }
+    V1Conflict:
+      description: |
+        La operación no cabe en el estado del pago: `invalid_status`,
+        `capture_required`, `already_captured`, `amount_too_large`,
+        `invalid_amount`, `currency_mismatch`, `payment_not_processed`; o hay otra
+        en curso: `payment_busy`, `operation_in_progress`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/V1Error' }
+    V1ProcessorDeclined:
+      description: '`processor_declined` — Paylands o el banco rechazaron la operación.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/V1Error' }
 
     Unauthorized:
       description: Credenciales ausentes o inválidas.
@@ -2182,6 +2486,103 @@ components:
               message: { type: string, const: processor_declined }
 
   schemas:
+    V1CheckoutSessionCreate:
+      type: object
+      required: [amount, currency]
+      additionalProperties: false
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Importe en céntimos (entero). `4999` = 49,99 €.
+        currency:
+          type: string
+          enum: [EUR]
+          description: Divisa (hoy solo EUR, ver SUPPORTED_CURRENCIES).
+        reference:
+          type: [string, 'null']
+          maxLength: 128
+          description: Tu referencia (nº de pedido). Vuelve en el webhook como `merchantReference`.
+        returnUrl:
+          type: [string, 'null']
+          format: uri
+          pattern: '^https?://'
+          description: A dónde vuelve el comprador (se añaden `paymentId` y `result`).
+        webhookUrl:
+          type: [string, 'null']
+          format: uri
+          pattern: '^https://'
+          description: Destino de los webhooks de este pago (si no, el de la ficha del merchant).
+
+    V1CheckoutSession:
+      type: object
+      properties:
+        id: { type: string, description: 'Id del pago (paymentId).' }
+        object: { type: string, const: checkout_session }
+        status:
+          type: string
+          enum: [open, processing, complete, expired]
+          description: Estado de la sesión.
+        result:
+          type: string
+          enum: [pending, succeeded, failed]
+          description: Resultado del pago (el mismo que recibe `onResult` y la returnUrl).
+        paymentStatus: { $ref: '#/components/schemas/TransactionStatus' }
+        amount: { type: integer }
+        currency: { type: string }
+        reference: { type: [string, 'null'] }
+        url:
+          type: string
+          format: uri
+          description: URL del checkout (embeber con `/v1/monetiser.js` o abrir a pantalla completa).
+        returnUrl: { type: [string, 'null'] }
+        webhookUrl: { type: [string, 'null'] }
+        expiresAt: { type: string, format: date-time, description: 'Caduca a los 30 min.' }
+        createdAt: { type: string, format: date-time }
+
+    V1Payment:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, const: payment }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        result: { type: string, enum: [pending, succeeded, failed] }
+        amount: { type: integer }
+        currency: { type: string }
+        reference: { type: [string, 'null'] }
+        capturedAmount: { type: integer, description: 'Céntimos capturados (cobrados).' }
+        refundedAmount: { type: integer, description: 'Céntimos devueltos.' }
+        card:
+          type: [object, 'null']
+          description: Tarjeta TRUNCADA (permitido por PCI DSS).
+          properties:
+            brand: { type: [string, 'null'] }
+            last4: { type: [string, 'null'] }
+            country: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    V1AmountRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Céntimos. Si no se envía, el total pendiente (capturar) o disponible (devolver).
+        reason: { type: string, maxLength: 200 }
+
+    V1Error:
+      type: object
+      properties:
+        success: { type: boolean, const: false }
+        error: { type: string, description: 'Código estable (ver cada respuesta).' }
+        message: { type: string }
+        details:
+          type: array
+          items: { type: string }
+          description: Solo en `validation_error`.
+
 
     AmountOfMoney:
       type: object

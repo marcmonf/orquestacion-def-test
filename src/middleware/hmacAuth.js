@@ -200,4 +200,5 @@ async function hmacAuth(req, res, next) {
 }
 
 module.exports = hmacAuth;
+module.exports.merchantIsSuspended = merchantIsSuspended;   // lo reutiliza la API v1
 module.exports._clearStatusCache = () => statusCache.clear();

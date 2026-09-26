@@ -254,7 +254,7 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 | ~~test-checkout.html no carga con iframe~~ | ✅ **RESUELTO — 26 sep 2026** | La causa era la CSP (JavaScript en línea bloqueado), no el iFrame: ver §4. Ahora además enseña el aviso `checkout.result` que recibiría la web del comercio. |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **401/401** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **416/416** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -1272,10 +1272,71 @@ real: guardar la Sociedad y recargar; emitir sin datos del cliente → mensaje c
 falta y 0 facturas; rellenar "Tarifa" sin activarla → contrato inactivo con los datos
 fiscales; emitir → `A-2026-0001` con la tarifa del plan.
 
-**Pendiente (Fase 1 en adelante, ver informe):** entorno de producción separado, API
-simplificada para el comercio (con snippet `monetiser.js`), 2FA de superadmin, routing
-del portal conectado al flujo real, conector #2. `RETURNMAC` (respuesta del alta del
-Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se retira.
+#### API v1 — la integración sencilla para el comercio (Fase 2)
+
+**Decisión de Marcos que la guía:** API simple, pero **siempre PCI DSS SAQ A** con el
+iFrame de los campos de Paylands: Monetiser (y el comercio) nunca tocan la tarjeta.
+
+**Qué es, en sencillo.** Antes, integrar exigía mandar un JSON anidado de estilo
+Worldline (`order.amountOfMoney.amount`, `feedbacks.returnUrl`…), el merchantId en la
+URL y en una cabecera, y montar el iFrame a mano. Ahora son tres piezas:
+1. El servidor del comercio llama a `POST /v1/checkout-sessions` con
+   `Authorization: Bearer ms_...` y `{ "amount": 4999, "currency": "EUR" }` → recibe
+   una `url`.
+2. Su web la muestra con una línea (`/v1/monetiser.js` → `Monetiser.mount(...)`) o
+   redirige a ella.
+3. Su servidor recibe el webhook firmado (o consulta `GET /v1/payments/:id`) y da el
+   pedido por pagado. Capturar, devolver y anular: `POST /v1/payments/:id/capture |
+   refund | cancel`.
+
+**Qué hay debajo.** Nada nuevo en el camino del dinero: una sesión v1 es un Hosted
+Checkout idéntico al de la API antigua (mismas utilidades de sesión, compartidas en
+`src/services/checkoutSessionService.js`), y capture/refund/cancel usan el mismo
+`paymentLifecycleService` (bloqueo e idempotencia). La API antigua sigue igual. En
+openapi las rutas v1 están como `beta` solo porque la forma de pedirlo es nueva.
+
+**Decisiones técnicas:**
+- **El secreto identifica al merchant**: se busca por su SHA-256 (índice nuevo en
+  `merchantapikeys.secretHash`). No hace falta mandar el merchantId. El `mk_...` da un
+  401 que explica la diferencia. Merchant suspendido → 403.
+- **Sin CORS en `/v1/*`**: se llama solo desde servidor. Si alguien pone el secreto en
+  su web, el navegador bloquea la llamada: falla en desarrollo en vez de quedar
+  expuesto (comprobado en Chromium).
+- **Rechaza cualquier dato de tarjeta** (`400 card_data_not_accepted`).
+- **Importe estricto**: entero en céntimos; un `"100"` en texto se rechaza.
+- **Idempotency-Key opcional**: al crear, la misma clave devuelve la misma sesión
+  (índice único parcial `merchantId+idempotencyKey` en transactions); con otros datos
+  → 409. En capture/refund/cancel, si no llega se genera una por petición (como en el
+  backoffice). Mandarla es lo recomendado.
+- **`monetiser.js`**: sin dependencias; solo acepta URLs y avisos del origen de
+  Monetiser (el del propio script). Se sirve con `Cross-Origin-Resource-Policy:
+  cross-origin`: helmet pone `same-origin` y el navegador no dejaría cargarlo desde
+  la web del comercio.
+- Mismo vocabulario de resultado en todas partes: `result` = `succeeded` | `failed` |
+  `pending` en la API, en `onResult` y en la vuelta a la `returnUrl`.
+
+**Para el comercio:** guía paso a paso en `docs/integracion.md` (con ejemplos en curl y
+Node, verificación de la firma del webhook, estados, errores y tarjeta de prueba).
+Colección Postman nueva en `postman/Monetiser.postman_collection.json` (la anterior
+apuntaba a rutas retiradas: `/initialize`, `/orchestration`, `/rules`). Contrato en
+`openapi.yaml` v2.12.0 (etiqueta *API v1*).
+
+**Verificación:** **416/416** tests (+15 en `tests/integration/v1Api.test.js`: auth,
+suspendido, sin tarjeta, validación, idempotencia y su aislamiento por merchant,
+estados de la sesión, errores estables del ciclo de vida). En Chromium real, con una
+web de "comercio" en OTRO origen: carga `monetiser.js`, embebe el checkout de una
+sesión creada con la API (se ve el importe), `onResult` recibe el resultado al
+terminar, una URL ajena se rechaza, y la API v1 llamada desde esa web queda bloqueada
+por el navegador.
+
+**⚠️ Tras desplegar (Marcos):** repetir la prueba de sandbox de la "Vuelta del
+comprador" usando la colección Postman nueva (petición 1 → abrir la `url` → pagar →
+petición 3 → `authorized` → petición 4 capturar).
+
+**Pendiente (ver informe):** entorno de producción separado, 2FA de superadmin,
+routing del portal conectado al flujo real, conector #2, fijar el origen exacto del
+aviso `postMessage` usando `monetiser.js`. `RETURNMAC` (respuesta del alta del Hosted
+Checkout de la API antigua) no se usa en ningún sitio: la API v1 no lo incluye.
 
 ---
 
@@ -1314,6 +1375,7 @@ Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se reti
 | Rate limits por merchant autenticado y por pago | `rateLimiterPayments.js`, `rateLimiterCheckout.js`, `rateLimiterLogin.js` | Un tercero sin credenciales ya no puede agotar el cupo de un merchant; login limitado por IP+email y por email. |
 | Revocación de sesiones (26 sep 2026) | `src/middleware/backofficeAuth.js`, `src/middleware/portalAuth.js` | Versión de sesión (`tokenVersion` ↔ claim `tv`) comprobada en cada petición contra el usuario activo; se sube al desactivar, cambiar permisos/nodo, cambiar o resetear la contraseña y al cerrar sesión. Rol/alcance/nodo leídos de la base de datos. Mongo caído → 503. |
 | Permisos por nodo en la gestión de usuarios del portal (26 sep 2026) | `src/routes/portalRoutes.js`, `src/utils/hierarchyScope.js` | Un admin restringido solo ve/gestiona usuarios de su subárbol, no cambia su propio nodo y no deja a nadie sin restricción. |
+| API v1 solo desde servidor y sin tarjeta (26 sep 2026) | `src/routes/v1.js`, `src/middleware/apiKeyBearer.js`, `index.js` | `Bearer ms_...` (el secreto identifica al merchant; suspendido → 403), sin CORS (no usable desde navegador), rechaza datos de tarjeta, importes enteros estrictos, rate limit por IP y por merchant. |
 | Página de resultado firmada (26 sep 2026) | `src/utils/checkoutResult.js`, `src/routes/checkoutResult.js` | URL firmada (HMAC con `HPP_SIGNING_SECRET`) y con caducidad (24 h la página, 1 h la consulta de estado), firmas distintas para cada una; resultado siempre del estado guardado; CSP sin JavaScript en línea; límite por IP y por paymentId; fuera del filtro CORS (es destino de navegación, y así ninguna otra web puede leer su estado). |
 
 ### Pendientes
@@ -1413,7 +1475,22 @@ Nada pendiente. La configuración de Render no se toca desde aquí; la gestiona 
 
 ## 9. Referencia rápida de endpoints
 
-### Merchant (pagos)
+### API v1 — integración recomendada (26 sep 2026)
+
+```
+POST /v1/checkout-sessions               → Crear sesión de pago → { id, url }   (Bearer ms_...)
+GET  /v1/checkout-sessions/:id           → Estado de la sesión
+GET  /v1/payments/:id                    → El pago (capturado/devuelto, tarjeta truncada)
+POST /v1/payments/:id/capture            → Capturar (total o { amount })
+POST /v1/payments/:id/refund             → Devolver (total o { amount })
+POST /v1/payments/:id/cancel             → Anular una autorización sin capturar
+GET  /v1/monetiser.js                    → Snippet para embeber el checkout (Monetiser.mount)
+```
+
+Auth: `Authorization: Bearer <secreto ms_...>`. Solo desde servidor (sin CORS). Guía:
+`docs/integracion.md`. Postman: `postman/Monetiser.postman_collection.json`.
+
+### Merchant (pagos) — API anterior (sigue funcionando)
 
 ```
 POST /:merchantId/payments/hosted                        → Crear Hosted Checkout (sin datos de tarjeta)
