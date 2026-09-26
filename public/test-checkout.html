@@ -55,6 +55,20 @@
       cursor: pointer;
     }
     #load-btn:hover { background: #333; }
+    #events {
+      width: 100%;
+      max-width: 480px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #333;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 <body>
@@ -63,23 +77,18 @@
 
   <div id="url-bar">
     <input id="url-input" type="text" placeholder="https://orquestacion-def-test.onrender.com/hpp/..." />
-    <button id="load-btn" onclick="loadIframe()">Cargar</button>
+    <button id="load-btn" type="button">Cargar</button>
   </div>
 
   <div id="iframe-wrapper">
     <iframe id="checkout-frame" src="about:blank" allow="payment *"></iframe>
   </div>
 
-  <script>
-    function loadIframe() {
-      const url = document.getElementById('url-input').value.trim();
-      if (!url) return;
-      document.getElementById('checkout-frame').src = url;
-    }
-    // Permitir cargar con Enter
-    document.getElementById('url-input').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') loadIframe();
-    });
-  </script>
+  <!-- Lo que recibiría la web del comercio: el aviso postMessage de la página de resultado. -->
+  <div id="events">Aviso del checkout a la web del comercio: (todavía ninguno)</div>
+
+  <!-- Script EXTERNO y ruta ABSOLUTA: la CSP por defecto (helmet) bloquea el
+       JavaScript en línea; por eso el botón "Cargar" no hacía nada. -->
+  <script src="/test-checkout.js" defer></script>
 </body>
 </html>

@@ -397,13 +397,17 @@
               const chargeData = await chargeRes.json();
 
               if (chargeData.success && chargeData.requires3DS && chargeData.threeDsUrl) {
-                // Banco requiere 3DS — cargar el challenge en este mismo iframe
+                // Banco requiere 3DS — cargar el challenge en este mismo iframe.
+                // Al terminar, Paylands trae al comprador a la página de
+                // resultado (url_ok / url_ko).
                 window.location.href = chargeData.threeDsUrl;
-              } else if (chargeData.success && !chargeData.requires3DS) {
-                // Pago aprobado directamente sin 3DS
-                showStatus('success', '¡Pago completado correctamente!');
-                document.getElementById('pay-btn').style.display = 'none';
+              } else if (typeof chargeData.resultUrl === 'string' && chargeData.resultUrl.startsWith('/checkout/result/')) {
+                // Resultado sin 3DS (o pago ya cerrado por un error): la misma
+                // página de resultado que tras el 3DS — avisa a la web del
+                // comercio y ofrece volver a la tienda.
+                window.location.href = chargeData.resultUrl;
               } else {
+                // Error ANTES de cobrar: el pago sigue abierto y se puede reintentar.
                 showStatus('error', chargeData.message || 'No se pudo iniciar el pago.');
                 setLoading(false);
               }

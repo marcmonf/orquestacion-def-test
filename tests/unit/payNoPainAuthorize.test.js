@@ -102,6 +102,17 @@ describe('payNoPainConnector.authorize() — S2S tokens-only', () => {
     expect(sent.source_uuid).toBe('CARD-UUID-XYZ');
     expect(sent.operative).toBe('DEFERRED');
     expect(sent.secure).toBe(true);
+
+    // Vuelta del comprador tras el 3DS: url_ok / url_ko = página de resultado
+    // de Monetiser, firmada (antes no se enviaban y se quedaba en Paylands).
+    const checkoutResult = require('../../src/utils/checkoutResult');
+    for (const [field, outcome] of [['url_ok', 'ok'], ['url_ko', 'ko']]) {
+      const u = new URL(sent[field]);
+      expect(u.pathname).toBe('/checkout/result/p2');
+      expect(u.searchParams.get('outcome')).toBe(outcome);
+      expect(u.searchParams.get('sig')).toMatch(/^[0-9a-f]{64}$/);
+      expect(checkoutResult.verifyPage('p2', Object.fromEntries(u.searchParams))).toEqual({ ok: true, outcome });
+    }
   });
 
   test('Paylands responde no-200 → declined con el motivo', async () => {

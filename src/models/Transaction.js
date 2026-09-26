@@ -53,6 +53,11 @@ const transactionSchema = new mongoose.Schema({
   hostedCheckoutId:      String,
   hostedTokenizationId:  String,
   hostedFieldsSessionId: String,
+  // Caducidad de la sesión de pago (30 min desde la creación). NO estaba
+  // declarado: Mongoose lo descartaba en silencio al guardar (mismo bug que
+  // lastWebhookAt), así que /hpp no caducaba nunca y GET status devolvía
+  // `expired:false` siempre, aunque la API anunciaba `session.expiresAt`.
+  sessionExpiresAt:      Date,
 
   // Traza del último webhook entrante del adquirente.
   // IMPORTANTE: estos campos NO estaban declarados y Mongoose los descartaba

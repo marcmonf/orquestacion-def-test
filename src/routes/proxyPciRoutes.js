@@ -22,6 +22,13 @@
  *   Browser carga checkoutUrl en iFrame secundario
  *   Usuario introduce tarjeta y autentica con banco (3DS)
  *   Paylands → POST /webhooks/paynopain → Monetiser actualiza MongoDB
+ *   Paylands → redirige al comprador a url_ok/url_ko = página de resultado
+ *              (/checkout/result/:paymentId, ver routes/checkoutResult.js)
+ *
+ * Si el cobro termina SIN 3DS (o falla después de llamar a Paylands), la
+ * respuesta lleva `resultUrl` y el iFrame navega a esa misma página de
+ * resultado: el comprador y la web del comercio se enteran igual en los dos
+ * caminos.
  */
 
 const express    = require('express');
@@ -31,6 +38,7 @@ const rateLimiter = require('../middleware/rateLimiterCheckout');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
 const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
+const { resultPath } = require('../utils/checkoutResult');
 const logger      = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['initialized', 'hosted_pending'];
@@ -230,8 +238,14 @@ router.post('/charge', rateLimiter, async (req, res) => {
       });
     }
 
-    // Sin 3DS: pago aprobado o rechazado directamente
-    const finalStatus = chargeResult.success ? 'authorized' : 'declined';
+    // Sin 3DS: pago aprobado, rechazado o error técnico. Antes cualquier fallo
+    // (credenciales mal puestas, Paylands caído, 4xx de validación) se guardaba
+    // como 'declined' y al comprador se le decía "rechazado por el banco": las
+    // analíticas contaban errores propios como rechazos del banco. El conector
+    // marca los fallos técnicos con `error`.
+    const finalStatus = chargeResult.success
+      ? 'authorized'
+      : (chargeResult.error ? 'error' : 'declined');
     await Transaction.updateOne(
       { paymentId, merchantId, status: 'processing' },
       { $set: {
@@ -251,8 +265,12 @@ router.post('/charge', rateLimiter, async (req, res) => {
     if (!chargeResult.success) {
       return res.status(200).json({
         success: false,
-        message: 'Pago rechazado por el banco.',
+        message: finalStatus === 'error'
+          ? 'No se ha podido procesar el pago.'
+          : 'Pago rechazado por el banco.',
         paymentId,
+        status:    finalStatus,
+        resultUrl: resultPath(paymentId, 'ko'),
       });
     }
 
@@ -260,6 +278,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
       success:   true,
       paymentId: tx.paymentId,
       status:    finalStatus,
+      resultUrl: resultPath(tx.paymentId, 'ok'),
     });
 
   } catch (err) {
@@ -270,19 +289,27 @@ router.post('/charge', rateLimiter, async (req, res) => {
 
     if (!chargeStarted) {
       await releaseReservation();
-    } else {
-      // La llamada a Paylands pudo llegar a crear la orden: estado 'error'. Si
-      // Paylands notifica después el resultado, el webhook lo corrige (ver
-      // utils/paymentStatus: 'error' admite pasar a authorized/declined).
-      try {
-        await Transaction.updateOne(
-          { paymentId, merchantId, status: 'processing' },
-          { $set: { status: 'error', updatedAt: new Date() } }
-        );
-      } catch (_) { /* no-op */ }
+      // El pago vuelve a su estado inicial: el comprador puede reintentarlo.
+      return res.status(500).json({ success: false, message: 'Error al procesar el pago' });
     }
 
-    return res.status(500).json({ success: false, message: 'Error al procesar el pago' });
+    // La llamada a Paylands pudo llegar a crear la orden: estado 'error'. Si
+    // Paylands notifica después el resultado, el webhook lo corrige (ver
+    // utils/paymentStatus: 'error' admite pasar a authorized/declined).
+    try {
+      await Transaction.updateOne(
+        { paymentId, merchantId, status: 'processing' },
+        { $set: { status: 'error', updatedAt: new Date() } }
+      );
+    } catch (_) { /* no-op */ }
+
+    // Ya no se puede reintentar este pago: se lleva al comprador a la página de
+    // resultado en vez de decirle "inténtalo de nuevo" sobre un pago cerrado.
+    return res.status(500).json({
+      success:   false,
+      message:   'Error al procesar el pago',
+      resultUrl: resultPath(paymentId, 'ko'),
+    });
   }
 });
 

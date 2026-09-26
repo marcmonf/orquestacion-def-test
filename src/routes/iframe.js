@@ -2,14 +2,16 @@
 
 'use strict';
 const express  = require('express');
-const path     = require('path');
-const fs       = require('fs');
 const router   = express.Router({ mergeParams: true });
 
 const Transaction = require('../models/Transaction');
 const Merchant    = require('../models/Merchant');
 const hppSigner   = require('../utils/hppSigner');
 const { getCurrencyConfig, toMajorUnits } = require('../utils/currencyConfig');
+// Escapado y saneado compartidos con la página de resultado (utils/checkoutView).
+const {
+  safeColor, safeLogoUrl, jsonForScript, readHtml, publicFile, brandedError,
+} = require('../utils/checkoutView');
 
 // Retirado el 26 sep 2026:
 //  - POST /iframe-process (y POST /iframe): endpoint PÚBLICO, sin autenticación,
@@ -50,39 +52,6 @@ function pciClientUrl() {
     : 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
 }
 
-// Solo se aceptan colores CSS hexadecimales: el valor acaba en una propiedad CSS
-// del iFrame y lo edita un operador; nada de expresiones arbitrarias.
-function safeColor(value, fallback) {
-  return /^#[0-9a-fA-F]{3,8}$/.test(String(value || '')) ? value : fallback;
-}
-
-// Logo: solo https (o ruta propia absoluta). Nunca javascript:, data:, etc.
-function safeLogoUrl(value) {
-  const v = String(value || '');
-  if (/^https:\/\/[^\s"'<>]+$/i.test(v)) return v;
-  if (/^\/[A-Za-z0-9._\-/]+$/.test(v)) return v;
-  return '/Logo_Monetiser.png';
-}
-
-// JSON seguro para incrustar dentro de <script>: sin "<" literal no se puede
-// cerrar la etiqueta (</script>) ni abrir comentarios HTML.
-function jsonForScript(value) {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-}
-
-function readHtml(abs) {
-  try {
-    return fs.readFileSync(abs, 'utf8');
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Inyecta window.__MONETISER_RUNTIME__ (lo lee iframe.html) justo después de
  * <head>, para que esté disponible antes que cualquier otro script.
@@ -113,20 +82,6 @@ function injectRuntime(html, branding, runtime) {
   return runtimeScript + '\n' + html;
 }
 
-function brandedError(res, code) {
-  const map = {
-    400: '400.html',
-    403: '403.html',
-    404: '404.html',
-    409: '409.html',
-    410: '410.html',
-    500: '500.html'
-  };
-  const abs = path.join(__dirname, '../../public/errors', map[code] || '403.html');
-  const html = readHtml(abs);
-  return res.status(code).send(html || String(code));
-}
-
 // GET /:merchantId/iframe  (y /iframe)
 router.get('/', async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP_HEADER);
@@ -136,7 +91,7 @@ router.get('/', async (req, res) => {
 
   // Carga base (sin params) para pruebas locales: sin transacción asociada.
   if (!paymentId && !signature && !exp) {
-    const base = readHtml(path.join(__dirname, '../../public/iframe.html'));
+    const base = readHtml(publicFile('iframe.html'));
     if (!base) return res.status(500).send('Error cargando iframe');
     return res.send(injectRuntime(base, {}, {}) || base);
   }
@@ -202,7 +157,7 @@ router.get('/', async (req, res) => {
       paymentId:  tx.paymentId
     };
 
-    const baseHtml = readHtml(path.join(__dirname, '../../public/iframe.html'));
+    const baseHtml = readHtml(publicFile('iframe.html'));
     if (!baseHtml) return res.status(500).send('Error cargando iframe');
     return res.send(injectRuntime(baseHtml, branding, runtime) || baseHtml);
 
