@@ -31,6 +31,10 @@ info:
         `PAYNOPAIN_SIGNATURE` → `500` (antes `200 ignored`: el evento se perdía).
       - **`GET /webhooks` y `POST /orchestration/decide`** pasan a ser internos
         (`X-Admin-Token`). `decide` acepta `bin` (6-8 dígitos), nunca el PAN.
+      - **Retiradas** las rutas internas con `X-Admin-Token` `/merchants`,
+        `/api-keys`, `/rules` y `/diag` (y el editor viejo `/admin/index.html`):
+        todo eso se gestiona en `/admin` con sesión de usuario (plano backoffice,
+        fuera de esta spec).
       - **Alta de merchant:** el servidor genera el secreto de firma de webhooks y lo
         devuelve UNA vez (`webhookSigningSecret`); ya no se acepta `signingSecret`.
       - Retirado `POST /iframe-process` (público, aceptaba PAN y aprobaba con el
@@ -193,8 +197,6 @@ tags:
       end-to-end contra Paylands real. Ver `x-madurez` y la nota de scope PCI arriba.
   - name: Reglas de routing
     description: Motor de reglas que decide a qué conector va cada transacción.
-  - name: Administración
-    description: Alta de merchants y gestión de API keys. Requiere `X-Admin-Token`.
   - name: Observabilidad
     description: Consulta de transacciones y eventos.
   - name: Interno
@@ -760,316 +762,8 @@ paths:
           description: Error interno.
 
   # ──────────────────────────────────────────────────────────────────────
-  # ADMINISTRACIÓN
-  # ──────────────────────────────────────────────────────────────────────
-
-  /merchants:
-    post:
-      tags: [Administración]
-      summary: Crear un merchant
-      operationId: createMerchant
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: |
-        Los secretos (`signingSecret`, etc.) **nunca** se devuelven en la respuesta.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MerchantCreateRequest'
-            examples:
-              ejemplo:
-                summary: Alta verificada
-                value:
-                  merchantId: test-m2
-                  name: Comercio de prueba
-                  country: ES
-                  plan: starter
-                  status: active
-                  webhookUrl: https://example.com/webhooks/monetiser
-      responses:
-        '201':
-          description: Merchant creado (sin secretos en la respuesta).
-        '400':
-          description: Datos inválidos.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-        '409':
-          description: Ya existe un merchant con ese `merchantId`.
-    get:
-      tags: [Administración]
-      summary: Listar merchants
-      operationId: listMerchants
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      parameters:
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 20 }
-        - name: q
-          in: query
-          description: Búsqueda por texto.
-          schema: { type: string }
-      responses:
-        '200':
-          description: Lista paginada.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-
-  /merchants/{merchantId}:
-    get:
-      tags: [Administración]
-      summary: Obtener un merchant
-      operationId: getMerchant
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-      responses:
-        '200':
-          description: Ficha del merchant (sin secretos).
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-        '404':
-          description: No existe.
-    patch:
-      tags: [Administración]
-      summary: Actualizar un merchant
-      operationId: updateMerchant
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MerchantPatchRequest'
-      responses:
-        '200':
-          description: Actualizado.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-        '404':
-          description: No existe.
-
-  /api-keys/{merchantId}:
-    post:
-      tags: [Administración]
-      summary: Crear una API key para un merchant
-      operationId: createApiKey
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: |
-        **El `rawSecret` se devuelve UNA SOLA VEZ**, en esta respuesta. No se puede
-        recuperar después: en Mongo solo queda su hash.
-
-        Este `rawSecret` es lo que va en el header `x-api-key` del modo simple
-        (desde el 4 ago 2026) y lo que se hashea para firmar en modo `HmacV1`.
-        El `rawKeyId` es público: identifica la credencial, no la autoriza.
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                label:
-                  type: string
-                  description: Etiqueta para identificar la key.
-                expiresAt:
-                  type: string
-                  format: date-time
-                  description: Opcional. Se verifica en cada validación.
-      responses:
-        '201':
-          description: Key creada. Única vez que se ve el `rawSecret`.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKeyCreateResponse'
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-    get:
-      tags: [Administración]
-      summary: Listar las API keys activas de un merchant
-      operationId: listApiKeys
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-      responses:
-        '200':
-          description: Lista de keys (sin secretos ni hashes).
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-
-  /api-keys/{merchantId}/{keyId}:
-    delete:
-      tags: [Administración]
-      summary: Revocar una API key
-      operationId: revokeApiKey
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: 'Marca la key como `active: false` y sella `revokedAt`. No la borra.'
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-        - name: keyId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Revocada.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-        '404':
-          description: No existe.
-
-  # ──────────────────────────────────────────────────────────────────────
   # REGLAS DE ROUTING
   # ──────────────────────────────────────────────────────────────────────
-
-  /rules/{merchantId}:
-    get:
-      tags: [Reglas de routing]
-      summary: Obtener la política de routing de un merchant
-      operationId: getPolicy
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: No depende de ningún feature flag. Siempre disponible.
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-      responses:
-        '200':
-          description: Política actual.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-    put:
-      tags: [Reglas de routing]
-      summary: Crear o actualizar la política de routing
-      operationId: upsertPolicy
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: |
-        No depende de ningún feature flag.
-
-        **Aviso de auditoría:** la entrada de auditoría de este cambio solo se
-        escribe si `FEATURE_RULE_AUDIT=1`. Con el flag apagado el cambio se guarda
-        **sin rastro de autor**, y ese histórico no se puede reconstruir después.
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-        - name: x-admin-actor
-          in: header
-          required: false
-          description: |
-            Actor que queda registrado en la auditoría. Desde el dashboard se
-            rellena solo con el email de la sesión. Si falta, se guarda `unknown`.
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/Policy' }
-      responses:
-        '200':
-          description: Guardada.
-        '400':
-          description: Política inválida.
-        '401':
-          $ref: '#/components/responses/UnauthorizedAdmin'
-
-  /rules/validate:
-    post:
-      tags: [Reglas de routing]
-      summary: Validar una política sin guardarla
-      operationId: validatePolicy
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/Policy' }
-      responses:
-        '200':
-          description: Política válida (devuelve la versión normalizada).
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  normalized: { $ref: '#/components/schemas/Policy' }
-        '400':
-          description: Política inválida.
-
-  /rules/try:
-    post:
-      tags: [Reglas de routing]
-      summary: Probar una política contra una transacción de ejemplo (dry-run)
-      operationId: tryPolicy
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: |
-        **Requiere `FEATURE_RULE_TRY=1`.** Si el flag no está, devuelve
-        `404 {"success": false, "error": "disabled"}` — no es un error de la
-        petición, es la función apagada.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                policy: { $ref: '#/components/schemas/Policy' }
-                sample:
-                  type: object
-                  additionalProperties: true
-      responses:
-        '200':
-          description: Decisión que tomaría el motor, con explicación legible.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  decision: { $ref: '#/components/schemas/RuleDecision' }
-                  explainHuman:
-                    type: array
-                    items: { type: string }
-        '404':
-          $ref: '#/components/responses/FeatureDisabled'
-
-  /rules/{merchantId}/audit:
-    get:
-      tags: [Reglas de routing]
-      summary: Histórico de cambios de la política
-      operationId: getPolicyAudit
-      x-madurez: estable
-      security: [{ AdminToken: [] }]
-      description: '**Requiere `FEATURE_RULE_AUDIT=1`.**'
-      parameters:
-        - $ref: '#/components/parameters/MerchantIdPath'
-        - name: limit
-          in: query
-          schema: { type: integer, default: 20 }
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-      responses:
-        '200':
-          description: Entradas de auditoría (hashes previo/siguiente, actor, ip, campos cambiados).
-        '404':
-          $ref: '#/components/responses/FeatureDisabled'
 
   /orchestration/decide:
     post:
@@ -2135,8 +1829,9 @@ components:
       in: header
       name: X-Admin-Token
       description: |
-        Token de administración (`ADMIN_TOKEN` del entorno). Da acceso a la gestión
-        de merchants, API keys y reglas de routing de **todos** los merchants.
+        Token de administración (`ADMIN_TOKEN` del entorno). Desde v2.10.0 solo
+        protege `GET /webhooks`, `POST /orchestration/decide` y la recuperación de
+        cuentas de backoffice. Sin `ADMIN_TOKEN` configurado responden 503.
 
     PortalBearer:
       type: http
@@ -2214,9 +1909,6 @@ components:
                   `missing_date_header`, `invalid_date_header`,
                   `date_out_of_tolerance_window`, `key_not_found`, `invalid_signature`.
 
-    UnauthorizedAdmin:
-      description: Falta el header `X-Admin-Token` o no es válido.
-
     BadIdempotencyKey:
       description: |
         Falta la `Idempotency-Key` o su formato no cumple `^[a-zA-Z0-9-]{8,64}$`.
@@ -2234,18 +1926,6 @@ components:
             properties:
               success: { type: boolean, const: false }
               message: { type: string, const: processor_declined }
-
-    FeatureDisabled:
-      description: |
-        Función desactivada por feature flag — **no es un error de tu petición**.
-        Falta poner el flag correspondiente a `1` en el entorno.
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              success: { type: boolean, const: false }
-              error: { type: string, const: disabled }
 
   schemas:
 
@@ -2739,115 +2419,6 @@ components:
             cancelled:
               type: boolean
               description: Solo en `payment.cancelled`.
-
-    ApiKeyCreateResponse:
-      type: object
-      description: |
-        **El `rawSecret` solo se ve aquí, esta única vez.**
-      properties:
-        success: { type: boolean }
-        rawKeyId:
-          type: string
-          description: 'Identificador PÚBLICO (`mk_...`). Va en la cabecera Authorization del modo HMAC. NO es una credencial: en `x-api-key` va el secreto (`ms_...`).'
-          example: mk_00000000000000000000000000000000
-        rawSecret:
-          type: string
-          description: |
-            Secreto (`ms_...`). **No se puede recuperar después.** Se usa para
-            calcular la firma HMAC (hasheado con SHA-256 antes — ver `HmacV1`).
-        keyId: { type: string }
-        label: { type: string }
-        expiresAt: { type: string, format: date-time, nullable: true }
-
-    MerchantCreateRequest:
-      type: object
-      required: [merchantId, name, country]
-      properties:
-        merchantId:
-          type: string
-          description: Único. Es el que viaja en las URLs y en `x-merchant-id`. 3-64 caracteres `[A-Za-z0-9_-]`.
-          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$'
-        name: { type: string }
-        country: { type: string, description: 'ISO 3166-1 alpha-2 (ej. `ES`).' }
-        plan:
-          type: string
-          enum: [free, starter, growth, enterprise]
-        status:
-          type: string
-          enum: [active, suspended, pending]
-        webhookUrl:
-          type: string
-          format: uri
-          description: Webhook por defecto del merchant.
-        webhookSigningSecret:
-          type: string
-          readOnly: true
-          description: |
-            Secreto (`whsec_...`) con el que se firman TODOS sus webhooks salientes
-            (cabecera `Monetiser-Signature`). Lo GENERA el servidor en el alta y se
-            devuelve UNA sola vez en la respuesta de creación. Ya no se acepta
-            `signingSecret` en la petición (v2.10.0).
-        serviceUuid:
-          type: string
-          description: 'UUID del servicio en Paylands. Va al campo `service` de POST /payment.'
-        templateUuid:
-          type: string
-          description: 'Plantilla de la carta de pago. Va a `template_uuid`.'
-        branding:
-          type: object
-          properties:
-            logoUrl: { type: string, format: uri }
-            brandColor: { type: string }
-            name: { type: string }
-
-    MerchantPatchRequest:
-      type: object
-      description: Campos actualizables. Todos opcionales.
-      properties:
-        name: { type: string }
-        country: { type: string }
-        plan: { type: string, enum: [free, starter, growth, enterprise] }
-        status: { type: string, enum: [active, suspended, pending] }
-        webhookUrl: { type: string, format: uri }
-        serviceUuid: { type: string }
-        templateUuid: { type: string }
-        branding:
-          type: object
-          additionalProperties: true
-
-    Policy:
-      type: object
-      required: [merchantId, version, defaultConnector, rules]
-      description: Política de routing de un merchant.
-      properties:
-        merchantId: { type: string }
-        version: { type: string, enum: [v1] }
-        defaultConnector:
-          type: string
-          description: |
-            Conector por defecto si ninguna regla casa. **Por defecto `dummyCard`**
-            (el conector simulado) en merchants sin política propia.
-          example: dummyCard
-        rules:
-          type: array
-          items:
-            type: object
-            required: [id, when, action]
-            properties:
-              id: { type: string }
-              priority: { type: integer }
-              when:
-                type: object
-                description: |
-                  Condiciones. El motor evalúa: amount, currency, BIN,
-                  issuerCountry, scheme, cardType, method.
-                additionalProperties: true
-              action:
-                type: object
-                properties:
-                  route:
-                    type: string
-                    description: Conector al que enrutar.
 
     RuleDecision:
       type: object

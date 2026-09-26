@@ -622,7 +622,10 @@ router.get('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (
 router.post('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (req, res) => {
   try {
     const { label = '' } = req.body || {};
-    const result = await createApiKey(req.params.merchantId, label);
+    // Solo para merchants que existen (antes se creaban keys para cualquier id).
+    const exists = await Merchant.findOne({ merchantId: String(req.params.merchantId) }, { _id: 1 }).lean();
+    if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const result = await createApiKey(req.params.merchantId, String(label).slice(0, 100));
     return res.status(201).json({
       success:      true,
       message:      'API key creada. Guarda rawKeyId y rawSecret — no se podrán recuperar después.',
@@ -1034,7 +1037,7 @@ router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MOTOR DE REGLAS (routing por merchant) — solo superadmin
-// Absorbe el editor viejo (public/admin/index.html + app.js, con X-Admin-Token)
+// Absorbió el editor viejo (public/admin/index.html + app.js, con X-Admin-Token; retirado el 26 sep 2026)
 // como pestaña del dashboard nuevo. Reutiliza rulesController.js SIN cambios —
 // las rutas /rules con X-Admin-Token (adminAuth) siguen intactas por si algún
 // script externo las usa directamente.
