@@ -451,43 +451,103 @@ router.post('/users', requireRole('superadmin'), async (req, res) => {
   }
 });
 
-// PATCH /backoffice/users/:userId — actualizar rol/scope/nombre
-router.patch('/users/:userId', requireRole('superadmin'), async (req, res) => {
-  try {
-    const allowed = ['name','role','merchantScope','active'];
-    const update = {};
-    allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+const BACKOFFICE_ROLES = ['superadmin', 'admin', 'operator', 'viewer'];
 
-    if (update.role && !['superadmin','admin','operator','viewer'].includes(update.role)) {
+function publicBackofficeUser(user) {
+  const out = typeof user.toObject === 'function' ? user.toObject() : { ...user };
+  delete out.passwordHash; delete out.resetToken; delete out.resetTokenExpiry;
+  return out;
+}
+
+// PATCH /backoffice/users/:userId — actualizar nombre/rol/alcance/estado.
+//
+// 26 sep 2026: antes aceptaba cualquier valor (un merchantScope no-array, un
+// nombre vacío) y un superadmin podía degradarse o desactivarse a sí mismo por
+// aquí (el DELETE sí lo impedía), dejando la plataforma sin superadmin. Con eso
+// bloqueado siempre queda al menos uno: quien hace el cambio (activo y
+// superadmin, comprobado contra la base de datos en cada petición). Y el cambio
+// de rol o de alcance no tocaba las sesiones abiertas: el usuario seguía 12 h
+// con los permisos viejos. Ahora cualquier cambio de permisos o de estado
+// cierra sus sesiones (tokenVersion).
+router.patch('/users/:userId', requireRole('superadmin'), async (req, res) => {
+  const body = req.body || {};
+  const set = {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 100) {
+      return res.status(400).json({ success: false, error: 'invalid_name' });
+    }
+    set.name = body.name.trim();
+  }
+  if (body.role !== undefined) {
+    if (!BACKOFFICE_ROLES.includes(body.role)) {
       return res.status(400).json({ success: false, error: 'invalid_role' });
     }
+    set.role = body.role;
+  }
+  if (body.merchantScope !== undefined) {
+    const ok = Array.isArray(body.merchantScope) && body.merchantScope.length <= 500 &&
+      body.merchantScope.every(m => typeof m === 'string' && m.trim() && m.length <= 64);
+    if (!ok) return res.status(400).json({ success: false, error: 'invalid_merchant_scope' });
+    set.merchantScope = [...new Set(body.merchantScope.map(m => m.trim()))];
+  }
+  if (body.active !== undefined) {
+    if (typeof body.active !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'invalid_active' });
+    }
+    set.active = body.active;
+  }
+  if (!Object.keys(set).length) {
+    return res.status(400).json({ success: false, error: 'nothing_to_update' });
+  }
 
-    const user = await BackofficeUser.findByIdAndUpdate(
-      req.params.userId,
-      { ...update, updatedAt: new Date() },
-      { new: true, select: '-passwordHash -resetToken -resetTokenExpiry' }
-    );
+  try {
+    const user = await BackofficeUser.findById(req.params.userId);
     if (!user) return res.status(404).json({ success: false, error: 'user_not_found' });
 
-    return res.json({ success: true, user });
+    const isSelf = String(user._id) === String(req.backofficeUser.userId);
+    if (isSelf && set.role !== undefined && set.role !== user.role) {
+      return res.status(409).json({ success: false, error: 'cannot_change_own_role' });
+    }
+    if (isSelf && set.active === false) {
+      return res.status(409).json({ success: false, error: 'cannot_deactivate_yourself' });
+    }
+
+    // Un superadmin ve todo, siempre (igual que en el alta).
+    if ((set.role || user.role) === 'superadmin') set.merchantScope = ['all'];
+
+    const sameScope = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+    const permissionsChanged =
+      (set.role !== undefined && set.role !== user.role) ||
+      (set.active !== undefined && set.active !== (user.active !== false)) ||
+      (set.merchantScope !== undefined && !sameScope(set.merchantScope, user.merchantScope));
+
+    Object.assign(user, set);
+    if (permissionsChanged) user.tokenVersion = (Number(user.tokenVersion) || 0) + 1;
+    await user.save();
+
+    return res.json({ success: true, user: publicBackofficeUser(user), sessionsRevoked: permissionsChanged });
   } catch (err) {
+    if (err && err.name === 'CastError') return res.status(404).json({ success: false, error: 'user_not_found' });
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
-// DELETE /backoffice/users/:userId — desactivar (soft delete)
+// DELETE /backoffice/users/:userId — desactivar (soft delete). Cierra en el acto
+// todas sus sesiones (antes el usuario desactivado seguía dentro hasta 12 h).
 router.delete('/users/:userId', requireRole('superadmin'), async (req, res) => {
   try {
     // No se puede eliminar a uno mismo
     const user = await BackofficeUser.findById(req.params.userId);
     if (!user) return res.status(404).json({ success: false, error: 'user_not_found' });
-    if (user.email === req.backofficeUser.email) {
+    if (String(user._id) === String(req.backofficeUser.userId) || user.email === req.backofficeUser.email) {
       return res.status(409).json({ success: false, error: 'cannot_delete_yourself' });
     }
     user.active = false;
+    user.tokenVersion = (Number(user.tokenVersion) || 0) + 1;
     await user.save();
     return res.json({ success: true, message: 'user_deactivated', email: user.email });
   } catch (err) {
+    if (err && err.name === 'CastError') return res.status(404).json({ success: false, error: 'user_not_found' });
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

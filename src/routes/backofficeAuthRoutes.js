@@ -6,7 +6,9 @@ const router         = express.Router();
 const crypto         = require('crypto');
 const BackofficeUser = require('../models/BackofficeUser');
 const adminAuth      = require('../middleware/adminAuth');
-const { signBackofficeToken, isConfigured } = require('../middleware/backofficeAuth');
+const {
+  signBackofficeToken, verifyBackofficeToken, revokeSessions, isConfigured,
+} = require('../middleware/backofficeAuth');
 const { makeLoginLimiters } = require('../middleware/rateLimiterLogin');
 
 let bcrypt;
@@ -67,6 +69,7 @@ router.post('/login', loginLimiters, async (req, res) => {
       name:          user.name,
       role:          user.role,
       merchantScope: user.merchantScope,
+      tv:            Number(user.tokenVersion) || 0,   // versión de sesión (ver backofficeAuth)
     });
 
     return res.status(200).json({
@@ -86,9 +89,20 @@ router.post('/login', loginLimiters, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// POST /backoffice/auth/logout (stateless)
+// POST /backoffice/auth/logout
+// Cierra la sesión DE VERDAD: invalida todos los tokens del usuario (antes era
+// "stateless": el token seguía valiendo 12 h aunque se pulsase Salir). Responde
+// 200 siempre, con token válido o sin él.
 // ─────────────────────────────────────────────
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (token && isConfigured()) {
+    try {
+      const claims = verifyBackofficeToken(token);
+      await revokeSessions(claims.userId);
+    } catch { /* token caducado o inválido: no hay nada que cerrar */ }
+  }
   return res.status(200).json({ success: true, message: 'logged_out' });
 });
 
@@ -161,6 +175,8 @@ router.post('/reset-password', adminAuth, async (req, res) => {
     user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.resetToken       = null;
     user.resetTokenExpiry = null;
+    // Reset = posible cuenta comprometida: se cierran todas sus sesiones.
+    user.tokenVersion     = (Number(user.tokenVersion) || 0) + 1;
     await user.save();
 
     return res.status(200).json({ success: true, message: 'password_reset_ok', email: user.email });
@@ -241,6 +257,7 @@ router.post('/confirm-reset', loginLimiters, async (req, res) => {
     user.passwordHash     = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.resetToken       = null;
     user.resetTokenExpiry = null;
+    user.tokenVersion     = (Number(user.tokenVersion) || 0) + 1;   // cierra sus sesiones
     await user.save();
 
     return res.status(200).json({ success: true, message: 'password_updated' });

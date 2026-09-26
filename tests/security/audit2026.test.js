@@ -70,13 +70,22 @@ describe('secretos JWT — fail-closed fuera de development/test', () => {
     process.env.NODE_ENV = 'test';
     process.env.BACKOFFICE_JWT_SECRET = 'shared-secret-for-this-test';
     let backofficeAuth;
-    jest.isolateModules(() => { backofficeAuth = require('../../src/middleware/backofficeAuth'); });
+    jest.isolateModules(() => {
+      // La sesión se comprueba contra el usuario (revocación de sesiones): el
+      // modelo aislado devuelve un superadmin activo con tokenVersion 0.
+      const BackofficeUser = require('../../src/models/BackofficeUser');
+      BackofficeUser.findOne = () => ({
+        select() { return this; },
+        lean: async () => ({ _id: 'u1', email: 'boss@x.test', role: 'superadmin', merchantScope: ['all'], active: true, tokenVersion: 0 }),
+      });
+      backofficeAuth = require('../../src/middleware/backofficeAuth');
+    });
     const jwt = require('jsonwebtoken');
-    const portalLike = jwt.sign({ role: 'superadmin' }, 'shared-secret-for-this-test', { audience: 'portal' });
+    const portalLike = jwt.sign({ userId: 'u1', role: 'superadmin' }, 'shared-secret-for-this-test', { audience: 'portal' });
     const a = express();
     a.get('/x', backofficeAuth, (req, res) => res.json({ ok: true }));
     expect((await request(a).get('/x').set('Authorization', `Bearer ${portalLike}`)).status).toBe(401);
-    const good = backofficeAuth.signBackofficeToken({ role: 'superadmin' });
+    const good = backofficeAuth.signBackofficeToken({ userId: 'u1', role: 'superadmin' });
     expect((await request(a).get('/x').set('Authorization', `Bearer ${good}`)).status).toBe(200);
   });
 });

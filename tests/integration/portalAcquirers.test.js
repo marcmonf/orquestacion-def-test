@@ -16,7 +16,9 @@ const MerchantAcquirer = require('../../src/models/MerchantAcquirer');
 const Merchant = require('../../src/models/Merchant');
 const Transaction = require('../../src/models/Transaction');
 const PricingPlan = require('../../src/models/PricingPlan');
-const { signPortalToken } = require('../../src/middleware/portalAuth');
+// Sesión del portal: portalAuth comprueba el usuario en cada petición.
+jest.mock('../../src/models/MerchantUser', () => require('../helpers/memoryModel')());
+const { portalToken } = require('../helpers/sessionUsers');
 
 function buildApp() {
   const app = express();
@@ -25,7 +27,7 @@ function buildApp() {
   return app;
 }
 function token(merchantId, role = 'merchant_admin') {
-  return signPortalToken({ userId: `u-${merchantId}`, merchantId, email: `x@${merchantId}.com`, role, mustChangePassword: false });
+  return portalToken({ userId: `u-${merchantId}-${role}`, merchantId, email: `x@${merchantId}.com`, role, mustChangePassword: false });
 }
 
 describe('Portal acquirers / routing / costs', () => {

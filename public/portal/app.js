@@ -144,7 +144,14 @@ function renderShell() {
       ${tabs.map(([k, l]) => `<button data-tab="${k}">${esc(l)}</button>`).join('')}
     </nav>
     <main id="view"></main>`;
-  document.getElementById('logoutBtn').onclick = () => { clearToken(); renderLogin('Sesión cerrada.'); };
+  // "Salir" invalida también el token en el servidor (antes solo se borraba en
+  // el navegador y seguía valiendo hasta caducar).
+  document.getElementById('logoutBtn').onclick = () => {
+    const t = token();
+    if (t) fetch(API + '/portal/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }).catch(() => {});
+    clearToken();
+    renderLogin('Sesión cerrada.');
+  };
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => selectTab(b.dataset.tab));
 }
 

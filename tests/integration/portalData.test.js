@@ -10,9 +10,11 @@ const express = require('express');
 const request = require('supertest');
 
 jest.mock('../../src/models/Transaction', () => require('../helpers/memoryModel')());
+// Sesión del portal: portalAuth comprueba el usuario en cada petición.
+jest.mock('../../src/models/MerchantUser', () => require('../helpers/memoryModel')());
 
 const Transaction = require('../../src/models/Transaction');
-const { signPortalToken } = require('../../src/middleware/portalAuth');
+const { portalToken } = require('../helpers/sessionUsers');
 
 function buildApp() {
   const app = express();
@@ -22,8 +24,8 @@ function buildApp() {
 }
 
 function token(merchantId, role = 'merchant_viewer') {
-  return signPortalToken({
-    userId: `u-${merchantId}`, merchantId, email: `x@${merchantId}.com`,
+  return portalToken({
+    userId: `u-${merchantId}-${role}`, merchantId, email: `x@${merchantId}.com`,
     role, mustChangePassword: false,
   });
 }

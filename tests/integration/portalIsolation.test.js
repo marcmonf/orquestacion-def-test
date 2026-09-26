@@ -132,7 +132,10 @@ describe('Portal — separación criptográfica de planos', () => {
   });
 
   test('mustChangePassword bloquea el CRUD (403 password_change_required)', async () => {
-    const tempToken = signPortalToken({ userId: 'z', merchantId: 'merch-A', email: 'admin@a.com', role: 'merchant_admin', mustChangePassword: true });
+    // El flag se lee del USUARIO (base de datos), no del token: se siembra uno
+    // con la password temporal pendiente.
+    const { portalToken } = require('../helpers/sessionUsers');
+    const tempToken = portalToken({ userId: 'z', merchantId: 'merch-A', email: 'temp@a.com', role: 'merchant_admin', mustChangePassword: true });
     const res = await request(app).get('/portal/users').set('Authorization', `Bearer ${tempToken}`);
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('password_change_required');

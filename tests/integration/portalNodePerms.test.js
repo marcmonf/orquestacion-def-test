@@ -15,7 +15,7 @@ jest.mock('../../src/models/MerchantUser', () => require('../helpers/memoryModel
 
 const HierarchyNode = require('../../src/models/HierarchyNode');
 const MerchantUser  = require('../../src/models/MerchantUser');
-const { signPortalToken } = require('../../src/middleware/portalAuth');
+const { portalToken } = require('../helpers/sessionUsers');
 
 function buildApp() {
   const app = express();
@@ -25,11 +25,17 @@ function buildApp() {
   return app;
 }
 
+// Un usuario de sesión distinto por nodo: el nodo se lee de la base de datos en
+// cada petición, así que reutilizar el mismo id con otro nodo cambiaría el
+// alcance de los tokens anteriores.
+function adminId(merchantId, hierarchyNodeId = null) {
+  return `admin-${merchantId}-${hierarchyNodeId || 'all'}`;
+}
 function adminToken(merchantId, hierarchyNodeId = null) {
-  return signPortalToken({ userId: `admin-${merchantId}`, merchantId, email: `admin@${merchantId}.com`, role: 'merchant_admin', mustChangePassword: false, hierarchyNodeId });
+  return portalToken({ userId: adminId(merchantId, hierarchyNodeId), merchantId, email: `admin-${hierarchyNodeId || 'all'}@${merchantId}.com`, role: 'merchant_admin', mustChangePassword: false, hierarchyNodeId });
 }
 function opToken(merchantId, hierarchyNodeId = null) {
-  return signPortalToken({ userId: `op-${merchantId}`, merchantId, email: `op@${merchantId}.com`, role: 'merchant_operator', mustChangePassword: false, hierarchyNodeId });
+  return portalToken({ userId: `op-${merchantId}-${hierarchyNodeId || 'all'}`, merchantId, email: `op-${hierarchyNodeId || 'all'}@${merchantId}.com`, role: 'merchant_operator', mustChangePassword: false, hierarchyNodeId });
 }
 function createNode(app, tok, body) {
   return request(app).post('/portal/hierarchy').set('Authorization', `Bearer ${tok}`).send(body);
@@ -120,5 +126,89 @@ describe('Portal — permisos por nodo (Fase 4)', () => {
   test('404 — admin restringido a R1 no puede borrar S2 (fuera)', async () => {
     const res = await request(app).delete(`/portal/hierarchy/${S2._id}`).set('Authorization', `Bearer ${adminToken('merch-A', R1._id)}`);
     expect(res.status).toBe(404);
+  });
+
+  // ── Gestión de usuarios de un admin restringido (26 sep 2026) ────────────────
+  // Antes un admin restringido a un nodo se quitaba la restricción a sí mismo
+  // (PATCH { hierarchyNodeId: null }) o creaba usuarios sin nodo: la
+  // restricción se saltaba en una petición.
+  function mkUser(email, hierarchyNodeId = null, role = 'merchant_operator') {
+    return MerchantUser.create({ merchantId: 'merch-A', email, passwordHash: 'x', name: email, role, active: true, mustChangePassword: false, hierarchyNodeId });
+  }
+
+  test('409 — un admin restringido NO puede quitarse su propia restricción', async () => {
+    const tok = adminToken('merch-A', R1._id);
+    const me = adminId('merch-A', R1._id);
+    const res = await request(app).patch(`/portal/users/${me}`).set('Authorization', `Bearer ${tok}`).send({ hierarchyNodeId: null });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('cannot_change_own_node');
+    expect(MerchantUser.__store.find(u => u._id === me).hierarchyNodeId).toBe(R1._id);
+    // Tampoco moverse a otro nodo (fuera de su subárbol).
+    const move = await request(app).patch(`/portal/users/${me}`).set('Authorization', `Bearer ${tok}`).send({ hierarchyNodeId: R2._id });
+    expect(move.status).toBe(409);
+    // Su nombre sí lo puede cambiar.
+    const rename = await request(app).patch(`/portal/users/${me}`).set('Authorization', `Bearer ${tok}`).send({ name: 'Admin R1' });
+    expect(rename.status).toBe(200);
+  });
+
+  test('admin restringido: los usuarios fuera de su subárbol (o sin nodo) no existen para él', async () => {
+    const outside = await mkUser('fuera@a.com', R2._id);
+    const unrestricted = await mkUser('todo@a.com', null);
+    const inside = await mkUser('dentro@a.com', S1._id);
+    const tok = adminToken('merch-A', R1._id);
+    expect((await request(app).patch(`/portal/users/${outside._id}`).set('Authorization', `Bearer ${tok}`).send({ active: false })).status).toBe(404);
+    expect((await request(app).patch(`/portal/users/${unrestricted._id}`).set('Authorization', `Bearer ${tok}`).send({ role: 'merchant_viewer' })).status).toBe(404);
+    expect((await request(app).patch(`/portal/users/${inside._id}`).set('Authorization', `Bearer ${tok}`).send({ role: 'merchant_viewer' })).status).toBe(200);
+    const list = await request(app).get('/portal/users').set('Authorization', `Bearer ${tok}`);
+    const emails = list.body.users.map(u => u.email);
+    expect(emails).toContain('dentro@a.com');
+    expect(emails).not.toContain('fuera@a.com');
+    expect(emails).not.toContain('todo@a.com');
+  });
+
+  test('403 — admin restringido no puede dejar a nadie sin restricción ni asignar fuera de su subárbol', async () => {
+    const inside = await mkUser('dentro2@a.com', S1._id);
+    const tok = adminToken('merch-A', R1._id);
+    const toNull = await request(app).patch(`/portal/users/${inside._id}`).set('Authorization', `Bearer ${tok}`).send({ hierarchyNodeId: null });
+    expect(toNull.status).toBe(403);
+    expect(toNull.body.error).toBe('outside_your_scope');
+    const toR2 = await request(app).patch(`/portal/users/${inside._id}`).set('Authorization', `Bearer ${tok}`).send({ hierarchyNodeId: S2._id });
+    expect(toR2.status).toBe(403);
+    const toR1 = await request(app).patch(`/portal/users/${inside._id}`).set('Authorization', `Bearer ${tok}`).send({ hierarchyNodeId: R1._id });
+    expect(toR1.status).toBe(200);
+  });
+
+  test('alta por un admin restringido: sin nodo hereda el suyo; fuera de su subárbol → 403', async () => {
+    const tok = adminToken('merch-A', R1._id);
+    const plain = await request(app).post('/portal/users').set('Authorization', `Bearer ${tok}`).send({ name: 'N', email: 'nuevo@a.com', role: 'merchant_admin' });
+    expect(plain.status).toBe(201);
+    expect(plain.body.user.hierarchyNodeId).toBe(R1._id);
+    const out = await request(app).post('/portal/users').set('Authorization', `Bearer ${tok}`).send({ name: 'N2', email: 'nuevo2@a.com', role: 'merchant_viewer', hierarchyNodeId: R2._id });
+    expect(out.status).toBe(403);
+    const none = await request(app).post('/portal/users').set('Authorization', `Bearer ${tok}`).send({ name: 'N3', email: 'nuevo3@a.com', role: 'merchant_viewer', hierarchyNodeId: null });
+    expect(none.status).toBe(403);
+    expect(MerchantUser.__store.find(u => u.email === 'nuevo2@a.com')).toBeUndefined();
+  });
+
+  test('un admin SIN restricción sí puede crear usuarios sin nodo o en cualquier nodo del merchant', async () => {
+    const tok = adminToken('merch-A');
+    const none = await request(app).post('/portal/users').set('Authorization', `Bearer ${tok}`).send({ name: 'Z', email: 'z@a.com', role: 'merchant_viewer' });
+    expect(none.status).toBe(201);
+    expect(none.body.user.hierarchyNodeId).toBeNull();
+    const inR2 = await request(app).post('/portal/users').set('Authorization', `Bearer ${tok}`).send({ name: 'Z2', email: 'z2@a.com', role: 'merchant_viewer', hierarchyNodeId: R2._id });
+    expect(inR2.status).toBe(201);
+    expect(inR2.body.user.hierarchyNodeId).toBe(R2._id);
+  });
+
+  test('mover a un usuario de nodo cierra sus sesiones abiertas (su token viejo → 401)', async () => {
+    const opTok = opToken('merch-A', R1._id);
+    expect((await request(app).get('/portal/hierarchy').set('Authorization', `Bearer ${opTok}`)).status).toBe(200);
+    const res = await request(app).patch(`/portal/users/op-merch-A-${R1._id}`)
+      .set('Authorization', `Bearer ${adminToken('merch-A')}`).send({ hierarchyNodeId: R2._id });
+    expect(res.status).toBe(200);
+    expect(res.body.sessionsRevoked).toBe(true);
+    const after = await request(app).get('/portal/hierarchy').set('Authorization', `Bearer ${opTok}`);
+    expect(after.status).toBe(401);
+    expect(after.body.error).toBe('session_revoked');
   });
 });

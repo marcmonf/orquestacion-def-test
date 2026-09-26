@@ -49,6 +49,11 @@ const merchantUserSchema = new mongoose.Schema({
   // ── Estado ─────────────────────────────────────────────────
   active: { type: Boolean, default: true },
 
+  // Revocación de sesiones (claim `tv` del JWT, ver portalAuth). Subirla
+  // (desactivar, cambiar rol o nodo, cambiar la contraseña, cerrar sesión)
+  // invalida en el acto todos los tokens anteriores de este usuario.
+  tokenVersion: { type: Number, default: 0 },
+
   // ── Password temporal / cambio obligatorio en el primer login ──
   // No hay infraestructura de email: el alta genera una password temporal que se
   // muestra UNA vez, y el usuario está obligado a cambiarla en el primer login.

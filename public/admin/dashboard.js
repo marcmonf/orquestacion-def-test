@@ -73,7 +73,15 @@
     });
   }
 
-  function doLogout() {
+  // "Salir" cierra la sesión también en el servidor (invalida el token: antes
+  // seguía valiendo hasta caducar). Si la sesión ya estaba revocada (401), no
+  // hace falta avisar al servidor.
+  function doLogout(alreadyRevoked) {
+    if (!alreadyRevoked && session && session.token) {
+      fetch(BASE_URL + '/backoffice/auth/logout', {
+        method: 'POST', headers: { 'Authorization': 'Bearer ' + session.token }
+      }).catch(function () {});
+    }
     localStorage.removeItem('m_session'); session = null;
     document.getElementById('appShell').style.display = 'none';
     document.getElementById('loginScreen').style.display = 'flex';
@@ -113,8 +121,14 @@
     var headers = Object.assign({}, h, opts.headers || {});
     return fetch(BASE_URL + path, Object.assign({}, opts, { headers: headers }))
       .then(function (r) {
-        if (r.status === 401) { doLogout(); throw new Error('session_expired'); }
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (r.status === 401) { doLogout(true); throw new Error('session_expired'); }
+        // El código de error del servidor (p. ej. cannot_change_own_role) llega
+        // al mensaje; antes solo se veía "HTTP 409".
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            throw new Error((j && j.error) || ('HTTP ' + r.status));
+          });
+        }
         return r.json();
       });
   }
@@ -830,7 +844,7 @@
     var scope = document.getElementById('newUserScope').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
     var errEl = document.getElementById('newUserErr');
     if(!name||!email||!pass){errEl.textContent='Todos los campos son requeridos';return;}
-    if(pass.length<8){errEl.textContent='Contraseña mínimo 8 caracteres';return;}
+    if(pass.length<12){errEl.textContent='Contraseña mínimo 12 caracteres';return;}
     api('/backoffice/users',{method:'POST',body:JSON.stringify({name:name,email:email,password:pass,role:role,merchantScope:scope})})
       .then(function(){
         document.getElementById('createUserModal').classList.remove('open');
@@ -1420,7 +1434,9 @@
   function bindButtons() {
     document.getElementById('loginBtn').addEventListener('click', doLogin);
     document.getElementById('loginPass').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
-    document.getElementById('logoutBtn').addEventListener('click', doLogout);
+    // Envoltorio: si se pasase doLogout directamente, recibiría el evento del
+    // clic como argumento y lo tomaría por "sesión ya revocada".
+    document.getElementById('logoutBtn').addEventListener('click', function () { doLogout(false); });
     document.getElementById('refreshBtn').addEventListener('click', loadAll);
     document.getElementById('widgetToggleBtn').addEventListener('click', toggleWidgetEditor);
     document.getElementById('txModalClose').addEventListener('click',function(){document.getElementById('txModal').classList.remove('open');});

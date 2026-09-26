@@ -9,8 +9,17 @@ info:
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
 
-    **v2.11.0 (26 sep 2026)** — Vuelta del comprador tras pagar (ver DEV-LOG, sesión
-    26 sep 2026 → "Vuelta del comprador tras pagar"):
+    **v2.11.0 (26 sep 2026)** — Vuelta del comprador tras pagar y sesiones
+    revocables (ver DEV-LOG, sesión 26 sep 2026):
+      - **Portal: sesiones revocables.** Un token deja de valer en cuanto el
+        usuario se desactiva, cambia de rol o de nodo, cambia su contraseña o cierra
+        sesión (`401 session_revoked`). `POST /portal/auth/logout` ya no es
+        "stateless": invalida los tokens del usuario.
+      - **Portal: un admin restringido a un nodo** solo lista y gestiona usuarios de
+        su subárbol, no puede cambiar su propio nodo (`409 cannot_change_own_node`)
+        ni dejar a nadie sin restricción (`403 outside_your_scope`).
+        `POST /portal/users` acepta `hierarchyNodeId` (por defecto, el nodo del
+        admin si está restringido).
       - Al terminar el pago (3DS incluido) el comprador llega a la **página de
         resultado** de Monetiser (`GET /checkout/result/{paymentId}`, URL firmada que
         Paylands recibe como `url_ok`/`url_ko`). Antes se quedaba en una página de
@@ -1200,6 +1209,21 @@ paths:
         '401':
           description: Sin token, token inválido, o `currentPassword` incorrecta.
 
+  /portal/auth/logout:
+    post:
+      tags: [Portal]
+      summary: Cerrar sesión (invalida el token)
+      operationId: portalLogout
+      x-madurez: estable
+      security: [{ PortalBearer: [] }]
+      description: |
+        Invalida TODOS los tokens del usuario de la sesión (sube su versión de
+        sesión). Responde `200` siempre, también sin token o con uno caducado.
+        Antes era "stateless": el token seguía valiendo hasta caducar (12 h).
+      responses:
+        '200':
+          description: Sesión cerrada.
+
   /portal/me:
     get:
       tags: [Portal]
@@ -1232,7 +1256,8 @@ paths:
       security: [{ PortalBearer: [] }]
       description: |
         Lista solo los usuarios del merchant de la sesión (nunca de otro). Solo
-        `merchant_admin`. Un `merchantId` en query/body se ignora.
+        `merchant_admin`. Un `merchantId` en query/body se ignora. Un admin
+        restringido a un nodo solo ve a los usuarios de su subárbol.
       responses:
         '200':
           description: Usuarios del merchant de la sesión (sin hash).
@@ -1259,6 +1284,9 @@ paths:
         Crea un usuario en el merchant de la SESIÓN (cualquier `merchantId` del
         body se ignora). Solo `merchant_admin`. Genera una **password temporal**
         que se devuelve UNA sola vez; el nuevo usuario entra con `mustChangePassword`.
+
+        Un admin restringido a un nodo solo puede crear usuarios dentro de su
+        subárbol; si no indica `hierarchyNodeId`, el nuevo hereda su nodo.
       requestBody:
         required: true
         content:
@@ -1273,11 +1301,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/PortalUserCreateResponse'
         '400':
-          description: Faltan campos o rol inválido.
+          description: Faltan campos, rol inválido o nodo inexistente (`invalid_hierarchy_node`).
         '401':
-          description: Sin token o token inválido.
+          description: Sin token, token inválido o sesión revocada (`session_revoked`).
         '403':
-          description: Rol insuficiente o password sin cambiar.
+          description: Rol insuficiente, password sin cambiar o nodo fuera de tu subárbol (`outside_your_scope`).
         '409':
           description: Ya existe un usuario con ese email (`email_already_exists`).
 
@@ -1292,7 +1320,13 @@ paths:
         Edita un usuario del merchant de la sesión. Se resuelve SIEMPRE con el
         `merchantId` de sesión: un usuario de otro merchant devuelve `404` (no se
         revela su existencia — es la garantía de aislamiento). Solo `merchant_admin`.
-        Un admin no puede degradarse ni desactivarse a sí mismo.
+        Un admin no puede degradarse, desactivarse ni cambiar su propio nodo.
+
+        Un admin restringido a un nodo solo edita usuarios de su subárbol (los
+        demás devuelven `404`) y solo los asigna a nodos de su subárbol.
+
+        Cambiar rol, estado o nodo cierra las sesiones abiertas de ese usuario
+        (`sessionsRevoked: true` en la respuesta).
       parameters:
         - name: userId
           in: path
@@ -1309,15 +1343,15 @@ paths:
         '200':
           description: Usuario actualizado (sin hash).
         '400':
-          description: Rol inválido o nombre vacío.
+          description: Rol inválido, nombre vacío o nodo inexistente (`invalid_hierarchy_node`).
         '401':
-          description: Sin token o token inválido.
+          description: Sin token, token inválido o sesión revocada (`session_revoked`).
         '403':
-          description: Rol insuficiente o password sin cambiar.
+          description: Rol insuficiente, password sin cambiar o nodo fuera de tu subárbol (`outside_your_scope`).
         '404':
-          description: No existe en este merchant (`user_not_found`) — incluye el caso cross-tenant.
+          description: No existe en este merchant (`user_not_found`) — incluye el caso cross-tenant y, para un admin restringido, los usuarios fuera de su subárbol.
         '409':
-          description: Auto-degradación o auto-desactivación (`cannot_demote_yourself` / `cannot_deactivate_yourself`).
+          description: Sobre uno mismo (`cannot_demote_yourself` / `cannot_deactivate_yourself` / `cannot_change_own_node`).
 
   /portal/transactions:
     get:
@@ -2062,6 +2096,13 @@ components:
         dentro del token: todo el aislamiento se resuelve por la sesión, nunca por
         un `merchantId` del cliente.
 
+        **Sesiones revocables (v2.11.0).** En cada petición se comprueba que el
+        usuario existe, está activo, es del mismo merchant y conserva la misma
+        versión de sesión; rol, nodo y cambio de password pendiente se leen del
+        usuario, no del token. Desactivar a alguien, cambiarle el rol o el nodo,
+        cambiar la contraseña o `POST /portal/auth/logout` invalida sus tokens al
+        momento → `401 session_revoked`.
+
         Mientras el usuario arrastre `mustChangePassword` (password temporal del
         alta), el portal responde `403 password_change_required` a todo salvo
         `POST /portal/auth/change-password`.
@@ -2717,6 +2758,12 @@ components:
         role:
           type: string
           enum: [merchant_admin, merchant_operator, merchant_viewer]
+        hierarchyNodeId:
+          type: [string, 'null']
+          description: |
+            Nodo de jerarquía al que queda restringido el nuevo usuario (null = todo
+            el merchant, solo si quien lo crea no está restringido). Si no se envía:
+            el nodo de quien lo crea (si está restringido) o null.
 
     PortalUserUpdateRequest:
       type: object

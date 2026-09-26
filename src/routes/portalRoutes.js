@@ -30,6 +30,45 @@ const portalAuth    = require('../middleware/portalAuth');
 const { requirePortalRole, requirePasswordChanged } = portalAuth;
 const { toPublicUser }         = require('../utils/publicUser');
 const { generateTempPassword } = require('../utils/tempPassword');
+const { allowedNodeIds }       = require('../utils/hierarchyScope');
+
+// ── Permisos por nodo aplicados a la GESTIÓN DE USUARIOS (26 sep 2026) ──────
+// Un merchant_admin asignado a un nodo solo gestiona a los usuarios de SU
+// subárbol. Antes podía editar a cualquier usuario del merchant — incluido él
+// mismo: con PATCH { hierarchyNodeId: null } se quitaba la restricción y pasaba
+// a ver todo el merchant — y crear usuarios SIN nodo (sin restricción). Es decir,
+// la restricción por nodo se podía saltar en una petición.
+//
+// allowed: null = admin sin restricción (todo el merchant); Set = su subárbol.
+function userInScope(user, allowed) {
+  if (allowed === null) return true;
+  return Boolean(user.hierarchyNodeId) && allowed.has(String(user.hierarchyNodeId));
+}
+
+// Resuelve el nodo pedido para un usuario (alta o edición). Devuelve
+// { ok:true, nodeId } (nodeId null = sin restricción) o { ok:false, code, error }.
+async function resolveUserNode(req, requested, allowed) {
+  if (requested === null || requested === '') {
+    // Solo un admin SIN restricción puede dejar a alguien sin restricción.
+    return allowed === null
+      ? { ok: true, nodeId: null }
+      : { ok: false, code: 403, error: 'outside_your_scope' };
+  }
+  if (typeof requested !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requested)) {
+    return { ok: false, code: 400, error: 'invalid_hierarchy_node' };
+  }
+  let node = null;
+  try {
+    node = await HierarchyNode.findOne({ _id: requested, merchantId: req.portalUser.merchantId });
+  } catch (err) {
+    if (!err || err.name !== 'CastError') throw err;
+  }
+  if (!node) return { ok: false, code: 400, error: 'invalid_hierarchy_node' };
+  if (allowed !== null && !allowed.has(String(node._id))) {
+    return { ok: false, code: 403, error: 'outside_your_scope' };
+  }
+  return { ok: true, nodeId: node._id };
+}
 
 // Proyección de una transacción para el portal (solo campos no sensibles).
 function toPublicTx(t) {
@@ -91,7 +130,10 @@ router.get('/users', requirePortalRole('merchant_admin'), async (req, res) => {
       .select('-passwordHash')
       .sort({ createdAt: -1 })
       .lean();
-    return res.json({ success: true, users: users.map(toPublicUser) });
+    // Admin restringido a un nodo: solo los usuarios de su subárbol.
+    const allowed = await allowedNodeIds(req.portalUser);
+    const visible = users.filter(u => userInScope(u, allowed));
+    return res.json({ success: true, users: visible.map(toPublicUser) });
   } catch (err) {
     console.error('❌ [portal/users GET]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
@@ -114,6 +156,15 @@ router.post('/users', requirePortalRole('merchant_admin'), async (req, res) => {
   }
 
   try {
+    // Nodo del usuario nuevo. Un admin restringido solo puede crear dentro de su
+    // subárbol y, si no indica nodo, el nuevo hereda el suyo (nunca "sin
+    // restricción", que le daría a otro más alcance que el propio).
+    const allowed = await allowedNodeIds(req.portalUser);
+    let requestedNode = req.body.hierarchyNodeId;
+    if (requestedNode === undefined) requestedNode = allowed === null ? null : req.portalUser.hierarchyNodeId;
+    const nodeCheck = await resolveUserNode(req, requestedNode, allowed);
+    if (!nodeCheck.ok) return res.status(nodeCheck.code).json({ success: false, error: nodeCheck.error });
+
     const normEmail = String(email).toLowerCase().trim();
     const existing = await MerchantUser.findOne({ email: normEmail });
     if (existing) return res.status(409).json({ success: false, error: 'email_already_exists' });
@@ -129,6 +180,7 @@ router.post('/users', requirePortalRole('merchant_admin'), async (req, res) => {
       role,
       active:             true,
       mustChangePassword: true,
+      hierarchyNodeId:    nodeCheck.nodeId,
       createdBy:          req.portalUser.email || null,
     });
 
@@ -157,6 +209,16 @@ router.patch('/users/:userId', requirePortalRole('merchant_admin'), async (req, 
     if (!user) return res.status(404).json({ success: false, error: 'user_not_found' });
 
     const isSelf = String(user._id) === String(req.portalUser.userId);
+    // Admin restringido: un usuario fuera de su subárbol "no existe" para él.
+    const allowed = await allowedNodeIds(req.portalUser);
+    if (!isSelf && !userInScope(user, allowed)) {
+      return res.status(404).json({ success: false, error: 'user_not_found' });
+    }
+    const before = {
+      role: user.role,
+      active: user.active !== false,
+      node: user.hierarchyNodeId ? String(user.hierarchyNodeId) : null,
+    };
 
     if (req.body.role !== undefined) {
       if (!VALID_ROLES.includes(req.body.role)) {
@@ -187,18 +249,34 @@ router.patch('/users/:userId', requirePortalRole('merchant_admin'), async (req, 
     // ser del PROPIO merchant (se resuelve con el merchantId de sesión); null lo
     // desasigna. El scoping por nodo se aplica en /portal/hierarchy.
     if (req.body.hierarchyNodeId !== undefined) {
-      const nid = req.body.hierarchyNodeId;
-      if (nid === null || nid === '') {
-        user.hierarchyNodeId = null;
-      } else {
-        const node = await HierarchyNode.findOne({ _id: nid, merchantId: req.portalUser.merchantId });
-        if (!node) return res.status(400).json({ success: false, error: 'invalid_hierarchy_node' });
-        user.hierarchyNodeId = node._id;
+      const requested = req.body.hierarchyNodeId === '' ? null : req.body.hierarchyNodeId;
+      const current = before.node;
+      const same = (requested === null && current === null) ||
+        (requested !== null && String(requested) === current);
+      // Nadie cambia su PROPIO nodo: un admin restringido se quitaría la
+      // restricción (null) o se movería fuera de su subárbol.
+      if (isSelf && !same) {
+        return res.status(409).json({ success: false, error: 'cannot_change_own_node' });
+      }
+      if (!same) {
+        const nodeCheck = await resolveUserNode(req, requested, allowed);
+        if (!nodeCheck.ok) return res.status(nodeCheck.code).json({ success: false, error: nodeCheck.error });
+        user.hierarchyNodeId = nodeCheck.nodeId;
       }
     }
 
+    // Cambio de rol, estado o nodo → se cierran sus sesiones abiertas (antes
+    // seguía dentro con los permisos viejos hasta que caducaba el token, 12 h).
+    const after = {
+      role: user.role,
+      active: user.active !== false,
+      node: user.hierarchyNodeId ? String(user.hierarchyNodeId) : null,
+    };
+    const permissionsChanged = before.role !== after.role || before.active !== after.active || before.node !== after.node;
+    if (permissionsChanged) user.tokenVersion = (Number(user.tokenVersion) || 0) + 1;
+
     await user.save();
-    return res.json({ success: true, user: toPublicUser(user) });
+    return res.json({ success: true, user: toPublicUser(user), sessionsRevoked: permissionsChanged });
   } catch (err) {
     console.error('❌ [portal/users PATCH]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });

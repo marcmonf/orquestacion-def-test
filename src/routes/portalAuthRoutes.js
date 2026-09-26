@@ -10,7 +10,7 @@ const router       = express.Router();
 const MerchantUser = require('../models/MerchantUser');
 const portalAuth   = require('../middleware/portalAuth');
 const rateLimiterPortalLogin = require('../middleware/rateLimiterPortalLogin');
-const { signPortalToken } = portalAuth;
+const { signPortalToken, verifyPortalToken, revokeSessions } = portalAuth;
 
 let bcrypt;
 try { bcrypt = require('bcryptjs'); } catch {
@@ -35,6 +35,8 @@ function tokenClaims(user) {
     mustChangePassword: !!user.mustChangePassword,
     // Fase 4 — nodo de jerarquía al que está restringido (o ausente = ve todo).
     hierarchyNodeId:    user.hierarchyNodeId ? String(user.hierarchyNodeId) : null,
+    // Versión de sesión: portalAuth rechaza el token si ya no coincide (revocado).
+    tv:                 Number(user.tokenVersion) || 0,
   };
 }
 
@@ -114,6 +116,9 @@ router.post('/change-password', portalAuth, async (req, res) => {
 
     user.passwordHash       = await bcrypt.hash(newPassword, 10);
     user.mustChangePassword = false;
+    // Cambiar la password cierra las DEMÁS sesiones (p. ej. si alguien se la
+    // había visto); esta sigue con el token nuevo que se devuelve.
+    user.tokenVersion       = (Number(user.tokenVersion) || 0) + 1;
     await user.save();
 
     const token = signPortalToken(tokenClaims(user));
@@ -125,8 +130,20 @@ router.post('/change-password', portalAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// POST /portal/auth/logout (stateless)
+// POST /portal/auth/logout
+// Cierra la sesión de verdad (invalida los tokens del usuario). Antes era
+// "stateless": el token seguía valiendo hasta caducar. Responde 200 siempre.
 // ─────────────────────────────────────────────
-router.post('/logout', (req, res) => res.status(200).json({ success: true, message: 'logged_out' }));
+router.post('/logout', async (req, res) => {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (token && portalAuth.isConfigured()) {
+    try {
+      const claims = verifyPortalToken(token);
+      await revokeSessions(claims.userId);
+    } catch { /* token caducado o inválido: no hay nada que cerrar */ }
+  }
+  return res.status(200).json({ success: true, message: 'logged_out' });
+});
 
 module.exports = router;
