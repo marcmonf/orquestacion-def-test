@@ -148,6 +148,26 @@ async function validateApiKey(rawKey, merchantId, ip = null) {
 }
 
 /**
+ * Autentica SOLO con el secreto (`ms_...`), sin merchantId: es la credencial de
+ * la API v1 (`Authorization: Bearer ms_...`). El secreto identifica por sí solo
+ * al merchant (se busca por su SHA-256, igual que validateApiKey), así el
+ * comercio no tiene que mandar además su merchantId en cada petición.
+ *
+ * Devuelve { merchantId, keyId } o null.
+ */
+async function authenticateSecret(rawSecret, ip = null) {
+  if (!rawSecret || typeof rawSecret !== 'string' || rawSecret.length > 200) return null;
+  const doc = await MerchantApiKey.findOne({
+    secretHash: hashKey(rawSecret),
+    active: { $ne: false },
+  }).lean();
+  if (!doc) return null;
+  if (doc.expiresAt && new Date() > new Date(doc.expiresAt)) return null;
+  touchLastUsed(doc._id, ip);
+  return { merchantId: doc.merchantId, keyId: doc.keyId };
+}
+
+/**
  * Diagnóstico para el 401 del modo simple: ¿nos han mandado el keyId público
  * (`mk_...`) donde debía ir el secreto (`ms_...`)?
  *
@@ -205,6 +225,7 @@ async function listApiKeys(merchantId) {
 module.exports = {
   createApiKey,
   validateApiKey,
+  authenticateSecret,
   looksLikeKeyId,
   findActiveByKeyId,
   touchLastUsed,

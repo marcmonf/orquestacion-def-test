@@ -15,16 +15,13 @@ const {
   buildHostedCheckoutStatusResponse
 } = require('../dtos/hostedCheckoutDTO');
 
-const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos
-const MAX_SESSION_SECONDS = 3 * 60 * 60; // 3 horas
-
-function computeSessionExpiry(now, timeoutSeconds) {
-  const t = Math.min(
-    timeoutSeconds || DEFAULT_SESSION_TIMEOUT_SECONDS,
-    MAX_SESSION_SECONDS
-  );
-  return new Date(now.getTime() + t * 1000);
-}
+// Caducidad de la sesión y base URL: compartidas con la API v1
+// (services/checkoutSessionService) para que las dos creen sesiones idénticas.
+const {
+  DEFAULT_SESSION_TIMEOUT_SECONDS,
+  computeSessionExpiry,
+  resolveBaseUrl,
+} = require('../services/checkoutSessionService');
 
 function generateReturnMac(payload, secret) {
   return crypto
@@ -42,39 +39,6 @@ function resolveMerchantIdFromRequest(req) {
   if (req.merchant && typeof req.merchant === 'string') return req.merchant;
   if (req.merchant && req.merchant.merchantId) return req.merchant.merchantId;
   return null;
-}
-
-/**
- * Resuelve la base URL para construir redirectUrl absoluto.
- *
- * Prioridad:
- *  1) process.env.HPP_BASE_URL (o BASE_URL)
- *  2) x-forwarded-proto / req.protocol + host (Render / proxies)
- *  3) si no hay host, devuelve cadena vacía (se usará ruta relativa)
- */
-function resolveBaseUrl(req) {
-  const envBase = (process.env.HPP_BASE_URL || process.env.BASE_URL || '').trim();
-  if (envBase) {
-    return envBase.replace(/\/$/, '');
-  }
-
-  const protoHeader = (req.headers['x-forwarded-proto'] || '')
-    .toString()
-    .split(',')[0]
-    .trim();
-
-  const proto = protoHeader || req.protocol || 'https';
-  const host =
-    (req.headers['x-forwarded-host'] ||
-      req.headers.host ||
-      '').toString().trim();
-
-  if (host) {
-    return `${proto}://${host}`.replace(/\/$/, '');
-  }
-
-  // Fallback: se devolverá redirectUrl relativo
-  return '';
 }
 
 /**

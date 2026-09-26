@@ -59,6 +59,9 @@ const merchantApiKeySchema = new mongoose.Schema({
 merchantApiKeySchema.index({ merchantId: 1, active: 1 });
 // Búsqueda rápida por keyId (el campo que viaja en Authorization)
 merchantApiKeySchema.index({ keyId: 1, active: 1 });
+// API v1 (`Authorization: Bearer ms_...`): la credencial se localiza por el
+// hash del secreto, sin merchantId.
+merchantApiKeySchema.index({ secretHash: 1 });
 
 module.exports =
   mongoose.models.MerchantApiKey ||

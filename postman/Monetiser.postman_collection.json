@@ -1,79 +1,215 @@
 {
   "info": {
-    "name": "Monetiser Base",
-    "_postman_id": "a1111111-b222-4333-8444-555555555555",
-    "description": "Initialize + iFrame + Orchestration + Rules + Idempotency + Webhooks",
+    "name": "Monetiser — API v1",
+    "_postman_id": "b7e1c2d4-5f60-4a71-8b92-c3d4e5f60718",
+    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{secret}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "host",
+      "value": "https://orquestacion-def-test.onrender.com"
+    },
+    {
+      "key": "secret",
+      "value": "ms_PEGA_AQUI_TU_SECRETO"
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    }
+  ],
   "item": [
     {
-      "name": "Initialize (Idempotent)",
+      "name": "1. Crear sesión de pago",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Content-Type", "value": "application/json" },
-          { "key": "Idempotency-Key", "value": "demo-key-123" }
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
         ],
-        "url": { "raw": "{{host}}/initialize", "host": ["{{host}}"], "path": ["initialize"] },
-        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"returnUrl\": \"https://miweb.com/return\",\n  \"callbackUrl\": \"https://webhook.site/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX\"\n}" }
-      }
+        "url": {
+          "raw": "{{host}}/v1/checkout-sessions",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "checkout-sessions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 4999,\n  \"currency\": \"EUR\",\n  \"reference\": \"PEDIDO-1234\",\n  \"returnUrl\": \"https://orquestacion-def-test.onrender.com/gracias.html\"\n}"
+        },
+        "description": "Devuelve la `url` del checkout. Guarda el `id` en la variable paymentId. Con la misma Idempotency-Key devolvería la misma sesión."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('201 sesión creada', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+              "if (b && b.id) { pm.collectionVariables.set('paymentId', b.id); console.log('Abre para pagar:', b.url); }"
+            ]
+          }
+        }
+      ]
     },
     {
-      "name": "Orchestration Decide",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": { "raw": "{{host}}/orchestration/decide", "host": ["{{host}}"], "path": ["orchestration","decide"] },
-        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"amount\": 25,\n  \"currency\": \"EUR\",\n  \"method\": \"card\",\n  \"cardNumber\": \"4111111111111111\"\n}" }
-      }
-    },
-    {
-      "name": "Rules Get",
-      "request": {
-        "method": "GET",
-        "header": [{ "key": "X-Admin-Token", "value": "{{adminToken}}" }],
-        "url": { "raw": "{{host}}/rules/{{merchantId}}", "host": ["{{host}}"], "path": ["rules","{{merchantId}}"] }
-      }
-    },
-    {
-      "name": "Rules Validate",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }],
-        "url": { "raw": "{{host}}/rules/validate", "host": ["{{host}}"], "path": ["rules","validate"] },
-        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"version\": \"v1\",\n  \"defaultConnector\": \"dummyCard\",\n  \"rules\": []\n}" }
-      }
-    },
-    {
-      "name": "Rules Upsert",
-      "request": {
-        "method": "PUT",
-        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }, { "key": "X-Admin-Actor", "value": "admin@example.com" }],
-        "url": { "raw": "{{host}}/rules/{{merchantId}}", "host": ["{{host}}"], "path": ["rules","{{merchantId}}"] },
-        "body": { "mode": "raw", "raw": "{\n  \"merchantId\": \"demo-merchant\",\n  \"version\": \"v1\",\n  \"defaultConnector\": \"dummyCard\",\n  \"rules\": [\n    {\"id\":\"eur-small\",\"priority\":10,\"when\":{\"currency\":{\"in\":[\"EUR\"]},\"amount\":{\"lt\":50}},\"action\":{\"route\":\"dummyCard\"}}\n  ]\n}" }
-      }
-    },
-    {
-      "name": "Rules Try",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Admin-Token", "value": "{{adminToken}}" }],
-        "url": { "raw": "{{host}}/rules/try", "host": ["{{host}}"], "path": ["rules","try"] },
-        "body": { "mode": "raw", "raw": "{\n  \"policy\": {\"merchantId\":\"demo-merchant\",\"version\":\"v1\",\"defaultConnector\":\"dummyCard\",\"rules\":[{\"id\":\"low-lat\",\"priority\":30,\"when\":{\"latencyMs\":{\"lt\":150}},\"action\":{\"route\":\"dummyCard\"}}]},\n  \"sample\": {\"amount\":25,\"currency\":\"EUR\"}\n}" }
-      }
-    },
-    {
-      "name": "Rules Audit",
+      "name": "2. Consultar la sesión",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Admin-Token", "value": "{{adminToken}}" }],
-        "url": { "raw": "{{host}}/rules/{{merchantId}}/audit?limit=20&offset=0", "host": ["{{host}}"], "path": ["rules","{{merchantId}}","audit"], "query":[{"key":"limit","value":"20"},{"key":"offset","value":"0"}] }
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/checkout-sessions/{{paymentId}}",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "checkout-sessions",
+            "{{paymentId}}"
+          ]
+        },
+        "description": "`status`: open | processing | complete | expired. `result`: pending | succeeded | failed."
+      }
+    },
+    {
+      "name": "3. Consultar el pago",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/payments/{{paymentId}}",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{paymentId}}"
+          ]
+        },
+        "description": "Estado, importes capturado/devuelto y tarjeta truncada."
+      }
+    },
+    {
+      "name": "4. Capturar (cobrar)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/payments/{{paymentId}}/capture",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{paymentId}}",
+            "capture"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "description": "Sin `amount` captura todo lo autorizado. Para una parte: {\"amount\": 2000}."
+      }
+    },
+    {
+      "name": "5. Devolver (parcial)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/payments/{{paymentId}}/refund",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{paymentId}}",
+            "refund"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1000,\n  \"reason\": \"Devolución de prueba\"\n}"
+        },
+        "description": "Exige captura previa (si no: 409 capture_required → usa Anular)."
+      }
+    },
+    {
+      "name": "6. Anular (sin capturar)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/payments/{{paymentId}}/cancel",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{paymentId}}",
+            "cancel"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "description": "Libera la retención de un pago `authorized` que no se ha capturado."
       }
     }
-  ],
-  "variable": [
-    { "key": "host", "value": "https://orquestacion-def-test.onrender.com" },
-    { "key": "merchantId", "value": "demo-merchant" },
-    { "key": "adminToken", "value": "" }
   ]
 }

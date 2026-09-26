@@ -70,6 +70,11 @@ const transactionSchema = new mongoose.Schema({
     orderUuid: String,
   },
 
+  // Idempotency-Key con la que se creó el pago en la API v1 (POST
+  // /v1/checkout-sessions). Un reintento con la misma clave devuelve la misma
+  // sesión en vez de crear otro pago. Índice único parcial más abajo.
+  idempotencyKey:     { type: String },
+
   // Bloqueo por pago de capture/refund/cancel (ver paymentLifecycleService).
   // Lease con caducidad: si el proceso muere a mitad, se libera solo.
   opLockUntil:        { type: Date, default: null },
@@ -90,6 +95,11 @@ transactionSchema.index({ hostedCheckoutId: 1 });
 // con índices sueltos cada consulta recorría todo el histórico del merchant.
 transactionSchema.index({ merchantId: 1, createdAt: -1 });
 transactionSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
+// Solo los pagos creados con Idempotency-Key (el resto no lleva el campo).
+transactionSchema.index(
+  { merchantId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }
+);
 
 module.exports = mongoose.models.Transaction ||
   mongoose.model('Transaction', transactionSchema);
