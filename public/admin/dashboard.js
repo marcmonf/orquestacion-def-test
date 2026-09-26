@@ -2,7 +2,9 @@
 (function () {
   'use strict';
 
-  var BASE_URL = 'https://orquestacion-def-test.onrender.com';
+  // Mismo origen que el panel. Antes estaba fijo a orquestacion-def-test.onrender.com:
+  // desplegado en otro dominio (producción), el panel seguía hablando con pruebas.
+  var BASE_URL = '';
   var session = null;
   var data = {};
   var chartInstances = {};
@@ -107,7 +109,9 @@
     opts = opts || {};
     if (!session || !session.token) return Promise.reject(new Error('no_session'));
     var h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.token };
-    return fetch(BASE_URL + path, Object.assign({ headers: h }, opts))
+    // Cabeceras extra (p. ej. Idempotency-Key) se MEZCLAN con las de sesión.
+    var headers = Object.assign({}, h, opts.headers || {});
+    return fetch(BASE_URL + path, Object.assign({}, opts, { headers: headers }))
       .then(function (r) {
         if (r.status === 401) { doLogout(); throw new Error('session_expired'); }
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -222,7 +226,7 @@
       var el = document.getElementById('wb_' + id);
       if (!el) return;
       try { renderWidget(id, el); }
-      catch (e) { el.innerHTML = '<div style="color:var(--text3);font-size:11px">Error: ' + e.message + '</div>'; }
+      catch (e) { el.innerHTML = '<div style="color:var(--text3);font-size:11px">Error: ' + esc(e.message) + '</div>'; }
     });
   }
 
@@ -230,8 +234,18 @@
   // en Paylands (amount:100 = 1,00 €). fmt() recibe CÉNTIMOS y los muestra en euros.
   function fmt(cents) { return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format((Number(cents)||0)/100); }
   function pct(v) { return (Math.round((v||0)*10)/10).toFixed(1)+'%'; }
-  function badge(type,txt) { return '<span class="kpi-badge '+type+'">'+txt+'</span>'; }
-  function statusBadge(s) { return '<span class="badge badge-'+(s||'')+'">'+( s||'–')+'</span>'; }
+  // Escapado HTML de TODO dato dinámico que se pinta con innerHTML. Antes el
+  // panel no escapaba nada: referencias de pedido, nombres, emails o merchantIds
+  // (datos que controla un merchant) se pintaban tal cual en la sesión del
+  // SUPERADMIN. Solo lo frenaba a medias xss-clean en la entrada (no escapa
+  // comillas). El portal (public/portal/app.js) ya escapaba; ahora ambos igual.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function badge(type,txt) { return '<span class="kpi-badge '+esc(type)+'">'+esc(txt)+'</span>'; }
+  function statusBadge(s) { return '<span class="badge badge-'+esc(s||'')+'">'+esc(s||'–')+'</span>'; }
 
   function renderWidget(id, el) {
     var k = data.kpis || {};
@@ -298,9 +312,9 @@
     el.innerHTML=cs.map(function(c){
       return '<div class="country-row">'+
         '<span class="country-flag">'+(FLAGS[c.country]||'🌍')+'</span>'+
-        '<span class="country-name">'+c.country+'</span>'+
-        '<div class="country-bar-wrap"><div class="country-bar" style="width:'+Math.round(c.count/max*100)+'%"></div></div>'+
-        '<span class="country-pct">'+c.count+'</span></div>';
+        '<span class="country-name">'+esc(c.country)+'</span>'+
+        '<div class="country-bar-wrap"><div class="country-bar" style="width:'+(Math.round(c.count/max*100)||0)+'%"></div></div>'+
+        '<span class="country-pct">'+esc(c.count)+'</span></div>';
     }).join('');
   }
 
@@ -313,12 +327,12 @@
     txs.forEach(function(t){
       var tr=document.createElement('tr'); tr.style.cursor='pointer';
       tr.innerHTML=
-        '<td style="font-family:monospace;font-size:11px">'+(t.paymentId||'–').slice(0,14)+'…</td>'+
-        '<td>'+(t.merchantReference||'–')+'</td>'+
+        '<td style="font-family:monospace;font-size:11px">'+esc(String(t.paymentId||'–').slice(0,14))+'…</td>'+
+        '<td>'+esc(t.merchantReference||'–')+'</td>'+
         '<td>'+fmt(t.amount)+'</td>'+
         '<td>'+statusBadge(t.status)+'</td>'+
-        '<td>'+(t.processor||'–')+'</td>'+
-        '<td>'+(t.createdAt||'').slice(0,10)+'</td>';
+        '<td>'+esc(t.processor||'–')+'</td>'+
+        '<td>'+esc(String(t.createdAt||'').slice(0,10))+'</td>';
       tr.addEventListener('click',(function(tx){return function(e){ if(e&&e.stopPropagation) e.stopPropagation(); showTxDetail(tx); };})(t));
       tbody.appendChild(tr);
     });
@@ -434,9 +448,9 @@
     var tbody = document.createElement('tbody');
     list.forEach(function (t) {
       var tr = document.createElement('tr'); tr.style.cursor = 'pointer';
-      tr.innerHTML = '<td style="font-family:monospace;font-size:11px">' + (t.paymentId || '–').slice(0, 14) + '…</td>' +
-        '<td>' + (t.merchantReference || '–') + '</td>' + '<td>' + fmt(t.amount) + '</td>' + '<td>' + statusBadge(t.status) + '</td>' +
-        '<td>' + (t.processor || '–') + '</td>' + '<td>' + (t.createdAt || '').slice(0, 10) + '</td>';
+      tr.innerHTML = '<td style="font-family:monospace;font-size:11px">' + esc(String(t.paymentId || '–').slice(0, 14)) + '…</td>' +
+        '<td>' + esc(t.merchantReference || '–') + '</td>' + '<td>' + fmt(t.amount) + '</td>' + '<td>' + statusBadge(t.status) + '</td>' +
+        '<td>' + esc(t.processor || '–') + '</td>' + '<td>' + esc(String(t.createdAt || '').slice(0, 10)) + '</td>';
       tr.addEventListener('click', (function (tx) { return function (e) { if (e && e.stopPropagation) e.stopPropagation(); closeExpandAndShowTx(tx); }; })(t));
       tbody.appendChild(tr);
     });
@@ -450,7 +464,7 @@
     var html = '<div style="height:320px;position:relative;margin-bottom:16px"><canvas id="c_expand"></canvas></div>';
     html += '<table class="tx-table"><thead><tr><th>Fecha</th><th>Total</th><th>Aprobadas</th><th>Rechazadas</th><th>Volumen</th></tr></thead><tbody>';
     tl.slice().reverse().forEach(function (d) {
-      html += '<tr><td>' + d.date + '</td><td>' + d.count + '</td><td>' + d.approved + '</td><td>' + d.declined + '</td><td>' + fmt(d.volume) + '</td></tr>';
+      html += '<tr><td>' + esc(d.date) + '</td><td>' + esc(d.count) + '</td><td>' + esc(d.approved) + '</td><td>' + esc(d.declined) + '</td><td>' + fmt(d.volume) + '</td></tr>';
     });
     html += '</tbody></table>';
     body.innerHTML = html;
@@ -479,7 +493,7 @@
     var html = '<div style="height:280px;position:relative;margin-bottom:16px"><canvas id="c_expand"></canvas></div>';
     html += '<table class="tx-table"><thead><tr><th>Conector</th><th>Método</th><th>Nº tx</th><th>Volumen</th><th>Tasa aprobación</th></tr></thead><tbody>';
     m.forEach(function (x) {
-      html += '<tr><td>' + (x.processor || '–') + '</td><td>' + (x.method || '–') + '</td><td>' + x.count + '</td><td>' + fmt(x.volume) + '</td><td>' + (x.approvalRate || 0) + '%</td></tr>';
+      html += '<tr><td>' + esc(x.processor || '–') + '</td><td>' + esc(x.method || '–') + '</td><td>' + esc(x.count) + '</td><td>' + fmt(x.volume) + '</td><td>' + esc(x.approvalRate || 0) + '%</td></tr>';
     });
     html += '</tbody></table>';
     body.innerHTML = html;
@@ -496,7 +510,7 @@
     if (!cs || !cs.length) { body.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin datos de países</div>'; return; }
     var html = '<table class="tx-table"><thead><tr><th>País</th><th>Nº tx</th><th>Volumen</th></tr></thead><tbody>';
     cs.forEach(function (c) {
-      html += '<tr><td>' + (FLAGS[c.country] || '🌍') + ' ' + c.country + '</td><td>' + c.count + '</td><td>' + fmt(c.volume) + '</td></tr>';
+      html += '<tr><td>' + (FLAGS[c.country] || '🌍') + ' ' + esc(c.country) + '</td><td>' + esc(c.count) + '</td><td>' + fmt(c.volume) + '</td></tr>';
     });
     html += '</tbody></table>';
     body.innerHTML = html;
@@ -577,7 +591,7 @@
       var nextBtn = document.getElementById('etxNext'); if (nextBtn) nextBtn.disabled = (p.page || 1) >= (p.pages || 1);
     }).catch(function (e) {
       var wrapNow = document.getElementById('etxTableWrap');
-      if (wrapNow) wrapNow.innerHTML = '<div style="color:var(--red);font-size:12px">' + e.message + '</div>';
+      if (wrapNow) wrapNow.innerHTML = '<div style="color:var(--red);font-size:12px">' + esc(e.message) + '</div>';
     });
   }
 
@@ -591,13 +605,13 @@
     txs.forEach(function (t) {
       var tr = document.createElement('tr'); tr.style.cursor = 'pointer';
       tr.innerHTML =
-        '<td style="font-family:monospace;font-size:11px">' + (t.paymentId || '–').slice(0, 14) + '…</td>' +
-        '<td>' + (t.merchantReference || '–') + '</td>' +
+        '<td style="font-family:monospace;font-size:11px">' + esc(String(t.paymentId || '–').slice(0, 14)) + '…</td>' +
+        '<td>' + esc(t.merchantReference || '–') + '</td>' +
         '<td>' + fmt(t.amount) + '</td>' +
         '<td>' + statusBadge(t.status) + '</td>' +
-        '<td>' + (t.processor || '–') + '</td>' +
-        '<td>' + (t.issuerCountry || '–') + '</td>' +
-        '<td>' + (t.createdAt || '').slice(0, 10) + '</td>';
+        '<td>' + esc(t.processor || '–') + '</td>' +
+        '<td>' + esc(t.issuerCountry || '–') + '</td>' +
+        '<td>' + esc(String(t.createdAt || '').slice(0, 10)) + '</td>';
       tr.addEventListener('click', (function (tx) { return function (e) { if (e && e.stopPropagation) e.stopPropagation(); closeExpandAndShowTx(tx); }; })(t));
       tbody.appendChild(tr);
     });
@@ -629,19 +643,22 @@
     ];
     var html='<div style="margin-bottom:12px">'+statusBadge(tx.status)+'</div>';
     html+='<div class="detail-grid">';
-    fields.forEach(function(f){html+='<div class="detail-item"><label>'+f[0]+'</label><span>'+(f[1]||'–')+'</span></div>';});
+    fields.forEach(function(f){html+='<div class="detail-item"><label>'+esc(f[0])+'</label><span>'+esc(f[1]||'–')+'</span></div>';});
     html+='</div>';
     if(ops.length){
       html+='<div style="margin-top:16px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Operaciones</div>';
-      ops.forEach(function(o){html+='<div style="font-size:12px;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border)">'+o.type+' · '+o.status+' · '+fmt(o.amount||0)+' · '+(o.createdAt||'').slice(0,10)+'</div>';});
+      ops.forEach(function(o){html+='<div style="font-size:12px;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border)">'+esc(o.type)+' · '+esc(o.status)+' · '+fmt(o.amount||0)+' · '+esc(String(o.createdAt||'').slice(0,10))+'</div>';});
     }
     document.getElementById('txDetail').innerHTML=html;
 
     // Botones de acción
     var actionsEl = document.getElementById('txActions');
     actionsEl.innerHTML = '';
-    var canCancel = ['initialized','hosted_pending','processing','authorized','approved','pending'].indexOf(tx.status)>=0;
-    var canRefund = ['approved','authorized','partially_refunded'].indexOf(tx.status)>=0 && (refundableAmount||0)>0;
+    // Mismas reglas que el servidor (src/services/paymentLifecycleService.js):
+    // cancelar = anular una autorización sin capturar (o un checkout sin
+    // completar); reembolsar = devolver lo capturado.
+    var canCancel = ['initialized','hosted_pending','pending','authorized'].indexOf(tx.status)>=0;
+    var canRefund = ['approved','authorized','partially_captured','captured','partially_refunded'].indexOf(tx.status)>=0 && (refundableAmount||0)>0;
     var role = session && session.user && session.user.role;
     var canAct = role==='superadmin'||role==='admin'||role==='operator';
 
@@ -662,7 +679,14 @@
   /* ── REFUND MODAL ──
      maxRefundable llega del servidor en CÉNTIMOS. El input se maneja en EUROS
      de cara al usuario; la conversión a céntimos se hace al enviar (doRefund). */
+  var refundIdemKey = null;
+  function newIdemKey() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return 'bo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  }
+
   function openRefundModal(tx, maxRefundable) {
+    refundIdemKey = newIdemKey();
     document.getElementById('txModal').classList.remove('open');
     var maxEur = Math.round((Number(maxRefundable)||0)) / 100; // céntimos → euros
     document.getElementById('refundPaymentId').textContent = tx.paymentId;
@@ -701,8 +725,11 @@
 
     var amountCents = Math.round(amountEur*100); // euros → céntimos para el servidor
     btn.disabled=true; btn.textContent='Procesando…';
-    api('/backoffice/transactions/'+paymentId+'/refund',{
-      method:'POST', body:JSON.stringify({amount:amountCents,reason:reason})
+    // Una clave de idempotencia por apertura del modal: un doble clic o un
+    // reintento de red NO puede lanzar dos reembolsos reales.
+    if (!refundIdemKey) refundIdemKey = newIdemKey();
+    api('/backoffice/transactions/'+encodeURIComponent(paymentId)+'/refund',{
+      method:'POST', headers: { 'Idempotency-Key': refundIdemKey }, body:JSON.stringify({amount:amountCents,reason:reason})
     }).then(function(r){
       document.getElementById('refundModal').classList.remove('open');
       alert('✅ Reembolso procesado: '+fmt(r.refundAmount)+'\nNuevo estado: '+r.newStatus);
@@ -715,7 +742,7 @@
 
   function cancelTx(paymentId) {
     if(!confirm('¿Cancelar esta transacción?')) return;
-    api('/backoffice/transactions/'+paymentId+'/cancel',{method:'POST',body:JSON.stringify({reason:'backoffice_manual_cancel'})})
+    api('/backoffice/transactions/'+encodeURIComponent(paymentId)+'/cancel',{method:'POST',headers:{'Idempotency-Key':newIdemKey()},body:JSON.stringify({reason:'backoffice_manual_cancel'})})
       .then(function(){ document.getElementById('txModal').classList.remove('open'); loadAll(); })
       .catch(function(e){alert('Error: '+e.message);});
   }
@@ -725,7 +752,7 @@
     api('/backoffice/users').then(function(r){
       renderUsersTable(r.users||[]);
     }).catch(function(e){
-      document.getElementById('usersTableBody').innerHTML='<tr><td colspan="6" style="color:var(--red);padding:12px">'+e.message+'</td></tr>';
+      document.getElementById('usersTableBody').innerHTML='<tr><td colspan="6" style="color:var(--red);padding:12px">'+esc(e.message)+'</td></tr>';
     });
   }
 
@@ -734,14 +761,14 @@
     if(!users.length){tbody.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:12px">No hay usuarios</td></tr>';return;}
     tbody.innerHTML=users.map(function(u){
       return '<tr>'+
-        '<td>'+u.name+'</td>'+
-        '<td>'+u.email+'</td>'+
-        '<td><span class="badge badge-role-'+u.role+'">'+u.role+'</span></td>'+
-        '<td style="font-size:11px">'+(u.merchantScope||[]).join(', ')+'</td>'+
+        '<td>'+esc(u.name)+'</td>'+
+        '<td>'+esc(u.email)+'</td>'+
+        '<td><span class="badge badge-role-'+esc(u.role)+'">'+esc(u.role)+'</span></td>'+
+        '<td style="font-size:11px">'+esc((u.merchantScope||[]).join(', '))+'</td>'+
         '<td>'+statusBadge(u.active?'approved':'cancelled')+'</td>'+
         '<td style="display:flex;gap:6px">'+
-          '<button class="btn-sm" data-id="'+u._id+'" data-action="edit">Editar</button>'+
-          (u.email!==session.user.email?'<button class="btn-sm btn-sm-danger" data-id="'+u._id+'" data-action="deactivate">'+(u.active?'Desactivar':'Activado')+'</button>':'')+
+          '<button class="btn-sm" data-id="'+esc(u._id)+'" data-action="edit">Editar</button>'+
+          (u.email!==session.user.email?'<button class="btn-sm btn-sm-danger" data-id="'+esc(u._id)+'" data-action="deactivate">'+(u.active?'Desactivar':'Activado')+'</button>':'')+
         '</td></tr>';
     }).join('');
 
@@ -819,7 +846,7 @@
     api('/backoffice/merchants').then(function(r){
       renderMerchantsTable(r.merchants||[]);
     }).catch(function(e){
-      document.getElementById('merchantsTableBody').innerHTML='<tr><td colspan="6" style="color:var(--red);padding:12px">'+e.message+'</td></tr>';
+      document.getElementById('merchantsTableBody').innerHTML='<tr><td colspan="6" style="color:var(--red);padding:12px">'+esc(e.message)+'</td></tr>';
     });
   }
 
@@ -829,16 +856,17 @@
     tbody.innerHTML = merchants.map(function(m){
       var statusKey = m.status==='active' ? 'approved' : (m.status==='suspended' ? 'cancelled' : 'pending');
       return '<tr>'+
-        '<td style="font-family:monospace">'+m.merchantId+'</td>'+
-        '<td>'+(m.name||'–')+'</td>'+
-        '<td>'+(m.country||'–')+'</td>'+
-        '<td>'+(m.plan||'–')+'</td>'+
+        '<td style="font-family:monospace">'+esc(m.merchantId)+'</td>'+
+        '<td>'+esc(m.name||'–')+'</td>'+
+        '<td>'+esc(m.country||'–')+'</td>'+
+        '<td>'+esc(m.plan||'–')+'</td>'+
         '<td>'+statusBadge(statusKey)+'</td>'+
         '<td style="display:flex;gap:6px">'+
-          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="edit">Editar</button>'+
-          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="portal">Portal</button>'+
-          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="contract">Tarifa</button>'+
-          '<button class="btn-sm" data-id="'+m.merchantId+'" data-action="keys">API Keys</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="edit">Editar</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="portal">Portal</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="contract">Tarifa</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="keys">API Keys</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="whsecret">Secreto webhook</button>'+
         '</td></tr>';
     }).join('');
 
@@ -850,8 +878,20 @@
         if(action==='portal') openPortalUsersModal(id);
         if(action==='contract') openContractModal(id);
         if(action==='keys') openApiKeysModal(id);
+        if(action==='whsecret') rotateWebhookSecret(id);
       });
     });
+  }
+
+  // Genera (o rota) el secreto con el que Monetiser firma los webhooks de este
+  // merchant (cabecera Monetiser-Signature). Se muestra UNA sola vez.
+  function rotateWebhookSecret(mid) {
+    if (!confirm('¿Generar un secreto NUEVO de firma de webhooks para ' + mid + '?\n\nEl anterior deja de valer: el comercio debe actualizarlo en su servidor.')) return;
+    api('/backoffice/merchants/' + encodeURIComponent(mid) + '/webhook-secret', { method: 'POST' })
+      .then(function (r) {
+        window.prompt('Secreto de firma de webhooks de ' + mid + ' (cópialo ahora, no se vuelve a mostrar):', r.webhookSigningSecret || '');
+      })
+      .catch(function (e) { alert('Error: ' + e.message); });
   }
 
   function openCreateMerchant() {
@@ -907,13 +947,19 @@
       req = api('/backoffice/merchants', { method:'POST', body: JSON.stringify(body) });
     }
 
-    req.then(function(){
+    req.then(function(r){
       btn.disabled = false;
       document.getElementById('merchantModal').classList.remove('open');
+      // Alta: el servidor genera el secreto de firma de webhooks y lo devuelve
+      // UNA sola vez. Hay que entregárselo al comercio para que verifique la
+      // cabecera Monetiser-Signature.
+      if (r && r.webhookSigningSecret) {
+        window.prompt('Merchant creado. Secreto de firma de webhooks (cópialo ahora y entrégalo al comercio; no se vuelve a mostrar):', r.webhookSigningSecret);
+      }
       loadMerchants();
     }).catch(function(e){
       btn.disabled = false;
-      errEl.textContent = 'Error: '+e.message;
+      errEl.textContent = 'Error: '+(e.message === 'HTTP 400' ? 'datos no válidos (merchantId: 3-64 letras/números/-/_; webhook: URL https)' : e.message);
     });
   }
 
@@ -932,7 +978,7 @@
     api('/backoffice/merchants/'+merchantId+'/api-keys').then(function(r){
       renderApiKeysTable(r.keys||[]);
     }).catch(function(e){
-      document.getElementById('apiKeysTableBody').innerHTML='<tr><td colspan="5" style="color:var(--red);padding:12px">'+e.message+'</td></tr>';
+      document.getElementById('apiKeysTableBody').innerHTML='<tr><td colspan="5" style="color:var(--red);padding:12px">'+esc(e.message)+'</td></tr>';
     });
   }
 
@@ -942,13 +988,13 @@
     tbody.innerHTML = keys.map(function(k){
       var lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString('es-ES') : 'nunca';
       var revokeBtn = k.active
-        ? '<button class="btn-sm btn-sm-danger" data-id="'+k._id+'" data-action="revoke">Revocar</button>'
+        ? '<button class="btn-sm btn-sm-danger" data-id="'+esc(k._id)+'" data-action="revoke">Revocar</button>'
         : '<span style="color:var(--text3);font-size:11px">revocada</span>';
       return '<tr>'+
-        '<td style="font-family:monospace">'+(k.keyPrefix||'–')+'…</td>'+
-        '<td>'+(k.label||'–')+'</td>'+
+        '<td style="font-family:monospace">'+esc(k.keyPrefix||'–')+'…</td>'+
+        '<td>'+esc(k.label||'–')+'</td>'+
         '<td>'+statusBadge(k.active?'approved':'cancelled')+'</td>'+
-        '<td style="font-size:11px">'+lastUsed+'</td>'+
+        '<td style="font-size:11px">'+esc(lastUsed)+'</td>'+
         '<td>'+revokeBtn+'</td>'+
         '</tr>';
     }).join('');
@@ -1024,9 +1070,12 @@
 
     var amount     = parseFloat(document.getElementById('rulesSampleAmount').value) || undefined;
     var currency   = document.getElementById('rulesSampleCurrency').value.trim() || undefined;
-    var cardNumber = document.getElementById('rulesSampleCard').value.trim() || undefined;
+    // Solo el BIN (6-8 primeros dígitos): un número de tarjeta completo nunca
+    // debe llegar al servidor (PCI SAQ A). El servidor rechaza más de 8 dígitos.
+    var binDigits = document.getElementById('rulesSampleCard').value.replace(/\D/g, '').slice(0, 8);
+    var bin = binDigits || undefined;
 
-    api('/backoffice/rules/try', { method:'POST', body: JSON.stringify({ policy: policy, sample: { amount: amount, currency: currency, cardNumber: cardNumber } }) })
+    api('/backoffice/rules/try', { method:'POST', body: JSON.stringify({ policy: policy, sample: { amount: amount, currency: currency, bin: bin } }) })
       .then(function(j){ rulesRenderTry(j); })
       .catch(function(e){
         var msg = e.message === 'HTTP 404' ? 'Función desactivada en el servidor (activa FEATURE_RULE_TRY=1 en Render)' : e.message;
@@ -1037,16 +1086,16 @@
   function rulesRenderTry(resp) {
     var el = document.getElementById('rulesTryOut');
     if (!resp || resp.success !== true) {
-      el.innerHTML = '<div style="color:var(--red)">❌ '+(resp && resp.error || 'Error en /rules/try')+'</div>';
+      el.innerHTML = '<div style="color:var(--red)">❌ '+esc(resp && resp.error || 'Error en /rules/try')+'</div>';
       return;
     }
     var d = resp.decision || {};
     var lines = [
-      '🔎 Conector: <b>'+d.connector+'</b>',
-      d.matchedRuleId ? 'Regla aplicada: <b>'+d.matchedRuleId+'</b>' : 'Sin match → default',
+      '🔎 Conector: <b>'+esc(d.connector)+'</b>',
+      d.matchedRuleId ? 'Regla aplicada: <b>'+esc(d.matchedRuleId)+'</b>' : 'Sin match → default',
       '',
       '<b>Explicación legible</b>'
-    ].concat(Array.isArray(resp.explainHuman) ? resp.explainHuman : []);
+    ].concat(Array.isArray(resp.explainHuman) ? resp.explainHuman.map(esc) : []);
     el.innerHTML = lines.map(function(l){ return '<div>'+l+'</div>'; }).join('');
   }
 
@@ -1094,8 +1143,8 @@
         list.innerHTML = (j.items||[]).map(function(it){
           var changed = Array.isArray(it.changedFields) ? it.changedFields.join(', ') : '-';
           return '<div style="padding:8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:6px">'+
-            '<div><b>'+new Date(it.createdAt).toLocaleString('es-ES')+'</b> · actor: '+(it.actor||'unknown')+'</div>'+
-            '<div style="margin-top:4px">changedFields: '+changed+'</div>'+
+            '<div><b>'+esc(new Date(it.createdAt).toLocaleString('es-ES'))+'</b> · actor: '+esc(it.actor||'unknown')+'</div>'+
+            '<div style="margin-top:4px">changedFields: '+esc(changed)+'</div>'+
             '</div>';
         }).join('') || '<div style="color:var(--text3)">Sin cambios registrados</div>';
       })
@@ -1190,7 +1239,7 @@
         btn.disabled = false;
         var inv = r.invoice || {};
         st.style.color = 'var(--green)';
-        st.innerHTML = '✅ Factura emitida: <b>' + (inv.invoiceNumber || '–') + '</b> · total ' + fmt(inv.total) + '. El comercio la ve en su portal → Facturación.';
+        st.innerHTML = '✅ Factura emitida: <b>' + esc(inv.invoiceNumber || '–') + '</b> · total ' + fmt(inv.total) + '. El comercio la ve en su portal → Facturación.';
       })
       .catch(function(e){
         btn.disabled = false; st.style.color = 'var(--red)';
@@ -1221,7 +1270,7 @@
     api('/backoffice/merchants/' + encodeURIComponent(mid) + '/portal-users').then(function(r){
       renderPortalUsersTable(r.users || []);
     }).catch(function(e){
-      document.getElementById('puTableBody').innerHTML = '<tr><td colspan="4" style="color:var(--red);padding:12px">' + e.message + '</td></tr>';
+      document.getElementById('puTableBody').innerHTML = '<tr><td colspan="4" style="color:var(--red);padding:12px">' + esc(e.message) + '</td></tr>';
     });
   }
 
@@ -1229,7 +1278,7 @@
     var tbody = document.getElementById('puTableBody');
     if (!users.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3);padding:12px">Sin usuarios todavía</td></tr>'; return; }
     tbody.innerHTML = users.map(function(u){
-      return '<tr><td>' + (u.name||'–') + '</td><td>' + (u.email||'–') + '</td><td>' + (u.role||'–') + '</td><td>' + statusBadge(u.active?'approved':'cancelled') + '</td></tr>';
+      return '<tr><td>' + esc(u.name||'–') + '</td><td>' + esc(u.email||'–') + '</td><td>' + esc(u.role||'–') + '</td><td>' + statusBadge(u.active?'approved':'cancelled') + '</td></tr>';
     }).join('');
   }
 
