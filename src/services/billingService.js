@@ -15,7 +15,6 @@ const PricingPlan    = require('../models/PricingPlan');
 const BillingRecord  = require('../models/BillingRecord');
 const MerchantContract = require('../models/MerchantContract');
 const MerchantUser   = require('../models/MerchantUser');
-const InvoiceCounter = require('../models/InvoiceCounter');
 const { defaultsFor } = require('../utils/pricingDefaults');
 const { getTaxRate } = require('./taxService');
 const { getCompany } = require('./companyService');
@@ -67,7 +66,10 @@ async function resolveConfig(merchant) {
     volumeBps: pricing.volumeBps || 0,
     perUserFee: 0, includedUsers: 0, services: [],
     taxRateCode: 'IGIC_GENERAL',
-    recipient: {},
+    // Los datos fiscales del cliente se guardan en su ficha de contrato aunque
+    // la tarifa propia esté desactivada (se factura por plan): antes, sin
+    // contrato activo, la factura salía SIN datos del receptor.
+    recipient: (contract && contract.billing) || {},
   };
 }
 
@@ -152,16 +154,118 @@ async function getFinalized(merchantId, period) {
   return BillingRecord.findOne({ merchantId, period });
 }
 
-// Número correlativo atómico por serie+año. Formato: 'A-2026-0001'.
-async function nextInvoiceNumber(series, year) {
-  const key = `${series}-${year}`;
-  const c = await InvoiceCounter.findOneAndUpdate({ key }, { $inc: { last: 1 } }, { new: true, upsert: true });
-  const n = (c && c.last) || 1;
-  return `${series}-${year}-${String(n).padStart(4, '0')}`;
+// ── Datos fiscales obligatorios ──────────────────────────────────────────────
+// Una factura sin razón social, NIF o domicilio de emisor y destinatario no es
+// una factura válida (Reglamento de facturación, RD 1619/2012, art. 6). Antes se
+// emitía igual, con los campos en blanco, y además consumía número: una factura
+// emitida no se puede borrar (habría que rectificarla).
+const REQUIRED_FISCAL_FIELDS = [
+  ['issuer.legalName',          'Razón social del emisor (/admin → Facturación → Datos de la Sociedad)'],
+  ['issuer.taxId',              'NIF/CIF del emisor'],
+  ['issuer.address.street',     'Dirección del emisor'],
+  ['issuer.address.postalCode', 'Código postal del emisor'],
+  ['issuer.address.city',       'Ciudad del emisor'],
+  ['recipient.legalName',       'Razón social del cliente (/admin → Merchants → Tarifa)'],
+  ['recipient.taxId',           'NIF/CIF del cliente'],
+  ['recipient.street',          'Dirección del cliente'],
+  ['recipient.postalCode',      'Código postal del cliente'],
+  ['recipient.city',            'Ciudad del cliente'],
+];
+
+function pick(obj, path) {
+  return path.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj);
+}
+
+function missingFiscalData(issuer, recipient) {
+  const doc = { issuer, recipient };
+  return REQUIRED_FISCAL_FIELDS
+    .filter(([path]) => !String(pick(doc, path) || '').trim())
+    .map(([path, label]) => ({ field: path, label }));
+}
+
+function buildRecipient(merchant, config) {
+  const r = config.recipient || {};
+  return {
+    merchantId: merchant.merchantId,
+    legalName:  r.legalName || '',
+    taxId:      r.taxId || '',
+    street:     r.street || '',
+    city:       r.city || '',
+    postalCode: r.postalCode || '',
+    province:   r.province || '',
+    country:    r.country || 'ES',
+    email:      r.email || '',
+  };
+}
+
+function buildIssuer(company) {
+  return {
+    legalName: company.legalName, tradeName: company.tradeName, taxId: company.taxId,
+    address: company.address, email: company.email, phone: company.phone, iban: company.iban,
+    taxRegime: company.taxRegime, logoDataUrl: company.logoDataUrl, footerNotes: company.footerNotes,
+  };
+}
+
+// ── Numeración correlativa SIN HUECOS ────────────────────────────────────────
+// Formato 'A-2026-0001' (serie-año-secuencia; a partir de 9999 crece a 5 cifras).
+//
+// Antes: un contador ($inc en invoicecounters) se incrementaba ANTES de crear la
+// factura. Si la creación fallaba —o dos peticiones finalizaban a la vez el
+// mismo merchant y período y una perdía contra el índice único— el número ya
+// estaba gastado: hueco en la numeración, que la normativa exige correlativa.
+//
+// Ahora el número se "gasta" SOLO al crearse la factura: siguiente = última
+// emitida de esa serie y año + 1, y el índice único de invoiceNumber impide que
+// dos facturas cojan el mismo; si chocan, la perdedora reintenta con el
+// siguiente. Si lo que choca es el merchant+período (otra petición la emitió a
+// la vez), se devuelve esa factura. Sin transacciones: vale en Atlas y en local.
+const MAX_NUMBER_ATTEMPTS = 8;
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatInvoiceNumber(series, year, seq) {
+  return `${series}-${year}-${String(seq).padStart(4, '0')}`;
+}
+
+async function lastInvoiceSeq(series, year) {
+  const prefix = `${series}-${year}-`;
+  const rows = await BillingRecord
+    .find({ invoiceNumber: { $regex: `^${escapeRegex(prefix)}\\d+$` } })
+    .select('invoiceNumber')
+    .lean();
+  return rows.reduce((max, r) => {
+    const n = parseInt(String(r.invoiceNumber).slice(prefix.length), 10);
+    return Number.isFinite(n) && n > max ? n : max;
+  }, 0);
+}
+
+function isDuplicateKey(err) {
+  return Boolean(err) && (err.code === 11000 || /E11000/.test(String(err.message || '')));
+}
+
+async function createWithNextNumber(series, year, data) {
+  for (let attempt = 0; attempt < MAX_NUMBER_ATTEMPTS; attempt += 1) {
+    const invoiceNumber = formatInvoiceNumber(series, year, (await lastInvoiceSeq(series, year)) + 1);
+    try {
+      return await BillingRecord.create({ ...data, invoiceNumber });
+    } catch (err) {
+      if (!isDuplicateKey(err)) throw err;
+      const existing = await BillingRecord.findOne({ merchantId: data.merchantId, period: data.period });
+      if (existing) return existing;   // otra petición emitió esta misma factura a la vez
+      // Si no, otra factura se llevó ese número a la vez: se prueba el siguiente.
+    }
+  }
+  const e = new Error('invoice_number_contention');
+  e.code = 'invoice_number_contention';
+  throw e;
 }
 
 // Finaliza (emite) la factura de un período CERRADO. Idempotente. Congela cifras,
-// impuesto, número correlativo y snapshots de emisor/receptor.
+// impuesto, número correlativo y snapshots de emisor/receptor. Exige los datos
+// fiscales completos ANTES de asignar número (error 'fiscal_data_incomplete' con
+// la lista `missing`).
 async function finalizeBilling(merchant, period, actor, now) {
   if (!periodRange(period)) { const e = new Error('invalid_period'); e.code = 'invalid_period'; throw e; }
   if (!isPeriodClosed(period, now || new Date())) { const e = new Error('period_not_closed'); e.code = 'period_not_closed'; throw e; }
@@ -169,30 +273,21 @@ async function finalizeBilling(merchant, period, actor, now) {
   if (existing) return existing;
 
   const config = await resolveConfig(merchant);
-  const b = await billForMerchant(merchant, period);
   const company = await getCompany();
+  const recipient = buildRecipient(merchant, config);
+  const issuer = buildIssuer(company);
+  const missing = missingFiscalData(issuer, recipient);
+  if (missing.length) {
+    const e = new Error('fiscal_data_incomplete');
+    e.code = 'fiscal_data_incomplete';
+    e.missing = missing;
+    throw e;
+  }
+
+  const b = await billForMerchant(merchant, period);
   const year = period.split('-')[0];
-  const invoiceNumber = await nextInvoiceNumber(company.invoiceSeries || 'A', year);
-
-  const recipient = {
-    merchantId: merchant.merchantId,
-    legalName: (config.recipient && config.recipient.legalName) || merchant.name || merchant.merchantId,
-    taxId:      (config.recipient && config.recipient.taxId) || '',
-    street:     (config.recipient && config.recipient.street) || '',
-    city:       (config.recipient && config.recipient.city) || '',
-    postalCode: (config.recipient && config.recipient.postalCode) || '',
-    province:   (config.recipient && config.recipient.province) || '',
-    country:    (config.recipient && config.recipient.country) || 'ES',
-    email:      (config.recipient && config.recipient.email) || '',
-  };
-  const issuer = {
-    legalName: company.legalName, tradeName: company.tradeName, taxId: company.taxId,
-    address: company.address, email: company.email, phone: company.phone, iban: company.iban,
-    taxRegime: company.taxRegime, logoDataUrl: company.logoDataUrl, footerNotes: company.footerNotes,
-  };
-
-  return BillingRecord.create({
-    merchantId: merchant.merchantId, period, invoiceNumber,
+  return createWithNextNumber(company.invoiceSeries || 'A', year, {
+    merchantId: merchant.merchantId, period,
     plan: b.plan, currency: b.currency,
     pricingSnapshot: { monthlyBase: b.subscriptionFee, perTransactionFee: config.perTransactionFee || 0, volumeBps: config.volumeBps || 0 },
     transactionsCount: b.transactionsCount, billableCount: b.billableCount, billableVolume: b.billableVolume,
@@ -204,6 +299,28 @@ async function finalizeBilling(merchant, period, actor, now) {
     issuer, recipient,
     status: 'finalized', finalizedBy: actor || null,
   });
+}
+
+// Finaliza el período para una lista de merchants SIN pararse en el primero que
+// falle (antes, un merchant sin datos fiscales cortaba el lote con un 500 y los
+// demás quedaban a medias). Devuelve el resumen y los que no se pudieron emitir.
+async function finalizeMany(merchants, period, actor, now) {
+  const out = { finalized: [], already: [], skipped: [] };
+  for (const m of merchants) {
+    try {
+      const existed = await getFinalized(m.merchantId, period);
+      if (existed) { out.already.push(existed); continue; }
+      out.finalized.push(await finalizeBilling(m, period, actor, now));
+    } catch (err) {
+      if (!err.code) console.error(`❌ [billing] finalizando ${m.merchantId} ${period}:`, err);
+      out.skipped.push({
+        merchantId: m.merchantId,
+        error: err.code || 'internal_error',
+        ...(err.missing ? { missing: err.missing } : {}),
+      });
+    }
+  }
+  return out;
 }
 
 async function listInvoices(merchantId, limit = 24) {
@@ -221,6 +338,6 @@ async function markSent(invoiceId, to) {
 
 module.exports = {
   BILLABLE_STATUSES, periodRange, periodOf, getPricing, resolveConfig, computeBilling,
-  billForMerchant, isPeriodClosed, getFinalized, nextInvoiceNumber, finalizeBilling,
-  listInvoices, getInvoice, markSent,
+  billForMerchant, isPeriodClosed, getFinalized, finalizeBilling, finalizeMany,
+  missingFiscalData, formatInvoiceNumber, listInvoices, getInvoice, markSent,
 };

@@ -126,7 +126,9 @@
         // al mensaje; antes solo se veía "HTTP 409".
         if (!r.ok) {
           return r.json().catch(function () { return {}; }).then(function (j) {
-            throw new Error((j && j.error) || ('HTTP ' + r.status));
+            var err = new Error((j && j.error) || ('HTTP ' + r.status));
+            err.details = j || {};
+            throw err;
           });
         }
         return r.json();
@@ -1215,7 +1217,15 @@
       document.getElementById('coTradeName').value     = c.tradeName     || '';
       document.getElementById('coTaxId').value         = c.taxId         || '';
       document.getElementById('coInvoiceSeries').value = c.invoiceSeries || 'A';
-      document.getElementById('coAddress').value       = c.address       || '';
+      // La dirección es un objeto (calle, CP, ciudad, provincia, país). Antes el
+      // formulario la trataba como un texto: salía "[object Object]" y al
+      // guardar el servidor fallaba.
+      var a = (c.address && typeof c.address === 'object') ? c.address : { street: c.address || '' };
+      document.getElementById('coStreet').value        = a.street        || '';
+      document.getElementById('coPostalCode').value    = a.postalCode    || '';
+      document.getElementById('coCity').value          = a.city          || '';
+      document.getElementById('coProvince').value      = a.province      || '';
+      document.getElementById('coCountry').value       = a.country       || 'ES';
       document.getElementById('coEmail').value         = c.email         || '';
       document.getElementById('coPhone').value         = c.phone         || '';
       document.getElementById('coIban').value          = c.iban          || '';
@@ -1230,7 +1240,10 @@
     var btn = document.getElementById('saveCompanyBtn');
     var body = {
       legalName: val('coLegalName'), tradeName: val('coTradeName'), taxId: val('coTaxId'),
-      invoiceSeries: val('coInvoiceSeries'), address: val('coAddress'), email: val('coEmail'),
+      invoiceSeries: val('coInvoiceSeries').toUpperCase(),
+      address: { street: val('coStreet'), postalCode: val('coPostalCode'), city: val('coCity'),
+                 province: val('coProvince'), country: (val('coCountry') || 'ES').toUpperCase() },
+      email: val('coEmail'),
       phone: val('coPhone'), iban: val('coIban'), taxRegime: val('coTaxRegime'), footerNotes: val('coFooterNotes')
     };
     btn.disabled = true; st.style.color = 'var(--text3)'; st.textContent = 'Guardando…';
@@ -1257,8 +1270,12 @@
       })
       .catch(function(e){
         btn.disabled = false; st.style.color = 'var(--red)';
-        var msg = e.message === 'HTTP 400' ? 'Ese mes aún no está cerrado (elige un mes anterior) o el período es inválido.'
-                : e.message === 'HTTP 404' ? 'Ese Merchant ID no existe.'
+        var msg = (e.message === 'period_not_closed' || e.message === 'invalid_period')
+                  ? 'Ese mes aún no está cerrado (elige un mes anterior) o el período es inválido.'
+                : e.message === 'merchant_not_found' ? 'Ese Merchant ID no existe.'
+                : e.message === 'fiscal_data_incomplete'
+                  ? 'Faltan datos fiscales: ' + ((e.details && e.details.missing) || []).map(function(m){ return m.label; }).join(' · ') +
+                    '. No se ha emitido nada ni se ha gastado ningún número.'
                 : e.message;
         st.textContent = 'Error: ' + msg;
       });
@@ -1333,6 +1350,9 @@
     document.getElementById('ctPerUser').value = '';
     document.getElementById('ctIncludedUsers').value = '';
     document.getElementById('ctTaxCode').value = 'IGIC_GENERAL';
+    document.getElementById('ctActive').checked = false;
+    ['ctLegalName','ctTaxId','ctStreet','ctPostalCode','ctCity','ctProvince','ctBillingEmail'].forEach(function(id){ document.getElementById(id).value = ''; });
+    document.getElementById('ctCountry').value = 'ES';
     document.getElementById('contractModal').classList.add('open');
     api('/backoffice/merchants/' + encodeURIComponent(mid) + '/contract').then(function(r){
       var c = r.contract;
@@ -1344,6 +1364,16 @@
       document.getElementById('ctPerUser').value       = centsToEur(c.perUserFee);
       document.getElementById('ctIncludedUsers').value = (c.includedUsers != null ? c.includedUsers : '');
       document.getElementById('ctTaxCode').value       = c.taxRateCode || 'IGIC_GENERAL';
+      document.getElementById('ctActive').checked      = c.active !== false;
+      var b = c.billing || {};
+      document.getElementById('ctLegalName').value     = b.legalName  || '';
+      document.getElementById('ctTaxId').value         = b.taxId      || '';
+      document.getElementById('ctStreet').value        = b.street     || '';
+      document.getElementById('ctPostalCode').value    = b.postalCode || '';
+      document.getElementById('ctCity').value          = b.city       || '';
+      document.getElementById('ctProvince').value      = b.province   || '';
+      document.getElementById('ctCountry').value       = b.country    || 'ES';
+      document.getElementById('ctBillingEmail').value  = b.email      || '';
     }).catch(function(){ /* sin contrato: se deja en blanco */ });
   }
 
@@ -1360,7 +1390,14 @@
       perUserFee:         eurToCents(val('ctPerUser')),
       includedUsers:      Math.max(0, Math.round(Number(val('ctIncludedUsers')) || 0)),
       taxRateCode:        val('ctTaxCode') || 'IGIC_GENERAL',
-      active: true
+      // Antes se guardaba SIEMPRE como tarifa activa: abrir "Tarifa" solo para
+      // poner los datos fiscales dejaba al comercio facturado a 0 €.
+      active: document.getElementById('ctActive').checked,
+      billing: {
+        legalName: val('ctLegalName'), taxId: val('ctTaxId'), street: val('ctStreet'),
+        postalCode: val('ctPostalCode'), city: val('ctCity'), province: val('ctProvince'),
+        country: (val('ctCountry') || 'ES').toUpperCase(), email: val('ctBillingEmail')
+      }
     };
     btn.disabled = true;
     api('/backoffice/merchants/' + encodeURIComponent(currentContractMerchant) + '/contract', { method:'PUT', body: JSON.stringify(body) })

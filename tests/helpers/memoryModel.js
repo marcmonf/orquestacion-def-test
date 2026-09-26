@@ -12,10 +12,10 @@
 // Mongo: el test firmaba mal el webhook. Arreglado 21 ago 2026, ver DEV-LOG.
 //
 // Soporta lo que el código real invoca:
-//   create(data) · findOne(query) · findById(id) · countDocuments(query)
+//   create(data) (con índices únicos opcionales) · findOne(query) · findById(id) · countDocuments(query)
 //   find(query).select().sort().lean()  (y find(query) awaitable)
 //   findOneAndUpdate / updateOne con $set, $inc (y upsert en el primero)
-// El matcher entiende igualdad y los operadores $ne / $in.
+// El matcher entiende igualdad y los operadores $ne / $in / $nin / $gt(e) / $lt(e) / $regex.
 //
 let _seq = 1;
 
@@ -25,6 +25,8 @@ function matches(doc, query) {
     if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
       return Object.entries(v).every(([op, operand]) => {
         switch (op) {
+          case '$regex': return new RegExp(operand, v.$options || '').test(String(doc[k] == null ? '' : doc[k]));
+          case '$options': return true;   // lo consume $regex
           case '$ne':  return doc[k] !== operand;
           case '$in':  return Array.isArray(operand) && operand.includes(doc[k]);
           case '$nin': return Array.isArray(operand) && !operand.includes(doc[k]);
@@ -52,8 +54,22 @@ function attachSave(doc, store) {
   return doc;
 }
 
-module.exports = function makeMemoryModel() {
+// opts.unique: lista de claves únicas, p. ej. [['invoiceNumber'], ['merchantId', 'period']].
+// create() lanza un error E11000 (code 11000) como el índice único de Mongo.
+module.exports = function makeMemoryModel(opts = {}) {
   const store = [];
+  const uniques = opts.unique || [];
+
+  function assertUnique(data) {
+    for (const keys of uniques) {
+      if (keys.some(k => data[k] === undefined || data[k] === null)) continue;
+      if (store.some(d => keys.every(k => d[k] === data[k]))) {
+        const e = new Error(`E11000 duplicate key error dup key: ${JSON.stringify(keys.map(k => data[k]))}`);
+        e.code = 11000;
+        throw e;
+      }
+    }
+  }
 
   function queryResult(rows) {
     let _skip = 0, _limit = null;
@@ -78,6 +94,7 @@ module.exports = function makeMemoryModel() {
     __reset() { store.length = 0; },
 
     async create(data) {
+      assertUnique(data);
       const doc = attachSave(
         { _id: String(_seq++), createdAt: new Date(), updatedAt: new Date(), ...data },
         store
