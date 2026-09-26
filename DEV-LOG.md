@@ -228,6 +228,8 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 | **La sesión del Hosted Checkout no caducaba nunca** (26 sep 2026) | `sessionExpiresAt` no estaba declarado en el schema de `Transaction` → Mongoose lo descartaba al guardar: el MISMO patrón que `hostedCheckoutId` (primera fila de esta tabla) y `lastWebhookAt`. `/hpp` no devolvía nunca 410 y `GET status` decía `expired:false` siempre, aunque la API anunciaba `session.expiresAt`. Los tests no lo veían porque mockean el modelo. | Campo declarado + test contra el schema REAL (`jest.requireActual`). |
 | **El botón "Cargar" de `test-checkout.html` no hacía nada** (26 sep 2026) | Su JavaScript iba EN LÍNEA y la CSP por defecto de helmet (`script-src 'self'`) lo bloquea. Además, esa CSP (sin `frame-src`) habría bloqueado el 3DS dentro del iFrame: la CSP de una página manda también sobre las navegaciones DENTRO de sus iFrames (comprobado en Chromium: *"Refused to frame … default-src 'self'"*). | Script externo `/test-checkout.js` + CSP propia para esa página (`frame-src 'self' https:`). Aviso para comercios con CSP propia en la sesión del 26 sep. |
 | **Un admin del portal restringido a un nodo podía quitarse la restricción** (26 sep 2026) | Los permisos por nodo (M6 Fase 4) solo se aplicaban en `/portal/hierarchy`. En `/portal/users` un `merchant_admin` restringido podía editar a CUALQUIER usuario del merchant, incluido él mismo: `PATCH { hierarchyNodeId: null }` y pasaba a ver todo el merchant. También podía crear usuarios sin nodo (sin restricción). Y como el nodo viajaba en el JWT, los cambios no surtían efecto hasta 12 h después. | Mismas reglas de subárbol en `/portal/users` (`src/utils/hierarchyScope.js`, compartido con la jerarquía): nadie cambia su propio nodo, un admin restringido solo ve/gestiona su subárbol y nunca deja a nadie sin restricción; el nodo se lee de la base de datos en cada petición. |
+| **El formulario de la Sociedad (emisor de las facturas) no se podía guardar** (26 sep 2026) | `/admin` mandaba la dirección como UN texto y el esquema de `CompanyProfile` espera un objeto (calle, CP, ciudad, provincia, país): el `PUT /backoffice/company` fallaba entero con 500 y al cargar salía "[object Object]". Resultado: facturas emitidas SIN datos del emisor. | Dirección en campos separados en el formulario; el servidor valida y normaliza (un texto suelto se acepta como calle). |
+| **Facturas legalmente incompletas y numeración con huecos** (26 sep 2026) | (1) Se emitían sin NIF/razón social/domicilio del emisor o del cliente (obligatorios, RD 1619/2012 art. 6) y consumían número: una factura emitida no se borra. (2) El contador `$inc` se incrementaba ANTES de crear la factura: un fallo al guardarla, o dos emisiones simultáneas del mismo merchant y mes, dejaban un número gastado sin factura. (3) Los datos fiscales del cliente solo se leían si tenía tarifa propia activa, y el modal "Tarifa" de /admin ni siquiera tenía esos campos (y guardaba siempre la tarifa como activa: rellenarlo dejaba al comercio facturado a 0 €). (4) La facturación del mes se cortaba entera en el primer merchant que fallase. | Datos fiscales obligatorios antes de asignar número (`409 fiscal_data_incomplete` con la lista); número = última factura de la serie/año + 1, "gastado" solo al crearse (índice único + reintento); datos fiscales del cliente en el modal "Tarifa", con casilla para aplicar o no la tarifa propia; el lote sigue y devuelve `skipped` con el motivo. |
 
 ---
 
@@ -252,7 +254,7 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 | ~~test-checkout.html no carga con iframe~~ | ✅ **RESUELTO — 26 sep 2026** | La causa era la CSP (JavaScript en línea bloqueado), no el iFrame: ver §4. Ahora además enseña el aviso `checkout.result` que recibiría la web del comercio. |
 | ~~Logs de debug en producción~~ | ✅ RESUELTO — 16 jul 2026 | **La deuda descrita aquí no era la real.** `fullBody` NO existía en ninguna parte del repo (era deuda fantasma: se limpió en algún momento y nadie actualizó este documento), y `tokenKeys` tenía UNA sola ocurrencia, no varias. `serverPaymentController.js` y `payNoPainConnector.js` no tenían nada que limpiar. **Lo que sí había y no estaba apuntado: el PAN se logueaba en dos sitios** — `proxyPciRoutes.js` (PROXY_PCI_TOKEN_RETRIEVED) y `pciProxyService.js` (PCI_PROXY_GET_RESULTS_OK). No llegó a filtrarse porque `sanitizeData()` de `logger.js` redacta por regex las claves con "pan" (el valor salía como `[REDACTED]`, por lo que quitarlos no perdió información), pero para SAQ A el PAN no debe llegar al logger y depender de un regex. Eliminados también `tokenKeys` y `tokenValue` (30 chars del token de tarjeta). Se conservan los ids (paymentId, merchantId, cardUuid, reference, brand). El sanitizador queda como red de seguridad, no como primera línea. |
 | WEBHOOK_SECRET | Media | Ya NO es bloqueante: desde M2 Fase C el dispatcher firma con el `signingSecret` del merchant y solo usa `WEBHOOK_SECRET` como fallback global. Conviene configurarlo igualmente para merchants sin secreto propio. |
-| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **394/394** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
+| ~~Suite de tests no verde en algunos entornos~~ | ✅ **RESUELTO — 21 ago 2026** · **273/273** → **401/401** (26 sep 2026, rama de auditoría) | **La causa que esta fila daba por buena era FALSA.** Los 9 fallos NO necesitaban MongoDB en memoria ni config de entorno: `webhooks.test.js` firmaba mal el webhook. Detalle completo en la sesión del 21 ago 2026. Historial previo: `npm test` (script añadido el 4 ago 2026) → **264/273 pasan** (238/247 hasta el 4 ago; 259/268 tras el primer bloque de esa sesión) (119/128 M4, 128/137 S2S, 160/169 M6 F1, 182/191 M6 F2, 200/209 M6 F3+F4, 212/221 M7 F1, 221/230 M7 F2, 225/234 M7 B1, 238/247 M7 B2 —20 jul—). **La sesión del 24 jul no cambió la cifra: fue solo estáticos.** La del **4 ago (deudas)** sumó 21 tests verdes → **259/268**, mismos 9 fallos. Los 9 fallos están en `tests/integration/webhooks.test.js` y son PREEXISTENTES (no los introdujo M2/M6): ~~la suite necesita MongoDB en memoria / config de entorno que no siempre está~~ → **CAUSA REAL, 21 ago 2026: el test enviaba `signature` literal en vez de calcular `validation_hash`.** No dependía del entorno en absoluto: fallaba igual en cualquier máquina. "Verificado clonando el código original" solo verificó que los fallos eran preexistentes, no *por qué* fallaban. **CORREGIDO EN LA MISMA SESIÓN (4 ago 2026).** El texto anterior de esta fila afirmaba que `supertest` era devDependency: era falso, estaba en `dependencies`. Y `jest` **no figuraba en `package.json` en absoluto** (ni en `dependencies`, ni en `devDependencies`, ni hay script `test`), pese a existir `jest.config.json` y 27 ficheros de test. Para reproducir la línea base hay que instalarlo a mano (`npm install --no-save jest@29`). Tampoco está trackeado `js-yaml` en git (existe en el `node_modules` local pero no commiteado), por lo que **no se puede escribir un test que blinde `openapi.yaml` sin arreglar antes `package.json`**. **Todo ello arreglado en el segundo bloque de la sesión del 4 ago** (ver esa sección): `jest` y `js-yaml` declarados como devDependencies, `supertest` movido a devDependencies, script `npm test` añadido, `node_modules` retirado del repo y test de blindaje de `openapi.yaml` escrito. **Nota M6:** los tests del portal (usuarios y jerarquía) NO usan mongodb-memory-server (no disponible); usan un modelo en memoria propio (`tests/helpers/memoryModel.js`) y por eso sí corren en verde en este entorno. |
 
 ---
 
@@ -677,6 +679,9 @@ la descargáis para el ERP. **Sociedad en Canarias ⇒ IGIC (no IVA).**
   si no, cae a la tarifa por plan. El merchant ve su tarifa en `GET /portal/contract`.
 - **Factura oficial**: numeración correlativa por serie+año (`InvoiceCounter`, `$inc` atómico,
   sin huecos), snapshots inmutables de emisor/receptor, IGIC aplicado, **PDF** (`pdfkit`).
+  ⚠️ *(26 sep 2026)* "sin huecos" era FALSO: el contador se incrementaba antes de crear la
+  factura y un fallo (o dos emisiones a la vez) dejaba el número gastado. `InvoiceCounter`
+  retirado; ver §4 y la sesión del 26 sep → "Facturas legales".
 - **Distribución**: email vía **SMTP de Google Workspace** (`nodemailer`, vars `SMTP_*`;
   sin config hace no-op). Portal: `GET /portal/invoices/:id/pdf`. Backoffice: PDF, enviar
   email (`POST /invoices/:id/send`), **facturación mensual** (`POST /billing/run` finaliza
@@ -1229,11 +1234,48 @@ detrás ya no vale). En Chromium real: login en `/admin` y en `/portal-app`, "Sa
 envía la petición con el token y ese mismo token pasa a dar `401 session_revoked`; el
 aviso de contraseña corta dice 12 y el error del servidor se muestra.
 
+#### Facturas legales (Fase 1)
+
+**El problema.** Tres cosas impedían emitir una factura válida: el formulario de datos
+de la Sociedad no guardaba (la dirección), los datos fiscales del cliente no tenían
+dónde rellenarse en /admin, y aun así se emitían facturas en blanco que gastaban número.
+Además la numeración podía tener huecos (ver §4).
+
+**Qué hace ahora.**
+1. **Sociedad** (/admin → Facturación): dirección por campos (calle, CP, ciudad,
+   provincia, país). Se guarda y se recarga bien.
+2. **Datos fiscales del comercio** (/admin → Merchants → botón "Tarifa"): razón social,
+   CIF/NIF, dirección, CP, ciudad, provincia, país y email para enviarle la factura. La
+   casilla "Aplicar esta tarifa" decide si se factura con la tarifa propia o con la del
+   plan: los datos fiscales cuentan en los dos casos.
+3. **Antes de emitir** se comprueba que están razón social, NIF, dirección, CP y ciudad
+   del emisor y del cliente. Si falta algo: no se emite, no se gasta número, y /admin
+   dice exactamente qué falta y dónde rellenarlo.
+4. **Numeración sin huecos**: el número se asigna al crear la factura (última de la
+   serie y año + 1) y el índice único impide duplicados; si dos facturas chocan, la
+   segunda coge el siguiente. Continúa la numeración existente (también pasada la 9999:
+   `A-2026-10000`). Retirado `InvoiceCounter` (la colección `invoicecounters` de Atlas
+   queda sin uso; se puede borrar cuando se quiera).
+5. **Facturación del mes** (`POST /backoffice/billing/finalize` y `/billing/run`): un
+   merchant sin datos ya no corta el lote; la respuesta trae `skipped` con cada merchant
+   que no se pudo facturar y por qué.
+
+**Para Marcos, antes de facturar de verdad:** rellenar los datos de la Sociedad y, para
+cada comercio, sus datos fiscales en "Tarifa". La validez legal final (y Verifactu) la
+confirma el asesor, como ya decía el Bloque 1 de M7.
+
+**Verificación:** **401/401** tests (+7 en `billingFinalize`: datos fiscales, dos
+emisiones simultáneas —se comprobó que la segunda de verdad choca y reintenta—, fallo
+al guardar sin gastar número, continuidad pasada la 9999, lote que no se corta). El
+modelo en memoria de los tests entiende ahora índices únicos y `$regex`. En Chromium
+real: guardar la Sociedad y recargar; emitir sin datos del cliente → mensaje con lo que
+falta y 0 facturas; rellenar "Tarifa" sin activarla → contrato inactivo con los datos
+fiscales; emitir → `A-2026-0001` con la tarifa del plan.
+
 **Pendiente (Fase 1 en adelante, ver informe):** entorno de producción separado, API
-simplificada para el comercio (con snippet `monetiser.js`), 2FA de superadmin,
-numeración de facturas en transacción, routing del portal conectado al flujo real,
-conector #2. `RETURNMAC` (respuesta del alta del Hosted Checkout) no se usa en ningún
-sitio: decidir en la API simple si se retira.
+simplificada para el comercio (con snippet `monetiser.js`), 2FA de superadmin, routing
+del portal conectado al flujo real, conector #2. `RETURNMAC` (respuesta del alta del
+Hosted Checkout) no se usa en ningún sitio: decidir en la API simple si se retira.
 
 ---
 

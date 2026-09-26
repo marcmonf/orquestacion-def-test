@@ -874,14 +874,11 @@ router.post('/billing/finalize', requireRole('superadmin'), async (req, res) => 
   try {
     const now = new Date();
     if (!billingService.isPeriodClosed(period, now)) return res.status(400).json({ success: false, error: 'period_not_closed' });
-    const merchants = await Merchant.find({}, { merchantId: 1, plan: 1 }).lean();
-    let finalized = 0, already = 0;
-    for (const m of merchants) {
-      if (await billingService.getFinalized(m.merchantId, period)) { already++; continue; }
-      await billingService.finalizeBilling(m, period, req.backofficeUser.email, now);
-      finalized++;
-    }
-    return res.json({ success: true, period, finalized, already });
+    const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
+    const r = await billingService.finalizeMany(merchants, period, req.backofficeUser.email, now);
+    // `skipped`: merchants que NO se pudieron facturar y por qué (p. ej. faltan
+    // datos fiscales). Antes el primero que fallaba cortaba todo el lote con 500.
+    return res.json({ success: true, period, finalized: r.finalized.length, already: r.already.length, skipped: r.skipped });
   } catch (err) {
     console.error('❌ [backoffice/billing finalize all]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
@@ -900,6 +897,10 @@ router.post('/billing/:merchantId/finalize', requireRole('superadmin'), async (r
   } catch (err) {
     if (err.code === 'period_not_closed') return res.status(400).json({ success: false, error: 'period_not_closed' });
     if (err.code === 'invalid_period')    return res.status(400).json({ success: false, error: 'invalid_period' });
+    // Faltan datos fiscales (emisor o cliente): no se emite ni se gasta número.
+    if (err.code === 'fiscal_data_incomplete') {
+      return res.status(409).json({ success: false, error: 'fiscal_data_incomplete', missing: err.missing });
+    }
     console.error('❌ [backoffice/billing finalize]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
@@ -916,10 +917,44 @@ router.get('/company', requireRole('superadmin'), async (req, res) => {
   try { return res.json({ success: true, company: await getCompany() }); }
   catch (err) { console.error('❌ [backoffice/company GET]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
+// Campos de texto de los datos fiscales: siempre cadenas recortadas y acotadas.
+function cleanText(value, max = 200) {
+  return String(value == null ? '' : value).trim().slice(0, max);
+}
+
+// Dirección: objeto { street, postalCode, city, province, country }. El
+// formulario de /admin mandaba la dirección como UN texto y el esquema espera un
+// objeto: el guardado fallaba entero con 500 y la Sociedad se quedaba sin datos
+// (y la factura, sin emisor). Un texto suelto se acepta como `street`.
+function cleanAddress(value) {
+  const a = (value && typeof value === 'object') ? value : { street: value };
+  return {
+    street:     cleanText(a.street),
+    postalCode: cleanText(a.postalCode, 20),
+    city:       cleanText(a.city, 100),
+    province:   cleanText(a.province, 100),
+    country:    (cleanText(a.country, 2) || 'ES').toUpperCase(),
+  };
+}
+
 router.put('/company', requireRole('superadmin'), async (req, res) => {
   try {
+    const body = req.body || {};
+    if (body.invoiceSeries !== undefined && !/^[A-Z0-9]{1,6}$/.test(String(body.invoiceSeries))) {
+      return res.status(400).json({ success: false, error: 'invalid_invoice_series' });
+    }
+    if (body.logoDataUrl !== undefined && body.logoDataUrl !== '' &&
+        !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(String(body.logoDataUrl))) {
+      return res.status(400).json({ success: false, error: 'invalid_logo' });
+    }
     const set = { updatedBy: req.backofficeUser.email, updatedAt: new Date() };
-    COMPANY_FIELDS.forEach(k => { if (req.body[k] !== undefined) set[k] = req.body[k]; });
+    COMPANY_FIELDS.forEach(k => {
+      if (body[k] === undefined) return;
+      if (k === 'address') set.address = cleanAddress(body.address);
+      else if (k === 'logoDataUrl') set.logoDataUrl = String(body.logoDataUrl).slice(0, 700000);
+      else if (k === 'footerNotes') set.footerNotes = cleanText(body.footerNotes, 1000);
+      else set[k] = cleanText(body[k]);
+    });
     const doc = await CompanyProfile.findOneAndUpdate({ key: 'default' }, { $set: set, $setOnInsert: { key: 'default' } }, { new: true, upsert: true });
     return res.json({ success: true, company: doc });
   } catch (err) { console.error('❌ [backoffice/company PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
@@ -966,7 +1001,22 @@ router.put('/merchants/:merchantId/contract', requireRole('superadmin'), async (
     if (req.body.currency !== undefined)    set.currency = String(req.body.currency).toUpperCase().slice(0, 3);
     if (req.body.taxRateCode !== undefined) set.taxRateCode = String(req.body.taxRateCode);
     if (req.body.active !== undefined)      set.active = !!req.body.active;
-    if (req.body.billing !== undefined && typeof req.body.billing === 'object') set.billing = req.body.billing;
+    // Datos fiscales del cliente (receptor de la factura). Se guardan aunque la
+    // tarifa propia esté desactivada: sin ellos no se puede emitir su factura.
+    if (req.body.billing !== undefined) {
+      if (!req.body.billing || typeof req.body.billing !== 'object') {
+        return res.status(400).json({ success: false, error: 'invalid_billing' });
+      }
+      const b = req.body.billing;
+      const addr = cleanAddress(b);
+      set.billing = {
+        legalName: cleanText(b.legalName),
+        taxId:     cleanText(b.taxId, 32).toUpperCase(),
+        street: addr.street, postalCode: addr.postalCode, city: addr.city,
+        province: addr.province, country: addr.country,
+        email:     cleanText(b.email, 200),
+      };
+    }
     if (Array.isArray(req.body.services)) {
       set.services = req.body.services.map(s => ({ code: String(s.code || ''), label: String(s.label || ''), monthlyPrice: Math.max(0, Math.round(Number(s.monthlyPrice) || 0)), active: s.active !== false }));
     }
@@ -1011,22 +1061,23 @@ router.post('/billing/run', requireRole('superadmin'), async (req, res) => {
     if (!billingService.isPeriodClosed(period, now)) return res.status(400).json({ success: false, error: 'period_not_closed' });
     const send = req.body.send === true || req.query.send === 'true';
     const merchants = await Merchant.find({}, { merchantId: 1, name: 1, plan: 1 }).lean();
-    let finalized = 0, already = 0, sent = 0;
-    for (const m of merchants) {
-      const existed = await billingService.getFinalized(m.merchantId, period);
-      const inv = existed || await billingService.finalizeBilling(m, period, req.backofficeUser.email, now);
-      if (existed) already++; else finalized++;
-      if (send) {
+    const r = await billingService.finalizeMany(merchants, period, req.backofficeUser.email, now);
+    let sent = 0;
+    if (send) {
+      for (const inv of [...r.finalized, ...r.already]) {
         const plain = inv.toObject ? inv.toObject() : inv;
         const to = plain.recipient && plain.recipient.email;
-        if (to) {
-          const pdf = await renderInvoicePdf(plain);
-          const r = await mailer.sendInvoiceEmail({ to, invoice: plain, pdfBuffer: pdf, companyName: (plain.issuer && plain.issuer.legalName) || '' });
-          if (r.sent) { await billingService.markSent(inv._id || plain._id, to); sent++; }
-        }
+        if (!to) continue;
+        const pdf = await renderInvoicePdf(plain);
+        const m = await mailer.sendInvoiceEmail({ to, invoice: plain, pdfBuffer: pdf, companyName: (plain.issuer && plain.issuer.legalName) || '' });
+        if (m.sent) { await billingService.markSent(inv._id || plain._id, to); sent++; }
       }
     }
-    return res.json({ success: true, period, finalized, already, sent, emailConfigured: mailer.isConfigured() });
+    return res.json({
+      success: true, period,
+      finalized: r.finalized.length, already: r.already.length, skipped: r.skipped,
+      sent, emailConfigured: mailer.isConfigured(),
+    });
   } catch (err) { console.error('❌ [backoffice/billing run]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
