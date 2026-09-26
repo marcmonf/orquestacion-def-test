@@ -67,14 +67,22 @@ app.use((req, res, next) => {
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-app.use(cors({
+const corsMiddleware = cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     if (!allowedOrigins.length || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(Object.assign(new Error('Not allowed by CORS'), { status: 403 }), false);
   },
   credentials: false
-}));
+});
+// La página de resultado del checkout es un DESTINO DE NAVEGACIÓN, no una API:
+// Paylands devuelve al comprador desde su dominio (y podría hacerlo con un
+// formulario POST, que lleva cabecera Origin). Con ALLOWED_ORIGINS definido, el
+// filtro CORS la rechazaría con 403 y el comprador vería un error tras pagar.
+// Sin cabeceras CORS, además, ninguna otra web puede leer su consulta de estado.
+app.use((req, res, next) => (
+  req.path.startsWith('/checkout/result/') ? next() : corsMiddleware(req, res, next)
+));
 
 app.use(helmet());
 
@@ -141,6 +149,11 @@ app.use('/:merchantId/iframe', iframeRouter);
 
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
+
+// Página de resultado: adónde vuelve el comprador al terminar de pagar (url_ok /
+// url_ko de Paylands tras el 3DS). Avisa a la web del comercio y le devuelve a
+// su returnUrl. Ver src/routes/checkoutResult.js.
+app.use('/checkout/result', ensureRouter(require('./src/routes/checkoutResult'), 'checkoutResult'));
 
 // /apms retirado (16 jul 2026): era un stack de pago paralelo de una version
 // antigua — publico sin auth, sin validacion efectiva y aceptaba PAN en crudo.
@@ -234,6 +247,22 @@ if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
   });
 }
 
+// Página de pruebas que simula la web de un comercio (embebe el checkout en un
+// iFrame). Necesita su propia CSP: la CSP de una página manda también sobre
+// las navegaciones DENTRO de sus iFrames, y con la de por defecto (solo 'self')
+// el navegador bloquea el 3DS de Paylands y del banco dentro del checkout
+// (comprobado en Chromium: "Refused to frame ... default-src 'self'"). Un
+// comercio real con CSP propia tiene que permitir lo mismo (frame-src https:).
+app.get('/test-checkout.html', (req, res) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; frame-src 'self' https:; base-uri 'none'; object-src 'none'; " +
+    "frame-ancestors 'self'"
+  );
+  res.sendFile(path.join(__dirname, 'public/test-checkout.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ===== Error handler global =====
@@ -273,7 +302,7 @@ function configWarnings() {
     w.push('BACKOFFICE_JWT_SECRET y PORTAL_JWT_SECRET son IGUALES: deben ser distintos');
   }
   if (!process.env.PAYNOPAIN_SIGNATURE) w.push('PAYNOPAIN_SIGNATURE no definido → los webhooks de Paylands responden 500');
-  if (!process.env.HPP_SIGNING_SECRET) w.push('HPP_SIGNING_SECRET no definido → secreto aleatorio por proceso (definirlo si hay >1 instancia)');
+  if (!process.env.HPP_SIGNING_SECRET) w.push('HPP_SIGNING_SECRET no definido → secreto aleatorio por proceso: tras un reinicio dejan de valer los enlaces del iFrame y de la vuelta del comprador');
   for (const msg of w) console.warn(`⚠️ [CONFIG] ${msg}`);
 }
 

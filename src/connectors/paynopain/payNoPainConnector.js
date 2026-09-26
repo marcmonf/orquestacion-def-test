@@ -16,6 +16,7 @@ const BASE_URL = ENV === 'production'
   : 'https://api.paylands.com/v1/sandbox';
 
 const SERVER_URL = process.env.SERVER_URL || 'https://orquestacion-def-test.onrender.com';
+const { resultUrl } = require('../../utils/checkoutResult');
 
 /**
  * Genera el header Authorization en formato Basic Auth.
@@ -310,6 +311,12 @@ async function chargeWithToken(paymentData) {
     source_uuid:     paymentData.cardToken,
     customer_ext_id: paymentData.paymentId,
     url_post:        `${SERVER_URL}/webhooks/paynopain`,
+    // Adónde vuelve el comprador al terminar (3DS incluido): la página de
+    // resultado de Monetiser, que avisa a la web del comercio y le ofrece
+    // volver a la tienda. Parámetros documentados de POST /payment. Antes no
+    // se enviaban y el comprador se quedaba en una página de Paylands.
+    url_ok:          resultUrl(paymentData.paymentId, 'ok'),
+    url_ko:          resultUrl(paymentData.paymentId, 'ko'),
     additional:      paymentData.paymentId,
     save_card:       false,
   };
@@ -460,12 +467,9 @@ async function authorize(paymentData) {
  * order_uuid + amount (opcional) en el body.
  *
  * IMPORTANTE: según la doc oficial, este endpoint "charges the balance being
- * held by a DEFERRED operative" — es decir, SOLO aplica a órdenes creadas con
- * operative: DEFERRED. Nuestro createOrder() actual usa operative: AUTHORIZATION,
- * que captura el dinero de inmediato (paid:true en la creación). Sobre una orden
- * AUTHORIZATION no hay "balance retenido" que confirmar, así que aunque la URL ya
- * es la correcta, esto seguirá fallando sobre las órdenes actuales — hace falta
- * decidir si se cambia operative a DEFERRED (ver DEV-LOG).
+ * held by a DEFERRED operative" — SOLO aplica a órdenes creadas con operative:
+ * DEFERRED, que es lo que usan todas las funciones de creación de orden de este
+ * conector desde el 16 jul 2026 (verificado end-to-end).
  *
  * @param {object} data
  * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)
@@ -541,12 +545,8 @@ async function capture(data) {
  * el endpoint real es POST /payment/cancellation, con order_uuid en el body.
  *
  * IMPORTANTE: según la doc oficial, este endpoint "frees the balance being
- * held by a DEFERRED operative" — es decir, SOLO aplica a órdenes creadas con
- * operative: DEFERRED. Nuestro createOrder() actual usa operative: AUTHORIZATION,
- * que captura el dinero de inmediato (paid:true en la creación). Sobre una orden
- * AUTHORIZATION no hay "balance retenido" que liberar, así que aunque la URL ya
- * es la correcta, esto seguirá fallando sobre las órdenes actuales — hace falta
- * decidir si se cambia operative a DEFERRED (ver DEV-LOG).
+ * held by a DEFERRED operative" — SOLO aplica a órdenes DEFERRED, que es lo que
+ * crea este conector desde el 16 jul 2026 (verificado end-to-end).
  *
  * @param {object} data
  * @param {string} data.processorReference  UUID de la orden en Paylands (obligatorio)

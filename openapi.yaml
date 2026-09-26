@@ -2,12 +2,29 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.10.0
+  version: 2.11.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
     controllers del repositorio `marcmonf/orquestacion-def-test`. Cada campo de
     esta spec existe en el código; no hay campos inventados ni aspiracionales.
+
+    **v2.11.0 (26 sep 2026)** — Vuelta del comprador tras pagar (ver DEV-LOG, sesión
+    26 sep 2026 → "Vuelta del comprador tras pagar"):
+      - Al terminar el pago (3DS incluido) el comprador llega a la **página de
+        resultado** de Monetiser (`GET /checkout/result/{paymentId}`, URL firmada que
+        Paylands recibe como `url_ok`/`url_ko`). Antes se quedaba en una página de
+        Paylands dentro del iFrame.
+      - La página **avisa a la web que embebe el iFrame** con `postMessage`
+        (`type: 'checkout.result'`, `result`: `succeeded` | `failed` | `pending`) y
+        ofrece volver a `feedbacks.returnUrl` con `?paymentId=…&result=…` añadidos.
+        Ambos son INFORMATIVOS: el pago se confirma con el webhook o `GET status`.
+      - **La sesión del checkout caduca de verdad** a los 30 min (`session.expiresAt`):
+        `GET /hpp/{id}` → `410` y `GET status` → `expired: true`. Antes el campo no se
+        guardaba y la sesión no caducaba nunca.
+      - `POST /{merchantId}/proxy-pci/charge` (interno, lo llama el iFrame): los fallos
+        técnicos se guardan como `error` (antes `declined`) y las respuestas sin 3DS
+        llevan `resultUrl`.
 
     **v2.10.0 (26 sep 2026)** — Auditoría de seguridad y corrección. Cambios de
     contrato (ver DEV-LOG, sesión 26 sep 2026):
@@ -179,7 +196,9 @@ tags:
   - name: Hosted Checkout
     description: |
       **Flujo recomendado y único verificado end-to-end.** El merchant crea el pago
-      sin datos de tarjeta y recibe una `redirectUrl` que embebe en un iframe.
+      sin datos de tarjeta y recibe una `redirectUrl` que embebe en un iframe. Al
+      terminar, el comprador ve la página de resultado de Monetiser, que avisa a la
+      web del comercio y le devuelve a su `returnUrl` (ver `createHostedCheckout`).
   - name: Ciclo de vida
     description: |
       Capture, refund y cancel sobre un pago ya autorizado. Verificados contra
@@ -236,6 +255,33 @@ paths:
         Contrato leído de `src/dtos/hostedCheckoutDTO.js` (`HostedCheckoutRequestDTO`).
 
         El `merchantId` se lee de la URL y **no forma parte del body**.
+
+        **Después del pago (v2.11.0).** El comprador llega a la página de resultado
+        de Monetiser (dentro del iFrame, o a pantalla completa si abriste la
+        `redirectUrl` como página). Esa página:
+
+        1. Enseña el resultado real (el estado que deja el webhook de Paylands).
+        2. Avisa a la página que embebe el iFrame con `postMessage`:
+
+           ```js
+           window.addEventListener('message', (event) => {
+             if (event.origin !== 'https://orquestacion-def-test.onrender.com') return;
+             const m = event.data;
+             if (!m || m.source !== 'monetiser' || m.type !== 'checkout.result') return;
+             // m.paymentId, m.status, m.result: 'succeeded' | 'failed' | 'pending'
+           });
+           ```
+        3. Ofrece volver a `feedbacks.returnUrl` con `paymentId` y `result` añadidos
+           a la query (a pantalla completa vuelve sola a los 5 s).
+
+        `result` y los parámetros de la vuelta son **informativos** (cualquiera puede
+        escribirlos a mano): el pedido se da por pagado con el webhook firmado o con
+        `GET /{merchantId}/payments/hosted/{hostedCheckoutId}/status`.
+
+        **CSP de tu web:** si la página que embebe el checkout envía
+        `Content-Security-Policy`, permite `frame-src https:`. La CSP de una página
+        manda también sobre lo que se abre dentro de sus iFrames, y el 3DS navega a
+        Paylands y al banco.
       security:
         - ApiKeySimple: []
           MerchantId: []
@@ -835,6 +881,8 @@ paths:
           description: Redirección a `/{merchantId}/iframe?paymentId=...`.
         '404':
           description: No existe.
+        '410':
+          description: Sesión de pago caducada (30 min desde la creación, `session.expiresAt`).
 
   /{merchantId}/iframe:
     get:
@@ -850,7 +898,8 @@ paths:
         `frame-ancestors: *` — deliberado, para que cualquier merchant pueda
         embeberlo. `X-Frame-Options` se elimina explícitamente por el mismo motivo.
 
-        Los parámetros `exp` y `signature` solo se exigen si `FEATURE_IFRAME_GUARD=1`.
+        La URL la construye y firma `GET /hpp/{hostedCheckoutId}` con el secreto de
+        plataforma (`HPP_SIGNING_SECRET`): `exp` y `signature` son obligatorios.
       parameters:
         - $ref: '#/components/parameters/MerchantIdPath'
         - name: paymentId
@@ -859,11 +908,11 @@ paths:
           schema: { type: string }
         - name: exp
           in: query
-          required: false
+          required: true
           schema: { type: string }
         - name: signature
           in: query
-          required: false
+          required: true
           schema: { type: string }
       responses:
         '200':
@@ -871,8 +920,10 @@ paths:
           content:
             text/html:
               schema: { type: string }
+        '400':
+          description: Faltan `exp` o `signature`, o `exp` no es una fecha.
         '403':
-          description: Firma inválida (con `FEATURE_IFRAME_GUARD=1`).
+          description: Firma inválida o merchant de la URL distinto al del pago.
         '409':
           description: Reuso o estado no inicializado.
         '410':
@@ -885,15 +936,23 @@ paths:
       operationId: proxyPciSession
       x-madurez: interno
       description: |
-        Lo llama el iFrame, no el merchant. Devuelve el token que ProxyFields usa
-        para tokenizar el PAN contra Paylands.
+        Lo llama el iFrame, no el merchant (sin API key: el navegador del comprador
+        solo conoce el `paymentId`). Devuelve el token que ProxyFields usa para
+        tokenizar el PAN contra Paylands. Limitado por IP y por `paymentId`.
+      security: []
       parameters:
         - $ref: '#/components/parameters/MerchantIdPath'
       responses:
         '200':
           description: Token de sesión emitido.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '400':
+          description: Falta `paymentId`.
+        '404':
+          description: Transacción no encontrada.
+        '409':
+          description: 'Transacción en estado no válido: `<status>`.'
+        '429':
+          description: Límite de peticiones superado.
 
   /{merchantId}/proxy-pci/charge:
     post:
@@ -902,18 +961,25 @@ paths:
       operationId: proxyPciCharge
       x-madurez: interno
       description: |
-        Lo llama el iFrame tras el submit del formulario. Recupera el card UUID de
-        ProxyFields y lanza el cobro contra Paylands.
+        Lo llama el iFrame tras el submit del formulario (sin API key). Recupera el
+        card UUID de ProxyFields y lanza el cobro contra Paylands.
 
-        Devuelve normalmente `status: pending_3ds` más una `threeDsUrl`: el
-        desenlace real llega después por webhook, no en esta respuesta.
+        Devuelve normalmente `requires3DS: true` más una `threeDsUrl`: el iFrame
+        navega a ella y, al terminar, Paylands lleva al comprador a la página de
+        resultado (`url_ok`/`url_ko`). El desenlace real llega por webhook.
+
+        Sin 3DS (o si falla DESPUÉS de llamar a Paylands) la respuesta lleva
+        `resultUrl` y el iFrame navega a esa misma página de resultado. Los fallos
+        técnicos (credenciales, Paylands caído, 4xx) quedan como `error`, no como
+        `declined`.
+      security: []
       parameters:
         - $ref: '#/components/parameters/MerchantIdPath'
       responses:
         '200':
-          description: Cobro lanzado (normalmente `pending_3ds` + `threeDsUrl`).
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: |
+            Cobro lanzado (`requires3DS` + `threeDsUrl`) o resuelto sin 3DS
+            (`status`: `authorized` | `declined` | `error`, con `resultUrl`).
         '404':
           description: Transacción no encontrada.
         '409':
@@ -921,7 +987,154 @@ paths:
         '422':
           description: |
             No hay token PCI para esta transacción — el cardholder no completó el
-            formulario.
+            formulario. El pago vuelve a `hosted_pending` (se puede reintentar).
+        '429':
+          description: Límite de peticiones superado.
+        '500':
+          description: |
+            Error. Si ocurrió antes de llamar a Paylands, el pago vuelve a
+            `hosted_pending`; si fue después, queda en `error` y la respuesta lleva
+            `resultUrl`.
+
+  /checkout/result/{paymentId}:
+    get:
+      tags: [Interno]
+      summary: Página de resultado del checkout
+      operationId: getCheckoutResult
+      x-madurez: interno
+      security: []
+      description: |
+        Adónde vuelve el comprador al terminar de pagar. Monetiser la envía a
+        Paylands como `url_ok` / `url_ko` y el iFrame la abre si el cobro termina
+        sin 3DS. La URL la genera SIEMPRE Monetiser: va firmada (`sig`, con
+        `HPP_SIGNING_SECRET`) y caduca a las 24 h (`exp`, milisegundos).
+
+        Enseña el estado guardado del pago (no el `outcome` de la URL), lo consulta
+        hasta que es final, avisa a la página que la embebe con `postMessage`
+        (`checkout.result`, ver `createHostedCheckout`) y ofrece volver a la
+        `returnUrl` del pago. CSP sin JavaScript en línea; embebible
+        (`frame-ancestors *`); `Cache-Control: no-store`.
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: outcome
+          in: query
+          required: true
+          description: Lo que dijo la redirección de Paylands (solo cambia textos mientras se confirma).
+          schema: { type: string, enum: [ok, ko] }
+        - name: exp
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\d{10,16}$' }
+        - name: sig
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+      responses:
+        '200':
+          description: HTML de la página de resultado.
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: Firma inválida (URL manipulada o de otro pago).
+        '404':
+          description: Pago inexistente.
+        '410':
+          description: Enlace caducado.
+        '429':
+          description: Límite de peticiones superado.
+    post:
+      tags: [Interno]
+      summary: Página de resultado (vuelta con formulario)
+      operationId: postCheckoutResult
+      x-madurez: interno
+      security: []
+      description: |
+        Igual que el GET, por si la pasarela devuelve al comprador con un
+        formulario POST. El cuerpo se ignora: la página no cambia nada.
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: outcome
+          in: query
+          required: true
+          schema: { type: string, enum: [ok, ko] }
+        - name: exp
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sig
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: HTML de la página de resultado.
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: Firma inválida.
+        '410':
+          description: Enlace caducado.
+
+  /checkout/result/{paymentId}/status:
+    get:
+      tags: [Interno]
+      summary: Estado del pago para la página de resultado
+      operationId: getCheckoutResultStatus
+      x-madurez: interno
+      security: []
+      description: |
+        Lo consulta la página de resultado mientras espera el webhook. URL firmada
+        propia (la firma de la página no sirve aquí) que caduca en 1 h. Sin
+        cabeceras CORS: ninguna otra web puede leerlo. **El merchant no debe
+        usarlo**: su consulta de estado es
+        `GET /{merchantId}/payments/hosted/{hostedCheckoutId}/status`.
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: exp
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sig
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estado actual.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  paymentId: { type: string }
+                  status: { $ref: '#/components/schemas/TransactionStatus' }
+                  result:
+                    type: string
+                    enum: [succeeded, failed, pending]
+                  final:
+                    type: boolean
+                    description: '`false` mientras `result` es `pending`.'
+                  returnUrl:
+                    type: [string, 'null']
+                    description: returnUrl del pago con `paymentId` y `result` añadidos (o null).
+        '403':
+          description: Firma inválida.
+        '404':
+          description: Pago inexistente.
+        '410':
+          description: Enlace caducado.
 
   # ──────────────────────────────────────────────────────────────────────
   # PORTAL DEL MERCHANT (M6)
@@ -1989,7 +2202,11 @@ components:
               type: string
               format: uri
               pattern: '^https?://'
-              description: URL (http/https) a la que vuelve el cardholder al terminar.
+              description: |
+                URL (http/https) a la que vuelve el cardholder al terminar, desde la
+                página de resultado. Se le añaden `paymentId` y `result`
+                (`succeeded` | `failed` | `pending`) a la query, conservando la tuya.
+                Informativos: confirma el pago con el webhook o `GET status`.
             webhookUrl:
               type: string
               format: uri
@@ -2103,6 +2320,7 @@ components:
         - initialized
         - hosted_pending
         - pending
+        - processing
         - pending_3ds
         - authorized
         - captured

@@ -189,3 +189,51 @@ describe('GET /:merchantId/payments/hosted/:hostedCheckoutId/status', () => {
     expect(res.body.completed).toBe(true);
   });
 });
+
+describe('Caducidad de la sesión de pago (sessionExpiresAt)', () => {
+  afterEach(() => { jest.clearAllMocks(); });
+
+  test('está declarado en el schema: antes Mongoose lo descartaba en silencio al guardar', () => {
+    const RealTransaction = jest.requireActual('../../src/models/Transaction');
+    expect(RealTransaction.schema.path('sessionExpiresAt')).toBeDefined();
+    expect(RealTransaction.schema.path('sessionExpiresAt').instance).toBe('Date');
+    const doc = new RealTransaction({
+      paymentId: 'p-exp', merchantId: 'demo-merchant', amount: 100, currency: 'EUR',
+      method: 'card', status: 'hosted_pending', sessionExpiresAt: new Date('2026-09-26T10:30:00Z'),
+    });
+    expect(doc.toObject().sessionExpiresAt.toISOString()).toBe('2026-09-26T10:30:00.000Z');
+  });
+
+  test('el alta guarda la caducidad (30 min) junto al pago', async () => {
+    const before = Date.now();
+    const res = await request(buildApp())
+      .post('/demo-merchant/payments/hosted')
+      .set('Content-Type', 'application/json')
+      .send(VALID_HC_PAYLOAD);
+    expect(res.status).toBe(200);
+    expect(mockTxData.sessionExpiresAt).toBeInstanceOf(Date);
+    const delta = mockTxData.sessionExpiresAt.getTime() - before;
+    expect(delta).toBeGreaterThan(29 * 60 * 1000);
+    expect(delta).toBeLessThanOrEqual(30 * 60 * 1000 + 1000);
+  });
+
+  test('GET /hpp con la sesión caducada → 410; vigente → 302 al iFrame con esa caducidad', async () => {
+    const Transaction = require('../../src/models/Transaction');
+    const app = express();
+    app.use('/hpp', require('../../src/routes/hpp'));
+    const base = {
+      hostedCheckoutId: 'hc-1', paymentId: 'pay-1', merchantId: 'demo-merchant',
+      amount: 100, currency: 'EUR', method: 'card', status: 'hosted_pending',
+      createdAt: new Date(),
+    };
+
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({ ...base, sessionExpiresAt: new Date(Date.now() - 1000) }) });
+    expect((await request(app).get('/hpp/hc-1')).status).toBe(410);
+
+    const exp = new Date(Date.now() + 10 * 60 * 1000);
+    Transaction.findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({ ...base, sessionExpiresAt: exp }) });
+    const ok = await request(app).get('/hpp/hc-1');
+    expect(ok.status).toBe(302);
+    expect(ok.headers.location).toContain(`exp=${encodeURIComponent(exp.toISOString())}`);
+  });
+});

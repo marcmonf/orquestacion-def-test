@@ -13,11 +13,15 @@
 // un secreto interno — el merchant nunca lo necesita: la URL la firma /hpp y la
 // verifica /iframe, los dos en este mismo servidor.
 //
+// También firma la página de resultado del checkout (utils/checkoutResult.js):
+// las URLs url_ok/url_ko que Paylands recibe al crear la orden.
+//
 // Si HPP_SIGNING_SECRET no está definido se genera uno aleatorio al arrancar.
 // Funciona con UNA instancia (Render hoy); con varias instancias o tras un
-// reinicio, una URL firmada por la instancia anterior deja de validar (el
-// cliente solo tiene que volver a abrir el enlace /hpp). Por eso se avisa en el
-// arranque y conviene definirlo en Render.
+// reinicio, una URL firmada por la instancia anterior deja de validar: el
+// cliente tiene que volver a abrir el enlace /hpp y, si estaba pagando, a la
+// vuelta del 3DS verá "Resultado no disponible" en vez del resultado. Por eso
+// se avisa en el arranque y hay que definirlo en Render.
 
 const crypto = require('crypto');
 
@@ -27,7 +31,7 @@ if (!SECRET) {
   if (process.env.NODE_ENV !== 'test') {
     // eslint-disable-next-line no-console
     console.warn('⚠️ [WARN] HPP_SIGNING_SECRET no definido: se usa un secreto aleatorio por proceso. ' +
-      'Defínelo en Render si hay más de una instancia.');
+      'Tras un reinicio no valen los enlaces del iFrame ni la vuelta del comprador. Defínelo en Render.');
   }
 }
 
