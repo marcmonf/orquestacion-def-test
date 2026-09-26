@@ -150,9 +150,14 @@ app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
 // en MongoDB (bóveda propia = scope SAQ D). La tokenización real la hace
 // ProxyFields de Paylands; Monetiser nunca debe almacenar PAN.
 
-// Orquestación + reglas (internos, X-Admin-Token)
+// Orquestación: diagnóstico interno del motor de reglas (X-Admin-Token).
 app.use('/orchestration', ensureRouter(require('./src/routes/orchestrationRoutes'), 'orchestrationRoutes'));
-app.use('/rules', ensureRouter(require('./src/routes/rulesRoutes'), 'rulesRoutes'));
+
+// Retirados el 26 sep 2026 (decisión de Marcos): /rules, /merchants, /api-keys y
+// /diag con X-Admin-Token, y el editor de reglas viejo (/admin/index.html). Todo
+// eso existe en /admin con sesión y usuario (pestañas Reglas, Merchants, API
+// Keys y detalle de transacción), que deja rastro de quién hizo qué. Menos
+// puertas abiertas con un token compartido.
 
 // Transactions
 try {
@@ -160,9 +165,6 @@ try {
 } catch {
   console.warn('⚠️ [WARN] /transactions no montado (archivo faltante)');
 }
-
-// API Keys management (admin)
-app.use('/api-keys', ensureRouter(require('./src/routes/apiKeyRoutes'), 'apiKeyRoutes'));
 
 // Backoffice — auth pública (login/logout/setup)
 app.use('/backoffice/auth', ensureRouter(require('./src/routes/backofficeAuthRoutes'), 'backofficeAuthRoutes'));
@@ -182,13 +184,6 @@ app.use('/portal', ensureRouter(require('./src/routes/portalRoutes'), 'portalRou
 // /payment-requests retirado (17 jul 2026): stack legacy que desembocaba en el
 // CRUD antiguo de transacciones. Sin uso desde el front ni desde merchants.
 
-// Gestión de merchants (admin) — modelo Merchant unificado (M2)
-// IMPORTANTE: debe montarse ANTES del bloque comodín '/:merchantId/...'
-app.use('/merchants', ensureRouter(require('./src/routes/merchantRoutes'), 'merchantRoutes'));
-
-// Diagnóstico solo-lectura (admin) — inspección de transacciones sin entrar a Atlas
-app.use('/diag', ensureRouter(require('./src/routes/diagRoutes'), 'diagRoutes'));
-
 // 📌 Endpoints con merchantId como segmento de URL
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
@@ -199,7 +194,6 @@ app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'))
 
 /* ===== Static ===== */
 // /admin (exacto) sirve el dashboard de backoffice como página principal.
-// El editor de reglas antiguo sigue accesible en /admin/index.html.
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/admin/dashboard.html'));
 });
@@ -269,7 +263,7 @@ app.use((err, req, res, next) => { // eslint-disable-line
  * configure (fail-closed). */
 function configWarnings() {
   const w = [];
-  if (!process.env.ADMIN_TOKEN) w.push('ADMIN_TOKEN no definido → /rules, /merchants, /api-keys, /diag y GET /webhooks responden 503');
+  if (!process.env.ADMIN_TOKEN) w.push('ADMIN_TOKEN no definido → /orchestration/decide, GET /webhooks y la recuperación de superadmin responden 503');
   else if (process.env.ADMIN_TOKEN.length < 32) w.push('ADMIN_TOKEN demasiado corto (< 32 caracteres)');
   if (!isDevOrTest()) {
     if (!process.env.BACKOFFICE_JWT_SECRET) w.push('BACKOFFICE_JWT_SECRET no definido → /admin (backoffice) responde 503');

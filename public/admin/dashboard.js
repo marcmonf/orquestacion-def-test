@@ -1030,7 +1030,7 @@
       .catch(function(e){ alert('Error: '+e.message); });
   }
 
-  /* ── RULES PANEL (absorbe el editor viejo public/admin/index.html+app.js) ── */
+  /* ── RULES PANEL (absorbió el editor viejo /admin/index.html, retirado el 26 sep 2026) ── */
   function rulesSetStatus(msg) {
     var el = document.getElementById('rulesStatus');
     if (el) el.textContent = msg;

@@ -1,8 +1,10 @@
 'use strict';
 
 /**
- * Auth de los endpoints internos legados (X-Admin-Token): /rules, /merchants,
- * /api-keys, /diag, GET /webhooks.
+ * Auth de los pocos endpoints internos con token compartido (X-Admin-Token):
+ * /orchestration/decide, GET /webhooks y la recuperación de cuentas de
+ * backoffice (/backoffice/auth/setup y /reset-password). /rules, /merchants,
+ * /api-keys y /diag se retiraron el 26 sep 2026 (viven en /admin con sesión).
  *
  * FAIL-CLOSED (26 sep 2026). Antes, si ADMIN_TOKEN no estaba definido, dejaba
  * pasar TODO ("dev abierto"): bastaba con que la variable faltase en un
