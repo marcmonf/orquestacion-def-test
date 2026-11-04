@@ -2,7 +2,7 @@
   "info": {
     "name": "Monetiser — API v1",
     "_postman_id": "b7e1c2d4-5f60-4a71-8b92-c3d4e5f60718",
-    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).",
+    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).\n\nv2.14.0 (nov 2026): peticiones 7-9 (métodos de pago, sesión con país, comprobación de tarjeta guardada desactivada). Las claves nuevas son ms_test_... (las ms_... antiguas siguen valiendo).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -210,6 +210,108 @@
         },
         "description": "Libera la retención de un pago `authorized` que no se ha capturado."
       }
+    },
+    {
+      "name": "7. Métodos de pago disponibles",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/payment-methods",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-methods"
+          ]
+        },
+        "description": "Catálogo con disponibilidad real. Esperado: card disponible; bizum/apple_pay/google_pay con available:false y motivo."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('200', () => pm.expect(pm.response.code).to.eql(200));",
+              "pm.test('tarjeta disponible', () => pm.expect(b.data.find(m => m.method === 'card').available).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Crear sesión con país y métodos (routing)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/checkout-sessions",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "checkout-sessions"
+          ]
+        },
+        "description": "Igual que la 1, con country y paymentMethods. Esperado 201 con livemode:false y paymentMethods:[card]. Guarda paymentId.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1500,\n  \"currency\": \"EUR\",\n  \"reference\": \"PEDIDO-MULTIPSP-1\",\n  \"country\": \"ES\",\n  \"paymentMethods\": [\n    \"card\"\n  ],\n  \"returnUrl\": \"https://orquestacion-def-test.onrender.com/gracias.html\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+              "pm.test('modo test', () => pm.expect(b.livemode).to.eql(false));",
+              "if (b && b.id) { pm.collectionVariables.set('paymentId', b.id); console.log('Abre para pagar:', b.url); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Tarjeta guardada (debe estar DESACTIVADA)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/payment-tokens",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-tokens"
+          ]
+        },
+        "description": "Esperado hoy: 404 saved_cards_not_enabled."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('404 desactivado', () => pm.expect(pm.response.code).to.eql(404));",
+              "pm.test('código', () => pm.expect(pm.response.json().error).to.eql('saved_cards_not_enabled'));"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

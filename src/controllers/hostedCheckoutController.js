@@ -8,6 +8,7 @@ const Merchant = require('../models/Merchant');
 const logger = require('../utils/logger');
 const auditLogger = require('../logs/auditLogger');
 const { isCompleted } = require('../utils/paymentStatus');
+const routingService = require('../services/routingService');
 
 const {
   HostedCheckoutRequestDTO,
@@ -104,6 +105,19 @@ async function createHostedCheckout(req, res) {
   const expiresAt = computeSessionExpiry(timestamp, null);
 
   try {
+    // Routing pre-captura (framework multi-PSP): a qué PSP va este pago antes
+    // de pedir la tarjeta. Sin ningún PSP capaz → 422 (no se crea el pago).
+    const routing = await routingService.decideSafe({
+      merchantId, amount, currency, paymentMethod: 'card', livemode: false, channel: 'checkout',
+    });
+    if (!routing.connector) {
+      return res.status(422).json({
+        success: false,
+        error: 'no_connector_available',
+        detail: 'Ningún adquirente configurado puede procesar este pago (método, divisa o país).',
+      });
+    }
+
     const merchant = await Merchant.findOne(
       { merchantId },
       { signingSecret: 1, hmacSecret: 1, secret: 1, webhookUrl: 1, _id: 0 }
@@ -151,7 +165,9 @@ async function createHostedCheckout(req, res) {
       returnUrl,
       callbackUrl: callbackUrl || null,
       createdAt: timestamp,
-      sessionExpiresAt: expiresAt
+      sessionExpiresAt: expiresAt,
+      routing,
+      connectorAccountId: routing.accountId
     });
     await txn.save();
 

@@ -36,6 +36,17 @@ const backofficeUserSchema = new mongoose.Schema({
   lastLoginAt:  { type: Date,   default: null },
   lastLoginIp:  { type: String, default: null },
 
+  // 2FA TOTP (F7, nov 2026). El secreto va CIFRADO (cryptoUtils.encryptSecret).
+  // pendingSecretEnc: alta en curso (aún sin confirmar con un código).
+  // lastUsedStep: último paso de 30 s aceptado → un código no se reutiliza.
+  totp: {
+    enabled:          { type: Boolean, default: false },
+    secretEnc:        { type: String,  default: null },
+    pendingSecretEnc: { type: String,  default: null },
+    lastUsedStep:     { type: Number,  default: -1 },
+    enabledAt:        { type: Date,    default: null },
+  },
+
   // Reset de contraseña (sin email: token de un solo uso)
   resetToken:       { type: String, default: null },
   resetTokenExpiry: { type: Date,   default: null },

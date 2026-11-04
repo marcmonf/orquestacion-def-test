@@ -52,21 +52,38 @@
     var pass  = document.getElementById('loginPass').value;
     var errEl = document.getElementById('loginErr');
     var btn   = document.getElementById('loginBtn');
+    var totpField = document.getElementById('loginTotpField');
+    var totpCode = document.getElementById('loginTotp').value.trim();
     errEl.textContent = '';
     if (!email || !pass) { errEl.textContent = 'Email y contraseña requeridos'; return; }
     btn.disabled = true; btn.textContent = 'Entrando…';
+    var body = { email: email, password: pass };
+    if (totpField.style.display !== 'none' && totpCode) body.totp = totpCode;
     fetch(BASE_URL + '/backoffice/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, password: pass })
+      body: JSON.stringify(body)
     })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
     .then(function (res) {
       if (!res.ok || !res.j.token) {
-        errEl.textContent = res.j.error === 'invalid_credentials' ? 'Credenciales incorrectas' : (res.j.error || 'Error');
+        // 2FA (F7): la contraseña es correcta y falta (o falla) el código.
+        if (res.j.error === 'totp_required' || res.j.error === 'invalid_totp') {
+          totpField.style.display = 'block';
+          document.getElementById('loginTotp').value = '';
+          document.getElementById('loginTotp').focus();
+        }
+        errEl.textContent = res.j.error === 'invalid_credentials' ? 'Credenciales incorrectas'
+          : res.j.error === 'totp_required' ? 'Escribe el código de tu app de autenticación'
+          : res.j.error === 'invalid_totp' ? 'Código incorrecto o ya usado. Espera al siguiente.'
+          : (res.j.error || 'Error');
         btn.disabled = false; btn.textContent = 'Entrar'; return;
       }
+      totpField.style.display = 'none';
+      document.getElementById('loginTotp').value = '';
       session = saveSession(res.j.token, res.j.user);
       showApp();
+      var tf = (res.j.user && res.j.user.twoFactor) || {};
+      if (tf.required && !tf.enabled) openTwoFactor('Es obligatorio activar la verificación en dos pasos para continuar.');
     })
     .catch(function () {
       errEl.textContent = 'No se pudo conectar'; btn.disabled = false; btn.textContent = 'Entrar';
@@ -1467,6 +1484,45 @@
     });
   }
 
+  /* ── 2FA (F7) ── */
+  function twoFactorRender(st, notice) {
+    var status = document.getElementById('twoFactorStatus');
+    status.textContent = (notice ? notice + ' ' : '') + (st.enabled ? 'Estado: ACTIVADA.' : 'Estado: desactivada.');
+    document.getElementById('twoFactorSetupBtn').style.display = st.enabled ? 'none' : 'inline-flex';
+    document.getElementById('twoFactorDisableBtn').style.display = st.enabled ? 'inline-flex' : 'none';
+    document.getElementById('twoFactorCodeField').style.display = st.enabled ? 'block' : 'none';
+    document.getElementById('twoFactorEnableBtn').style.display = 'none';
+    document.getElementById('twoFactorSetupBox').style.display = 'none';
+    document.getElementById('twoFactorCode').value = '';
+  }
+  function openTwoFactor(notice) {
+    document.getElementById('twoFactorErr').textContent = '';
+    document.getElementById('twoFactorModal').classList.add('open');
+    api('/backoffice/2fa').then(function (st) { twoFactorRender(st, notice); })
+      .catch(function (e) { document.getElementById('twoFactorErr').textContent = e.message; });
+  }
+  function twoFactorSetup() {
+    document.getElementById('twoFactorErr').textContent = '';
+    api('/backoffice/2fa/setup', { method: 'POST' }).then(function (r) {
+      document.getElementById('twoFactorSecret').value = r.secret;
+      document.getElementById('twoFactorUrl').textContent = r.otpauthUrl;
+      document.getElementById('twoFactorSetupBox').style.display = 'block';
+      document.getElementById('twoFactorCodeField').style.display = 'block';
+      document.getElementById('twoFactorSetupBtn').style.display = 'none';
+      document.getElementById('twoFactorEnableBtn').style.display = 'inline-flex';
+    }).catch(function (e) { document.getElementById('twoFactorErr').textContent = e.message; });
+  }
+  function twoFactorSend(path) {
+    var code = document.getElementById('twoFactorCode').value.trim();
+    document.getElementById('twoFactorErr').textContent = '';
+    if (!/^\d{6}$/.test(code)) { document.getElementById('twoFactorErr').textContent = 'El código son 6 cifras'; return; }
+    api(path, { method: 'POST', body: JSON.stringify({ code: code }) }).then(function (r) {
+      twoFactorRender(r, r.enabled ? '2FA activada: desde ahora el login pedirá el código.' : '2FA desactivada.');
+    }).catch(function (e) {
+      document.getElementById('twoFactorErr').textContent = e.message === 'invalid_totp' ? 'Código incorrecto o ya usado' : e.message;
+    });
+  }
+
   /* ── BIND ALL ── */
   function bindButtons() {
     document.getElementById('loginBtn').addEventListener('click', doLogin);
@@ -1474,6 +1530,12 @@
     // Envoltorio: si se pasase doLogout directamente, recibiría el evento del
     // clic como argumento y lo tomaría por "sesión ya revocada".
     document.getElementById('logoutBtn').addEventListener('click', function () { doLogout(false); });
+    document.getElementById('twoFactorBtn').addEventListener('click', function () { openTwoFactor(''); });
+    document.getElementById('twoFactorModalClose').addEventListener('click', function () { document.getElementById('twoFactorModal').classList.remove('open'); });
+    document.getElementById('twoFactorSetupBtn').addEventListener('click', twoFactorSetup);
+    document.getElementById('twoFactorEnableBtn').addEventListener('click', function () { twoFactorSend('/backoffice/2fa/enable'); });
+    document.getElementById('twoFactorDisableBtn').addEventListener('click', function () { twoFactorSend('/backoffice/2fa/disable'); });
+    document.getElementById('loginTotp').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
     document.getElementById('refreshBtn').addEventListener('click', loadAll);
     document.getElementById('widgetToggleBtn').addEventListener('click', toggleWidgetEditor);
     document.getElementById('txModalClose').addEventListener('click',function(){document.getElementById('txModal').classList.remove('open');});

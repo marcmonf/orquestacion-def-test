@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 26 septiembre 2026
+> Última actualización: 4 noviembre 2026 (framework multi-PSP, rama sin fusionar)
 
 ---
 
@@ -127,6 +127,13 @@ Merchant backend
 | `src/utils/cryptoUtils.js` | AES-256-GCM, HMAC helpers, maskPan |
 | `src/services/apiKeyService.js` | Generación, validación y revocación de API keys |
 | `src/routes/apiKeyRoutes.js` | CRUD de API keys |
+| `src/connectors/contract.js` + `errors.js` | **(4 nov 2026)** Contrato único de conector PSP y taxonomía de errores. Guía: `docs/conectores.md` |
+| `src/connectors/paylands/` | **(4 nov 2026)** Paylands según el contrato (sobre `payNoPainConnector.js`, cable intacto) |
+| `src/services/routingService.js`, `connectorHealth.js`, `connectorAccountService.js` | **(4 nov 2026)** Routing pre-captura, circuit breaker, cuentas con credenciales cifradas |
+| `src/utils/checkoutProviders.js` + `public/checkout/providers/` | **(4 nov 2026)** Proveedores de campos del checkout (hoy ProxyFields de Paylands) |
+| `src/services/paymentMethodService.js`, `paymentTokenService.js` | **(4 nov 2026)** Métodos de pago; tarjeta guardada (apagado) |
+| `src/services/backofficeTotpService.js`, `src/utils/totp.js` | **(4 nov 2026)** 2FA TOTP del backoffice |
+| `tests/golden/paylandsWire.test.js` | **(4 nov 2026)** Congela byte a byte las peticiones a Paylands |
 | `openapi.yaml` (raíz) | **Especificación OpenAPI 3.1 v1.0.0 — contrato real de la API.** Única spec del proyecto (la antigua `openapi/monetiser.yaml` se eliminó en M4). |
 
 ---
@@ -239,6 +246,7 @@ Marcos, ver §7). Las credenciales NUNCA se escriben en ningún archivo del repo
 |---|---|---|
 | ~~Capture/cancel endpoints incorrectos~~ | ✅ RESUELTO Y VERIFICADO — sesión julio 2026 | Verificado con la doc oficial de Paylands (docs.paylands.com/en/reference): capture real es `POST /payment/confirmation` (no `/payment/capture`) y cancel real es `POST /payment/cancellation` (no `/payment/cancel`). **Hallazgo clave**: ambos endpoints SOLO operan sobre órdenes creadas con `operative: "DEFERRED"` — con `AUTHORIZATION` (lo que usábamos) el dinero se mueve al instante y no hay nada que confirmar/cancelar. Cambiado `operative` a `DEFERRED` en `createOrder`/`createOrder3DS`/`chargeWithToken`. **Segundo hallazgo**: una orden DEFERRED autorizada devuelve `PENDING_CONFIRMATION` (no `SUCCESS`) en el webhook — añadido al `STATUS_MAP` → `authorized`. **VERIFICADO end-to-end** (16 jul): tx nueva DEFERRED → webhook `PENDING_CONFIRMATION` → `authorized` en local → `POST /payments/{id}/capture` → `200 captured` con importe correcto. **Cancel también VERIFICADO** (16 jul): tx nueva DEFERRED autorizada sin capturar → `POST /payments/{id}/cancel` → `200 canceled`. Los tres flujos (refund total/parcial, capture, cancel) confirmados funcionando contra Paylands real. Nota operativa: durante la depuración, varios "fallos" se debieron a que las pruebas se hacían antes de que Render terminara el deploy — SIEMPRE confirmar que el deploy está Live antes de probar. |
 | **S2S no cumple el objetivo "Monetiser nunca toca el PAN"** | **✅ RESUELTO EN CÓDIGO (18 jul 2026)** · validación SAQ formal → M5 · **sigue en BETA (decisión de Marcos, 26 sep 2026): ver "S2S explicado en sencillo" en la sesión del 26 sep** | `POST /:merchantId/payments/server` acepta `cardPaymentMethodSpecificInput.card.cardNumber` en crudo en el body — a diferencia de Hosted Checkout (ProxyFields), aquí el PAN sí transita por la API de Monetiser. Además, **`payNoPainConnector.js` no tiene función `authorize()`** — solo `createOrder`/`createOrder3DS` (estilo Hosted, con redirect) y `chargeWithToken`. Como la política por defecto de cualquier merchant sin reglas custom es `defaultConnector: 'dummyCard'`, el S2S "funciona" hoy solo contra el conector de mentira; si una regla llegase a enrutar S2S hacia `payNoPain` reventaría con `connector.authorize is not a function`. **Corrección (16 jul 2026):** este párrafo afirmaba que "el PAN no se loguea en ningún punto del código". Era **falso**: se comprobaron `Transaction`, `auditLogger`, `PaymentAttempt` y `payNoPainConnector.js` (esos sí estaban limpios), pero NO se revisaron `proxyPciRoutes.js` ni `pciProxyService.js`, que sí lo logueaban. Corregido — ver la fila "Logs de debug en producción". Hoy sí es cierto: el PAN no llega a ningún logger. Aun así, aceptar el PAN en el body de la API ya pone a Monetiser en un scope PCI distinto (no SAQ A) para ese flujo concreto, y es incompatible con el objetivo declarado del proyecto. **DECISIÓN TOMADA (16 jul 2026, Marcos): OPCIÓN A — S2S solo aceptará tokens ya generados vía ProxyFields. Nunca PAN en crudo. Monetiser se mantiene en scope SAQ A.** Motivo: SAQ D (auditoría QSA externa, escaneos ASV trimestrales, pentest anual) no es asumible hoy; y el scope solo se abre en un sentido — en cuanto el PAN pasa por producción una vez, SAQ D aplica y no se vuelve atrás. Si en el futuro un merchant grande exige S2S con PAN y hay presupuesto para SAQ D, se añade entonces. **Implicaciones pendientes de implementar (NO hecho aún):** (1) rechazar `card.cardNumber` en el endpoint S2S y aceptar solo token/cardUuid; (2) escribir `authorize()` en `payNoPainConnector.js` reaprovechando `chargeWithToken` (hoy no existe — S2S solo funciona contra `dummyCard`). Alternativa contemplada y no descartada: retirar el endpoint S2S hasta que un merchant lo pida (nadie lo usa hoy). **Mientras tanto: NO usar S2S con tarjetas reales ni de test** — usar Hosted Checkout para generar transacciones de prueba contra PayNoPain real. En OpenAPI (M4) S2S se documenta como EXPERIMENTAL, nunca como estable. **RATIFICADO (18 jul 2026, Marcos):** decisión A confirmada tras discutir el matiz PCI. Matiz registrado: SAQ A es formalmente el cuestionario que rellenan los *merchants*; lo que tokens-only garantiza es (a) que cada merchant de Monetiser pueda acogerse a SAQ A (externaliza todo el manejo de tarjeta a Monetiser→Paylands — argumento de venta) y (b) scope PCI mínimo de Monetiser como proveedor de servicio, al no existir datos de tarjeta en su entorno. Qué validación formal corresponde a Monetiser como proveedor lo determinarán PayNoPain y en su caso un QSA — se documenta en M5, sin prometer certezas regulatorias. **Implementación programada para la próxima sesión:** (1) endpoint S2S rechaza `cardNumber` con error claro y acepta solo `source_uuid`/token de ProxyFields; (2) `authorize()` en `payNoPainConnector.js` sobre `chargeWithToken` (ya en DEFERRED); (3) tests. Último bloqueante técnico antes de M5. **✅ IMPLEMENTADO EN CÓDIGO (18 jul 2026):** los tres puntos hechos. (1) `serverPaymentController.js` rechaza `cardNumber`/`cvv` en crudo con `400 card_data_not_accepted` (mensaje explícito de SAQ A) ANTES de validar estructura, y exige el token en el campo raíz `source_uuid` o en `cardPaymentMethodSpecificInput.token` (`400 missing_card_token` si falta); ya no construye `paymentData` con PAN, pasa `cardToken`. (2) `authorize(paymentData)` añadido y exportado en `payNoPainConnector.js`: exige `cardToken`, reutiliza `chargeWithToken` (DEFERRED, envía el token como `source_uuid`), y normaliza la respuesta a `requires3DS`/`approved`/`declined`. De paso: `connectorRegistry.adaptPayNoPain` propaga `requires3DS`/`threeDsUrl`, y `paymentService.processCardPayment` reconoce `requires3DS` como estado `pending_3ds` propio (no un decline, sin fallback), que el controller convierte en `merchantAction: REDIRECT` a la URL 3DS. (3) tests: `serverPayment.test.js` reescrito a tokens-only (rechazo de PAN, token en ambas grafías, falta de token, propagación de `pending_3ds`) + nuevo `tests/unit/payNoPainAuthorize.test.js` (existencia de `authorize`, `missing_card_token` sin red, `requires3DS` verificando que envía `source_uuid` + `operative: DEFERRED`, y `declined` en no-200). Verificado con el protocolo de CLAUDE.md: arranque de la app (grafo de requires limpio) + suite **128/137** — misma línea base (los 9 fallos siguen siendo los preexistentes de `webhooks.test.js`), +9 tests nuevos verdes. Documentado en `openapi.yaml` v2.1.0: S2S deja de ser `experimental`/`deprecated` y pasa a `beta` (contrato cerrado, **aún sin verificar end-to-end contra Paylands real** — por eso `beta` y no `estable`). **Lo que NO cambia:** la validación PCI formal de Monetiser como proveedor sigue siendo trabajo de M5 (lo determinan PayNoPain y/o un QSA); esto cierra el bloqueante de *código*, no promete certezas regulatorias. **Pendiente antes de subir a `estable`:** una prueba real S2S→payNoPain contra Paylands sandbox (hoy no ejecutada). |
+| **Framework multi-PSP** (4 nov 2026) | Ver sesión del 4 nov | Hecho en código (rama sin fusionar). Apagado lo no verificado con PayNoPain; decisiones pendientes en el cierre de esa sesión. Segundo adquirente real: falta el PSP y sus credenciales. |
 | ~~Modelo Merchant en MongoDB~~ | ✅ M2 COMPLETADO | Modelo `Merchant` unificado con campos operativos (plan, status, webhookUrl, signingSecret, serviceUuid, templateUuid, branding). Rutas `/merchants` montadas y protegidas por X-Admin-Token. Dispatcher firma por-merchant. Detalle completo en sección 6 (M2). |
 | ~~Panel de administración `/admin`~~ | ✅ M3 COMPLETADO | Dashboard con analíticas, transacciones (refund/cancel/widgets expandibles), usuarios, merchants, API keys y motor de reglas. Ver sección 6 (M3). |
 | ~~Capture/cancel Paylands sin verificar~~ | ✅ RESUELTO — 16 jul 2026 | Fila obsoleta, se mantenía por error contradiciendo la fila de arriba. Capture y cancel están VERIFICADOS end-to-end contra Paylands real (ver fila 1 y sección 11). |
@@ -990,8 +998,10 @@ informe completo (con el plan al MVP y las preguntas para Marcos) se publicó ap
 
 **✅ FUSIONADO Y DESPLEGADO el 26 sep 2026** (PR #2 → `main`, commit `8a55689`; Manual Deploy
 de Marcos con `HPP_SIGNING_SECRET` definido y `ADMIN_TOKEN` de 64 caracteres, arranque sin
-avisos `[CONFIG]`). **Pendiente:** la prueba de sandbox de la "Vuelta del comprador" (más
-abajo), revocar la API key de demo-merchant y rellenar los datos fiscales antes de facturar.
+avisos `[CONFIG]`). ~~Pendiente: la prueba de sandbox de la "Vuelta del comprador"~~ →
+✅ **HECHA Y OK por Marcos el 4 nov 2026** (ver sesión del 4 nov → "Verificación en
+sandbox de la API v1"). **Sigue pendiente:** revocar la API key de demo-merchant y
+rellenar los datos fiscales antes de facturar.
 
 **Trabajo hecho en la rama `claude/clever-bohr-fk3164`** (entonces aún NO en `main`; nada estaba desplegado
 hasta que Marcos fusione y lance Manual Deploy). **Al terminar la Fase 0: 346/346** (+73 tests
@@ -1172,7 +1182,9 @@ returnUrl, ese caso fallaría EN SILENCIO). Cuando exista el snippet `monetiser.
 (API simple, Fase 2), que sabe desde qué web se abre el checkout, se fijará el origen
 exacto.
 
-**⚠️ Verificación pendiente en sandbox (Marcos, tras desplegar).** `url_ok`/`url_ko`
+**✅ VERIFICADO en sandbox por Marcos el 4 nov 2026** (vuelta a
+`gracias.html?…&result=succeeded` tras el 3DS; detalle en la sesión del 4 nov). Texto
+original de cuando estaba pendiente: `url_ok`/`url_ko`
 son parámetros documentados de `POST /payment` de Paylands, pero TOCAN la llamada de
 creación de orden que está verificada end-to-end. La doc no aclara si Paylands añade
 parámetros a esas URLs ni si vuelve por GET o por POST: la página acepta los dos y
@@ -1334,14 +1346,360 @@ sesión creada con la API (se ve el importe), `onResult` recibe el resultado al
 terminar, una URL ajena se rechaza, y la API v1 llamada desde esa web queda bloqueada
 por el navegador.
 
-**⚠️ Tras desplegar (Marcos):** repetir la prueba de sandbox de la "Vuelta del
-comprador" usando la colección Postman nueva (petición 1 → abrir la `url` → pagar →
-petición 3 → `authorized` → petición 4 capturar).
+~~Tras desplegar (Marcos): repetir la prueba de sandbox de la "Vuelta del comprador"
+con la colección Postman nueva~~ → ✅ **HECHA Y OK el 4 nov 2026** (sesión del 4 nov).
+La API v1 pasa a `estable` en `openapi.yaml` v2.13.0.
 
 **Pendiente (ver informe):** entorno de producción separado, 2FA de superadmin,
 routing del portal conectado al flujo real, conector #2, fijar el origen exacto del
 aviso `postMessage` usando `monetiser.js`. `RETURNMAC` (respuesta del alta del Hosted
 Checkout de la API antigua) no se usa en ningún sitio: la API v1 no lo incluye.
+
+
+### Sesión 4 nov 2026 — framework de orquestación multi-PSP
+
+**Contexto.** Marcos pidió convertir Monetiser de pasarela de un solo PSP (Paylands) en
+un framework multi-PSP listo para enchufar el segundo adquirente sin tocar el núcleo.
+Marcos NO estaba disponible: cada duda se resolvió con la opción más conservadora y se
+apunta abajo como **DECISIÓN PENDIENTE DE MARCOS**. Rama de trabajo:
+`claude/monetiser-multi-psp-framework-3dlfch` (la que el entorno de esta sesión tiene
+autorizada para push; Marcos pidió `claude/framework-multipsp` — ver decisiones
+pendientes). **Nada desplegado** (Render es manual).
+
+**Aviso sobre la documentación de Paylands:** desde el contenedor de esta sesión
+`docs.paylands.com` **no era accesible** (la política de red lo bloquea). Por eso NO se
+ha añadido ningún endpoint ni campo nuevo de Paylands: solo se reutiliza lo ya
+verificado en sesiones anteriores (citado en el código con
+`https://docs.paylands.com/en/reference`). Todo lo demás (Bizum, Apple Pay, Google Pay,
+tarjeta guardada, MIT, consulta de orden, credenciales por merchant) queda detrás de
+flags APAGADOS y "pendiente de verificar con PayNoPain".
+
+Línea base al empezar: **416/416** y arranque limpio.
+
+#### Verificación en sandbox de la API v1 (Marcos, 4 nov 2026) — ✅ OK
+
+Marcos ejecutó contra **Paylands real (sandbox)**, con la colección Postman de la API v1,
+las pruebas que estaban pendientes desde el 26 sep. Todas OK:
+
+1. `POST /v1/checkout-sessions` → abrir la `url` → pago con 3DS con `4018810000100036`.
+2. Vuelta del comprador a `gracias.html` con `result=succeeded` (los `url_ok`/`url_ko`
+   firmados funcionan con Paylands real).
+3. `GET /v1/payments/:id` → `authorized`.
+4. Refund ANTES de capturar → `409 capture_required` (correcto con DEFERRED: no hay dinero
+   movido que devolver).
+5. Capture → `captured`.
+6. Refund parcial de 1000 → `partially_refunded`.
+7. Segunda sesión → pago → cancel → `cancelled`.
+
+Consecuencias: quitadas de pendientes la prueba de la "Vuelta del comprador" (26 sep) y la
+repetición con la colección v1; las 7 rutas `/v1` pasan de `beta` a **`estable`** en
+`openapi.yaml` **v2.13.0** (decisión de Marcos; sin cambios de contrato). Nota honesta: el
+snippet `/v1/monetiser.js` y `GET /v1/checkout-sessions/:id` no figuran explícitamente en la
+lista de pasos de Marcos; se marcan estables por su decisión (comparten el mismo camino
+verificado). S2S sigue en `beta` (no forma parte de esta prueba).
+
+#### F0 — Inventario de lo que ya existía para multi-adquirente
+
+| Pieza | Estado al empezar | Qué se hizo |
+|---|---|---|
+| `src/services/connectorRegistry.js` | Registro con `payNoPain` y `dummyCard` (solo dev/test), interfaz legada `authorize/capture/void/refund`. | Se mantiene la interfaz legada (la usan paymentService y paymentLifecycleService) y se añade la vista por **contrato** (`getProvider`, `listProviders`, `registerProvider` solo en tests). |
+| `src/connectors/paynopain/payNoPainConnector.js` | Cliente de bajo nivel de Paylands, credenciales de plataforma leídas al cargar. `createOrder`/`createOrder3DS` sin uso. | **No se toca su cable.** Lo envuelve `src/connectors/paylands/index.js`. |
+| `src/routes/proxyPciRoutes.js` | El cobro del checkout llamaba a `chargeWithToken` **directamente**, sin pasar por routing. | Cobra vía `getProvider('payNoPain').createPayment` (mismo cable). |
+| `src/services/paymentService.js` + `src/rules/ruleEngineV2.js` | Solo el S2S pasaba por el motor de reglas (`MerchantRules.policy`). El checkout no. | El routing del checkout se construye sobre el mismo motor (F2). |
+| `src/models/Acquirer.js`, `MerchantAcquirer.js`, `MerchantRoutingRule.js`, `acquirerService.js`, `costService.js` | Catálogo, fichas de adquirente por merchant con pricing ICH++ y BIN routing ESTÁTICO del portal (M7 B2). No se aplicaba al pago vivo. | `MerchantAcquirer` se reutiliza como "cuenta del merchant en un PSP" (F2): se le añaden credenciales cifradas por modo. |
+| `src/orchestrator/metrics/metricsService.js` | Métricas en memoria; solo las alimentaba `dummyCard`. | La salud por conector (circuit breaker) va aparte, en `connectorHealth.js` (F2). |
+| `src/utils/cryptoUtils.js` | AES-256-GCM; `decryptAesGcm` bloqueado salvo `ALLOW_PAN_DECRYPT`. | Funciones nuevas para credenciales con otro contexto AAD (F2). |
+| Checkout atado a ProxyFields | `public/iframe.html` cargaba ProxyFields a pelo; CSP del iFrame con dominios de Paylands. | Proveedor de campos elegido por el conector enrutado (F3). |
+
+#### F1 — Contrato de conector PSP-agnóstico
+
+1. **Primero, congelar el cable** (`7ea6965`): `tests/golden/paylandsWire.test.js` captura
+   host, ruta, método, cabeceras y cuerpo EXACTOS de cada petición a Paylands y al Proxy
+   PCI con el código de `main` (sesión+cobro del checkout, capture total/parcial, cancel,
+   refund total/parcial, S2S) y los guarda en `paylandsWire.golden.json`. Escrito ANTES de
+   refactorizar; sigue pasando idéntico tras todos los cambios.
+2. **Contrato** `src/connectors/contract.js`: capacidades declaradas (métodos, divisas,
+   países, captura diferida/parcial, cancel, refund parcial, 3DS, tokenización, tarjeta
+   guardada, MIT, consulta, webhooks, credenciales por cuenta, live, proveedor de campos
+   del checkout, campos de credencial) y operaciones (`createPayment`, `capture`,
+   `cancel`, `refund`, `retrieve`, `verifyWebhook`, `parseWebhook`, `mapStatus`,
+   `normalizeError`). `defineConnector` valida al arrancar y rellena lo no implementado
+   con `not_supported`.
+3. **Taxonomía de errores** `src/connectors/errors.js` (card_declined, fraud_suspected,
+   configuration_error, conflict, rate_limited, processor_unavailable, timeout…). Un
+   timeout es resultado desconocido y nunca "rechazo".
+4. **Paylands detrás del contrato** `src/connectors/paylands/` (index + webhook): capa de
+   traducción sobre el cliente de bajo nivel, sin cambiar el cable. La verificación del
+   `validation_hash` y el mapa de estados se movieron sin cambios desde
+   `routes/webhooks.js`. Solo `card` + `EUR` declarados.
+5. **Suite de contrato** `tests/contract/connectorContract.js`: la pasan Paylands,
+   `dummyCard` y el **conector de prueba "B"** (`tests/helpers/testConnectorB.js`, existe
+   solo en tests; no imita a ningún PSP real). B se registra y el servicio REAL de ciclo
+   de vida lo usa sin cambios.
+6. **Guía** `docs/conectores.md`: cómo añadir un PSP paso a paso.
+
+Hallazgo: cuando Paylands responde con su propio `message` (p. ej. `Conflict` en el 409
+de refund sin captura), el cliente de bajo nivel pierde el código HTTP. El conector
+clasifica por la frase estándar; los códigos de error propios de Paylands están
+**pendientes de verificar con PayNoPain** (lo no reconocido sale `unknown`).
+
+Verificación F1: **478/478** (+62), arranque real sin avisos de montaje.
+
+
+#### F2 — Cuentas, routing pre-captura y salud por conector
+
+1. **Cuentas de adquirente por merchant** (`src/services/connectorAccountService.js`):
+   reutiliza `MerchantAcquirer` (la ficha de M7) como "cuenta del merchant en ese PSP" y
+   le añade `credentialsEnc.{test,live}` cifradas con AES-256-GCM
+   (`cryptoUtils.encryptSecret`, contexto AAD propio `monetiser:credentials:v1`, clave
+   `CREDENTIALS_ENCRYPTION_KEY` o `ENCRYPTION_KEY`; sin clave → 503, nunca en claro) y
+   `credentialsMeta` con lo que se puede enseñar (`••••` + 4 últimos). Validación contra
+   los `credentialFields` que declara el conector.
+   **Paylands sigue con la cuenta de PLATAFORMA** (`PAYNOPAIN_*` en Render): guardar
+   credenciales de Paylands para un merchant responde `409 platform_account_only` a
+   propósito, para que nadie crea que se usan. Ver decisiones pendientes.
+2. **Routing pre-captura** (`src/services/routingService.js`): al crear la sesión (API v1
+   y API antigua), la política del merchant (`MerchantRules`, la de /admin → Reglas) se
+   evalúa con `ruleEngineV2` sobre importe, divisa, **país del comprador** y **método de
+   pago** (predicados nuevos `country.in` y `paymentMethod.in`, aditivos). Candidatos:
+   primario + `fallback.order` + Paylands; se elige el primero registrado, capaz
+   (capacidades), con proveedor de campos en el checkout, con credenciales para el modo y
+   sano. **Ese es el único failover y ocurre antes de pedir la tarjeta** (invariante 5).
+   La decisión completa (regla, candidatos descartados y por qué, explain) se guarda en
+   `Transaction.routing` + `connectorAccountId`. Un fallo del propio routing (Mongo)
+   cae a Paylands marcado `routing_error_platform_default` (el comportamiento anterior).
+   Si NINGÚN PSP puede (p. ej. una divisa que nadie procesa) → `422
+   no_connector_available` (antes se habría mandado a Paylands, que cobra en la divisa de
+   su servicio). Con `SUPPORTED_CURRENCIES=EUR` (por defecto) no cambia nada hoy.
+3. **Salud por conector** (`src/services/connectorHealth.js`): circuit breaker en memoria;
+   solo cuentan fallos técnicos (5xx, red, timeout, credenciales), nunca rechazos del
+   banco. Lo alimenta el cobro del checkout. Si todos los capaces están "abiertos" se usa
+   el primero capaz (no se deja de cobrar por no haber alternativa).
+4. **Ciclo de vida**: con cuenta de plataforma la llamada al conector es EXACTAMENTE la de
+   antes (sin segundo argumento); con cuenta de merchant recibe `ctx.credentials`.
+5. **Checkout**: `/proxy-pci/session` y `/charge` se niegan (`409 wrong_fields_provider`)
+   a cobrar con ProxyFields un pago enrutado a otro proveedor de campos.
+6. **/backoffice (superadmin)**: `GET /backoffice/connectors` (capacidades + salud),
+   `GET|PUT|DELETE /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials[/:mode]`
+   y `POST /backoffice/routing/:merchantId/simulate`.
+7. API v1: campo opcional `country` en `POST /v1/checkout-sessions` (aditivo).
+
+Verificación F2: **499/499** (+21: `tests/unit/multiPspRouting.test.js`,
+`tests/integration/multiPspBackoffice.test.js`), golden del cable idéntico, arranque real
+limpio. Sin cambios en `public/` en esta fase.
+
+
+#### F3 — Checkout multi-PSP
+
+1. **Proveedores de campos** (`src/utils/checkoutProviders.js`): cada PSP declara su
+   módulo de navegador, los dominios que añade a la CSP y sus datos de runtime. Hoy uno:
+   `paylands_proxyfields`. La CSP del iFrame se construye con el proveedor del pago y,
+   para Paylands, es **idéntica carácter a carácter** a la de antes (test).
+2. `/:merchantId/iframe` elige el proveedor según `Transaction.routing.fieldsProvider`
+   (pagos anteriores sin routing → Paylands) y añade al runtime (aditivo)
+   `fieldsProvider`, `providerScript`, `providerConfig` y `paymentMethods`.
+3. `public/iframe.html` es ahora un **núcleo** (marca, importe, pantalla de selección de
+   método, errores) que carga el módulo del proveedor por ruta ABSOLUTA. El código de
+   ProxyFields se movió **sin cambios de comportamiento** a
+   `public/checkout/providers/paylands_proxyfields.js`.
+4. **Selección de método de pago**: solo aparece con 2 o más métodos. Los métodos
+   ofrecidos = los del conector enrutado ∩ los que el checkout sabe presentar (hoy solo
+   `card`), así que hoy NO aparece y el checkout es el de siempre.
+
+**Verificación en navegador real (Chromium, 375 px)** con las rutas reales del iFrame y de
+`/proxy-pci` (modelos en memoria; ProxyFields y Paylands simulados con `page.route`, sin
+red): pago con routing y pago antiguo sin routing → misma CSP, carga de ProxyFields,
+`/proxy-pci/session` → `ProxyFields.init('pan-container','cvv-container')` → `/charge` con
+solo el `paymentId` → navegación al 3DS de Paylands; tx en `pending_3ds` con BIN/últimos
+4. Con 2 métodos inyectados: botones "Tarjeta | Bizum", Bizum oculta los campos y "Pagar"
+no envía nada. Cero errores de consola o de CSP, sin scroll horizontal. Suite **505/505**
+(+6 `tests/unit/checkoutProviders.test.js`), arranque real limpio.
+**Pendiente (Marcos):** repetir en sandbox real un pago completo con el checkout tras
+desplegar (runbook del cierre, prueba R1) — el cambio de `public/` solo se ha probado con
+Paylands simulado.
+
+
+#### F4 — Modo test / live estilo Stripe (live APAGADO)
+
+1. **Claves**: las nuevas llevan el modo en el secreto: `ms_test_…` (por defecto) y
+   `ms_live_…`. `MerchantApiKey.livemode`. **Las claves `ms_…` anteriores siguen
+   valiendo** y son modo test (el entorno de siempre, sandbox). Crear una clave live
+   (`POST /backoffice/merchants/:id/api-keys` con `{ "livemode": true }`) exige
+   `FEATURE_LIVEMODE=true` (si no, `409 livemode_not_enabled`), y una clave live existente
+   deja de autenticar si el flag se apaga (`403 livemode_not_enabled`, fail-closed).
+   La API antigua (`x-api-key` / HMAC) **solo acepta claves test**: live solo por `/v1`.
+2. **`livemode`** en sesiones y pagos de la API v1 y en los webhooks salientes
+   (`data.livemode`, aditivo). `Transaction.livemode` (sin el campo = test).
+3. **Aislamiento**: una clave test no ve, ni captura/devuelve/anula, pagos live y al revés
+   (404). La misma `Idempotency-Key` en test y en live no choca (en live se guarda con
+   prefijo `live:`).
+4. **Credenciales de PSP por modo**: `credentialsEnc.test` / `.live` de la cuenta (F2). El
+   routing usa las del modo del pago. **Paylands no tiene modo live activado**
+   (`capabilities.livemode=false`): con `PAYNOPAIN_ENV` global por despliegue, un pago
+   live hoy responde `422 no_connector_available`. Ver decisión pendiente sobre cómo
+   separar producción.
+
+Verificación F4: **512/512** (+7 `tests/integration/v1Livemode.test.js`), golden idéntico.
+Pendiente aparte: filtro test/live en los listados de /admin y del portal (hoy no hay
+datos live: el flag está apagado).
+
+
+#### F5 — Métodos de pago (solo tarjeta disponible; el resto APAGADO)
+
+1. **Catálogo** (`src/services/paymentMethodService.js`): un método está disponible solo
+   si (a) un conector real lo declara, (b) el checkout sabe presentarlo
+   (`CHECKOUT_METHOD_UI`, hoy solo `card`) y (c) para Paylands, su flag está encendido.
+2. **API v1** (aditivo): `GET /v1/payment-methods` (catálogo con `available` y `reason`);
+   `paymentMethods` opcional en `POST /v1/checkout-sessions` (los pedidos ∩ disponibles;
+   ninguno → `422 payment_method_not_available` con el motivo de cada uno); la sesión
+   devuelve `paymentMethods` y el pago `paymentMethod`.
+3. **Paylands**: flags `FEATURE_PAYLANDS_BIZUM`, `FEATURE_PAYLANDS_APPLE_PAY`,
+   `FEATURE_PAYLANDS_GOOGLE_PAY` (APAGADOS). Encenderlos solo hace que el conector los
+   DECLARE; **no** se pueden cobrar porque no existe flujo de navegador ni llamada a
+   Paylands para ellos: **la doc de Paylands no se pudo consultar desde esta sesión y no
+   se ha inventado ningún endpoint ni campo**. Pendiente de verificar con PayNoPain:
+   endpoint/parámetros de Bizum, validación de comercio y dominio de Apple Pay, Google Pay;
+   y que Marcos tenga cada servicio activado en sandbox. Con eso, el trabajo restante es:
+   operación en el conector, módulo de navegador del método y añadirlo a
+   `CHECKOUT_METHOD_UI` (la pantalla de selección de F3 ya existe).
+
+Verificación F5: **517/517** (+5 `tests/unit/paymentMethods.test.js`).
+
+
+#### F6 — Tarjeta guardada / recurrentes (APAGADO: `FEATURE_SAVED_CARDS`)
+
+Cierra en código los puntos 1–3 de "Por qué ningún comercio puede usarlo todavía" del
+S2S (sesión del 26 sep), detrás de un flag apagado:
+
+1. **Token PROPIO de Monetiser** (`src/models/PaymentToken.js`,
+   `src/services/paymentTokenService.js`): `pm_<hex>` ligado al `merchantId` y al modo.
+   El token de Paylands (source_uuid de ProxyFields) se guarda **cifrado** y nunca sale:
+   la API devuelve `pm_…` + marca, últimos 4, caducidad y país. Otro comercio u otro modo
+   → 404.
+2. **Consentimiento "guardar tarjeta"**: la sesión v1 lleva `saveCard: { customerRef }`;
+   el checkout enseña una casilla **desmarcada** con el texto versionado
+   (`v1-2026-11`); solo si el titular la marca, `/proxy-pci/charge` recibe
+   `saveCard:true` y se crea el token en `pending` con fecha, IP y navegador. El webhook
+   lo activa cuando Paylands confirma el pago (`authorized`) y lo descarta si no.
+   **El cable del primer pago no cambia** (sigue `save_card:false`): no se ha tocado
+   ningún parámetro de Paylands.
+3. **Indicadores CIT/MIT**: `Transaction.initiator` (`customer`/`merchant`) y
+   `storedCredential` (`first`/`subsequent`, motivo, token).
+4. **Cobro con el token**: `POST /v1/payments { amount, currency, paymentToken,
+   initiator, reason? }` (+ `GET /v1/payment-tokens`, `GET|DELETE
+   /v1/payment-tokens/:id`). Cliente delante (CIT) → el MISMO cobro tokenizado con 3DS
+   que el checkout (`nextAction.redirect`). Sin el cliente (MIT) → `422
+   merchant_initiated_not_supported`: Paylands no declara `merchantInitiated` porque sus
+   indicadores (extra_data.cof…) **no están verificados**. Un solo intento, en el PSP
+   que emitió el token.
+
+**Pendiente de verificar con PayNoPain** antes de encender el flag: (a) si el
+`source_uuid` del Proxy PCI es reutilizable para cobros posteriores (o hace falta
+`save_card:true` u otro mecanismo); (b) indicadores de credencial guardada y de MIT;
+(c) adónde vuelve el comprador tras el 3DS de un cobro con token (hoy a la página de
+resultado sin `returnUrl`). Y el "Test D" de S2S contra sandbox.
+
+Verificación F6: **523/523** (+6 `tests/integration/savedCards.test.js`). En Chromium real:
+sin oferta la casilla no existe y el cobro envía solo `{"paymentId"}`; con oferta
+aparece desmarcada, marcada envía `{"paymentId","saveCard":true}` y el token queda
+`pending` sin el token del PSP en claro. Sin errores de consola, 375 px sin scroll.
+
+
+#### F7 — Producción: 2FA TOTP del backoffice + checklist de variables
+
+1. **2FA TOTP** (RFC 6238, sin dependencias: `src/utils/totp.js`, probado con los
+   vectores oficiales de la RFC): /admin → botón **2FA** → "Activar 2FA" enseña la clave
+   (y la URL `otpauth://`) para la app de autenticación → se confirma con un código. Desde
+   entonces el login pide el código (`totp_required` / `invalid_totp`); un código no se
+   puede reutilizar (anti-replay atómico). Secreto cifrado
+   (`CREDENTIALS_ENCRYPTION_KEY`). Desactivar exige un código. Recuperación si se pierde
+   el móvil: `POST /backoffice/auth/reset-2fa` con `X-Admin-Token` (quita la 2FA y cierra
+   sus sesiones). Disponible para cualquier usuario del backoffice.
+2. **Obligatoria para superadmin** con `BACKOFFICE_2FA_REQUIRED=true` (APAGADO): un
+   superadmin sin 2FA solo puede usar `/backoffice/2fa/*` (`403
+   two_factor_setup_required`) y /admin le abre el modal al entrar.
+3. **Checklist de producción**: `docs/produccion.md` + `GET
+   /backoffice/production-readiness` (superadmin; dice qué variable falta, nunca su valor)
+   + avisos `⚠️ [PRODUCCIÓN]` al arrancar con `PAYNOPAIN_ENV=production`. Incluye
+   `API_KEY_SIMPLE_FALLBACK=false`.
+
+Verificación F7: **530/530** (+7 `tests/security/backofficeTotp.test.js`). En Chromium
+real (/admin con el router real y usuarios en memoria): activar 2FA desde el modal, salir,
+login → pide el código, código malo → "Código incorrecto o ya usado", código bueno →
+dentro. Sin errores de JavaScript.
+
+
+#### Cierre de la sesión del 4 nov 2026
+
+**Commits** (rama `claude/monetiser-multi-psp-framework-3dlfch`, PR a `main`):
+
+| Fase | SHA | Qué |
+|---|---|---|
+| Golden | `7ea6965` | Test que congela el cable con Paylands (antes de tocar nada) |
+| F1 | `53c3d07` | Contrato de conector, Paylands detrás, suite de contrato, conector B (tests), `docs/conectores.md` |
+| Dato de Marcos | `81b7ec3` | Pruebas de sandbox de la API v1 OK; `/v1` a `estable` (openapi v2.13.0) |
+| F2 | `7a48a63` | Cuentas con credenciales cifradas, routing pre-captura, circuit breaker |
+| F3 | `921bb2d` | Checkout: proveedor de campos por conector + selección de método |
+| F4 | `800b488` | Modo test/live (live apagado) |
+| F5 | `d512a4a` | Métodos de pago en la API v1 (solo tarjeta disponible) |
+| F6 | `b481c76` | Tarjeta guardada con token propio (apagado) |
+| F7 | `afa648f` | 2FA TOTP en /admin + checklist de producción |
+| Cierre | (ver `git log`) | `openapi.yaml` v2.14.0, `docs/integracion.md`, Postman (peticiones 7–9), runbook `docs/runbook-multipsp.md`, este resumen |
+
+**Tests:** 416 → **530/530**. Arranque real limpio en cada fase. Navegador real (Chromium)
+en los dos cambios de `public/` (checkout y /admin). **Nada desplegado.**
+
+**Qué queda APAGADO y por qué**
+
+| Flag / estado | Por qué |
+|---|---|
+| `FEATURE_LIVEMODE` | Paylands se configura por despliegue (`PAYNOPAIN_ENV`); no hay entorno live por llamada. Ver decisión 3. |
+| `FEATURE_SAVED_CARDS` | Sin verificar con PayNoPain que el `source_uuid` es reutilizable ni los indicadores de MIT. |
+| `FEATURE_PAYLANDS_BIZUM` / `_APPLE_PAY` / `_GOOGLE_PAY` | Doc de Paylands no consultable desde esta sesión; servicio no activado en sandbox; sin flujo de navegador. |
+| `BACKOFFICE_2FA_REQUIRED` | Encender DESPUÉS de que cada superadmin active su 2FA. |
+| Credenciales de Paylands por merchant | `409 platform_account_only`: hoy cuenta de plataforma. |
+| MIT (cobro sin el cliente) | `422 merchant_initiated_not_supported` en Paylands. |
+
+**Runbook para Marcos:** `docs/runbook-multipsp.md` (R0–R11, solo Postman web y
+navegador). Lo imprescindible tras desplegar: **R0** (variable
+`CREDENTIALS_ENCRYPTION_KEY`) y **R1** (regresión del pago real con Paylands).
+
+**DECISIONES PENDIENTES DE MARCOS**
+
+1. **Nombre de la rama.** Pediste `claude/framework-multipsp`; el entorno de esta sesión
+   solo permitía subir a `claude/monetiser-multi-psp-framework-3dlfch`. Se trabajó y se
+   abrió el PR desde esta última (opción conservadora: no forzar un push no autorizado).
+   Si quieres el otro nombre, basta con renombrar la rama en GitHub.
+2. **Acceso a `docs.paylands.com` desde las sesiones de Claude.** La política de red lo
+   bloqueó: no se pudo leer la documentación. Para la próxima sesión: entorno de Claude
+   → Network access → añadir `docs.paylands.com` a los dominios permitidos.
+3. **Cómo separar producción.** Recomendación: **dos despliegues en Render** (sandbox y
+   producción, cada uno con su `MONGO_URI` y sus `PAYNOPAIN_*`) ahora; el modo live
+   "estilo Stripe" en un solo despliegue solo cuando el conector de Paylands acepte
+   credenciales y URL por llamada (hoy no, y tocarlo cambia el cable verificado).
+4. **Credenciales de Paylands por merchant** (cada comercio con su `service` o su API
+   key de Paylands): preguntar a PayNoPain si el modelo de Monetiser es una cuenta de
+   plataforma con un service por comercio o cuentas separadas. Hoy: plataforma.
+5. **Bizum / Apple Pay / Google Pay**: pedir a PayNoPain la documentación exacta y
+   activarlos en el sandbox. Con eso se construye el flujo (la pantalla de selección ya
+   existe).
+6. **Tarjeta guardada y suscripciones**: confirmar con PayNoPain (a) si el `source_uuid`
+   del Proxy PCI sirve para cobros posteriores o hace falta `save_card:true`/otro
+   mecanismo, (b) los indicadores de credencial guardada y de cobro sin el cliente
+   (extra_data.cof…), y (c) ejecutar el "Test D" de S2S en sandbox.
+7. **Encender `BACKOFFICE_2FA_REQUIRED=true`** cuando todos los superadmin la tengan.
+8. **`/v1/monetiser.js` y `GET /v1/checkout-sessions/:id` como `estable`**: los marcaste
+   estables con el resto de `/v1`, pero no estaban explícitamente en tu lista de pasos.
+   ¿Los probamos aparte o se quedan así?
+9. **Divisas sin adquirente** → ahora `422 no_connector_available` (antes el pago se
+   habría mandado a Paylands, que cobra en la divisa de su servicio). Con
+   `SUPPORTED_CURRENCIES=EUR` no cambia nada hoy. Confirmar que es el comportamiento
+   deseado.
+10. **Claves nuevas `ms_test_…`**: las que se creen a partir del despliegue llevan el
+    prefijo de modo; las antiguas siguen valiendo. Confirmar.
+11. **Pendientes de UI** (hoy solo por API/Postman): gestión de cuentas/credenciales y
+    vista de conectores en /admin; filtro test/live en los listados de /admin y del
+    portal; enseñar `routing` en el detalle de transacción de /admin.
 
 ---
 
@@ -1446,6 +1804,14 @@ Checkout de la API antigua) no se usa en ningún sitio: la API v1 no lo incluye.
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | **(M7 Bloque 1)** SMTP de Google Workspace para enviar facturas (`smtp.gmail.com` / `587` / `false`). Sin configurar, el email hace no-op. |
 | `SMTP_USER` / `SMTP_PASS` | **(M7 Bloque 1)** Cuenta de Workspace + contraseña de aplicación. |
 | `SMTP_FROM` | **(M7 Bloque 1)** Remitente de los emails (por defecto `SMTP_USER`). |
+| `CREDENTIALS_ENCRYPTION_KEY` | **(4 nov 2026, multi-PSP)** 64 hex. Cifra credenciales de PSP por merchant, secretos 2FA y tokens de tarjeta guardada. Si falta se usa `ENCRYPTION_KEY`; sin ninguna, guardar credenciales/2FA responde 503. **No cambiarla una vez usada.** |
+| `CB_FAILURE_THRESHOLD` / `CB_WINDOW_MS` / `CB_COOLDOWN_MS` | **(4 nov 2026)** Circuit breaker por conector: fallos técnicos seguidos (5) en la ventana (60000) para abrirlo y enfriamiento (30000). |
+| `FEATURE_LIVEMODE` | **(4 nov 2026) APAGADO.** Claves `ms_live_` y pagos live por `/v1`. |
+| `FEATURE_SAVED_CARDS` | **(4 nov 2026) APAGADO.** Tarjeta guardada (token `pm_`) y `POST /v1/payments`. Pendiente de verificar con PayNoPain. |
+| `FEATURE_PAYLANDS_BIZUM` / `FEATURE_PAYLANDS_APPLE_PAY` / `FEATURE_PAYLANDS_GOOGLE_PAY` | **(4 nov 2026) APAGADOS.** Solo hacen que Paylands DECLARE el método; no hay flujo de cobro hasta verificarlo con PayNoPain. |
+| `BACKOFFICE_2FA_REQUIRED` | **(4 nov 2026) APAGADO.** `true` obliga a los superadmin a tener 2FA. Encender DESPUÉS de activarla cada uno. |
+
+Checklist para pasar a real: **`docs/produccion.md`** y `GET /backoffice/production-readiness`.
 
 ### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
 
@@ -1490,7 +1856,15 @@ POST /v1/payments/:id/capture            → Capturar (total o { amount })
 POST /v1/payments/:id/refund             → Devolver (total o { amount })
 POST /v1/payments/:id/cancel             → Anular una autorización sin capturar
 GET  /v1/monetiser.js                    → Snippet para embeber el checkout (Monetiser.mount)
+GET  /v1/payment-methods                 → (4 nov) Métodos con disponibilidad real (hoy solo card)
+GET  /v1/payment-tokens[?customerRef=]   → (4 nov, APAGADO) Tarjetas guardadas (pm_...)
+GET|DELETE /v1/payment-tokens/:id        → (4 nov, APAGADO) Consultar / revocar
+POST /v1/payments                        → (4 nov, APAGADO) Cobro con tarjeta guardada
 ```
+
+Desde el 4 nov 2026: claves `ms_test_…` / `ms_live_…` (las `ms_…` antiguas = test);
+`livemode` en sesiones, pagos y webhooks; `country`, `paymentMethods` y `saveCard`
+opcionales al crear la sesión.
 
 Auth: `Authorization: Bearer <secreto ms_...>`. Solo desde servidor (sin CORS). Guía:
 `docs/integracion.md`. Postman: `postman/Monetiser.postman_collection.json`.
@@ -1527,8 +1901,20 @@ GET /diag/transactions             → /backoffice/transactions?q=<paymentId>   
 ```
 
 Siguen con `X-Admin-Token`: `GET /webhooks`, `POST /orchestration/decide` y la
-recuperación de cuentas (`POST /backoffice/auth/setup`, de un solo uso, y
-`/backoffice/auth/reset-password`).
+recuperación de cuentas (`POST /backoffice/auth/setup`, de un solo uso,
+`/backoffice/auth/reset-password` y, desde el 4 nov, `/backoffice/auth/reset-2fa`).
+
+Framework multi-PSP (4 nov 2026, superadmin salvo 2FA):
+
+```
+GET    /backoffice/connectors                                              → Conectores, capacidades y salud
+GET    /backoffice/merchants/:merchantId/connector-accounts                → Cuentas de PSP (credenciales enmascaradas)
+PUT    /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials   { mode, credentials }
+DELETE /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials/:mode
+POST   /backoffice/routing/:merchantId/simulate                            → Decisión de routing con explain
+GET    /backoffice/production-readiness                                    → Checklist de variables para pasar a real
+GET    /backoffice/2fa · POST /backoffice/2fa/{setup,enable,disable}       → 2FA del usuario de sesión (cualquier rol)
+```
 
 ### Portal del merchant (M6)
 
@@ -1726,6 +2112,7 @@ estados en Mongo. Simulacion pura.
 | Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
 | Captura | POST /payments/:paymentId/capture | **POST /payment/confirmation** (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
 | Cancelacion (void) | POST /payments/:paymentId/cancel | **POST /payment/cancellation** (order_uuid, solo pre-captura) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
+| API v1 completa (sesión → 3DS → vuelta → capture/refund/cancel) | POST /v1/checkout-sessions · /v1/payments/:id/{capture,refund,cancel} | los mismos | ✅ VERIFICADO end-to-end contra Paylands sandbox por Marcos (4 nov 2026) |
 
 ### Ciclo de vida de una transaccion
 

@@ -2,6 +2,7 @@
 
 const Joi = require('joi');
 const { listConnectors } = require('../services/connectorRegistry');
+const { PAYMENT_METHODS } = require('../connectors/contract');
 
 // Solo conectores REGISTRADOS (en producción, dummyCard no lo está). Antes se
 // aceptaba cualquier nombre y el fallback por defecto era dummyCard: una
@@ -35,6 +36,14 @@ const whenSchema = Joi.object({
     in: Joi.array().items(Joi.string().uppercase().length(3)).min(1)
   }).unknown(false),
   amount: cmpNumber,
+  // Multi-PSP (nov 2026): país del comprador y método de pago, conocidos ANTES
+  // de pedir la tarjeta → sirven para el routing del checkout.
+  country: Joi.object({
+    in: Joi.array().items(Joi.string().uppercase().length(2)).min(1)
+  }).unknown(false),
+  paymentMethod: Joi.object({
+    in: Joi.array().items(Joi.string().valid(...PAYMENT_METHODS)).min(1)
+  }).unknown(false),
 
   // Tiempo
   dayOfWeek: Joi.object({

@@ -682,11 +682,25 @@ router.get('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (
 router.post('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (req, res) => {
   try {
     const { label = '' } = req.body || {};
+    // F4 (modo live estilo Stripe): { livemode: true } crea una clave ms_live_.
+    // Solo con FEATURE_LIVEMODE=true; si no → 409 livemode_not_enabled.
+    const livemode = (req.body || {}).livemode === true;
     // Solo para merchants que existen (antes se creaban keys para cualquier id).
     const exists = await Merchant.findOne({ merchantId: String(req.params.merchantId) }, { _id: 1 }).lean();
     if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
-    const result = await createApiKey(req.params.merchantId, String(label).slice(0, 100));
+    let result;
+    try {
+      result = livemode
+        ? await createApiKey(req.params.merchantId, String(label).slice(0, 100), { livemode: true })
+        : await createApiKey(req.params.merchantId, String(label).slice(0, 100));
+    } catch (e) {
+      if (e && e.code === 'livemode_not_enabled') {
+        return res.status(409).json({ success: false, error: 'livemode_not_enabled', message: 'El modo live está apagado (FEATURE_LIVEMODE).' });
+      }
+      throw e;
+    }
     return res.status(201).json({
+      livemode:     Boolean(result.livemode),
       success:      true,
       message:      'API key creada. Guarda rawKeyId y rawSecret — no se podrán recuperar después.',
       merchantId:   result.merchantId,
@@ -1144,6 +1158,119 @@ router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), 
     const doc = await InterchangeRate.findOneAndUpdate(key, { $set: set, $setOnInsert: key }, { new: true, upsert: true });
     return res.json({ success: true, rate: doc });
   } catch (err) { console.error('❌ [backoffice/interchange PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2FA TOTP del usuario de sesión (F7, nov 2026) — cualquier rol puede activarla
+//   GET  /backoffice/2fa            estado
+//   POST /backoffice/2fa/setup      → { secret, otpauthUrl } (se enseña UNA vez)
+//   POST /backoffice/2fa/enable     { code }
+//   POST /backoffice/2fa/disable    { code }
+// ─────────────────────────────────────────────────────────────────────────────
+const totpService = require('../services/backofficeTotpService');
+
+// Checklist de variables para pasar a real (F7). Solo dice si cada una está
+// bien, nunca su valor. Guía: docs/produccion.md.
+router.get('/production-readiness', requireRole('superadmin'), (req, res) => {
+  return res.json({ success: true, ...require('../utils/productionReadiness').evaluate() });
+});
+function totpError(res, err) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, message: err.message !== err.code ? err.message : undefined });
+  console.error('❌ [backoffice/2fa]', err && err.message);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+router.get('/2fa', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.status(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/setup', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/enable', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/disable', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FRAMEWORK MULTI-PSP (nov 2026) — solo superadmin
+//   GET    /backoffice/connectors                                        conectores registrados + capacidades + salud
+//   GET    /backoffice/merchants/:merchantId/connector-accounts          cuentas del merchant (credenciales ENMASCARADAS)
+//   PUT    /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials   { mode, credentials }
+//   DELETE /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials/:mode
+//   POST   /backoffice/routing/:merchantId/simulate                      { amount, currency, country?, paymentMethod?, livemode? }
+// Las credenciales se guardan cifradas (AES-256-GCM) y NUNCA se devuelven en claro.
+// ─────────────────────────────────────────────────────────────────────────────
+const connectorRegistry = require('../services/connectorRegistry');
+const connectorHealth = require('../services/connectorHealth');
+const connectorAccounts = require('../services/connectorAccountService');
+const routingService = require('../services/routingService');
+
+function accountError(res, err, tag) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, message: err.message });
+  console.error(`❌ [${tag}]`, err && err.message);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+
+router.get('/connectors', requireRole('superadmin'), (req, res) => {
+  const healthSnap = connectorHealth.snapshot();
+  const connectors = connectorRegistry.listProviders().map((p) => ({
+    ...p,
+    health: healthSnap[p.id] || { status: connectorHealth.statusOf(p.id), recentFailures: 0, lastError: null, lastSuccessAt: null },
+    checkoutAvailable: routingService.checkoutFieldsProviders().includes(p.capabilities.checkout.fieldsProvider),
+  }));
+  return res.json({ success: true, connectors });
+});
+
+router.get('/merchants/:merchantId/connector-accounts', requireRole('superadmin'), async (req, res) => {
+  try {
+    return res.json({ success: true, accounts: await connectorAccounts.listAccounts(String(req.params.merchantId)) });
+  } catch (err) { return accountError(res, err, 'backoffice/connector-accounts GET'); }
+});
+
+router.put('/merchants/:merchantId/connector-accounts/:acquirerCode/credentials', requireRole('superadmin'), async (req, res) => {
+  try {
+    const exists = await Merchant.findOne({ merchantId: String(req.params.merchantId) }).lean();
+    if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const account = await connectorAccounts.saveCredentials({
+      merchantId: String(req.params.merchantId),
+      acquirerCode: String(req.params.acquirerCode),
+      mode: String((req.body || {}).mode || ''),
+      credentials: (req.body || {}).credentials,
+      actor: req.backofficeUser && req.backofficeUser.email,
+    });
+    return res.json({ success: true, account });
+  } catch (err) { return accountError(res, err, 'backoffice/connector-accounts PUT'); }
+});
+
+router.delete('/merchants/:merchantId/connector-accounts/:acquirerCode/credentials/:mode', requireRole('superadmin'), async (req, res) => {
+  try {
+    const account = await connectorAccounts.deleteCredentials({
+      merchantId: String(req.params.merchantId),
+      acquirerCode: String(req.params.acquirerCode),
+      mode: String(req.params.mode),
+      actor: req.backofficeUser && req.backofficeUser.email,
+    });
+    return res.json({ success: true, account });
+  } catch (err) { return accountError(res, err, 'backoffice/connector-accounts DELETE'); }
+});
+
+router.post('/routing/:merchantId/simulate', requireRole('superadmin'), async (req, res) => {
+  const b = req.body || {};
+  const amount = Number(b.amount);
+  if (!Number.isInteger(amount) || amount < 1) return res.status(400).json({ success: false, error: 'invalid_amount' });
+  const currency = String(b.currency || '').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return res.status(400).json({ success: false, error: 'invalid_currency' });
+  const country = b.country ? String(b.country).toUpperCase() : null;
+  if (country && !/^[A-Z]{2}$/.test(country)) return res.status(400).json({ success: false, error: 'invalid_country' });
+  try {
+    const decision = await routingService.decide({
+      merchantId: String(req.params.merchantId), amount, currency, country,
+      paymentMethod: String(b.paymentMethod || 'card'), livemode: b.livemode === true,
+      channel: b.channel === 's2s' ? 's2s' : 'checkout',
+    });
+    return res.json({ success: true, decision });
+  } catch (err) { return accountError(res, err, 'backoffice/routing simulate'); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

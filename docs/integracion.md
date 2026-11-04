@@ -269,6 +269,9 @@ Todas las respuestas de error tienen la misma forma:
 | 409 | `payment_busy`, `operation_in_progress` | Hay otra operación en curso sobre ese pago: reintenta en unos segundos. |
 | 429 | `rate_limit_exceeded` | Demasiadas peticiones: espera y reintenta. |
 | 502 | `processor_declined` | Paylands o el banco rechazaron la operación. |
+| 422 | `no_connector_available` | Ningún adquirente puede procesar ese pago (divisa, país o método). No se ha creado nada. |
+| 422 | `payment_method_not_available` | Ninguno de los `paymentMethods` pedidos está disponible (`details` dice por qué). |
+| 403 | `livemode_not_enabled` | Clave `ms_live_…` con el modo live todavía apagado en Monetiser. |
 
 ## Probar en sandbox
 
@@ -277,6 +280,41 @@ de prueba.
 
 Para ver el checkout y el aviso `onResult` sin programar nada, usa
 `$MONETISER/test-checkout.html`: pega la `url` de una sesión y pulsa *Cargar*.
+
+## Novedades de noviembre 2026 (v2.14.0) — todo opcional
+
+Nada de lo anterior cambia. Si no usas estos campos, tu integración funciona igual.
+
+### Modo test y modo live
+
+Las claves nuevas llevan el modo en el prefijo, como Stripe: `ms_test_…` (pruebas,
+sandbox) y `ms_live_…` (dinero real). **Tu clave `ms_…` de antes sigue valiendo** y
+es de pruebas. Las respuestas de sesiones y pagos, y los webhooks, traen
+`"livemode": false|true`. Con una clave de pruebas no se ven los pagos reales y al
+revés. **El modo live todavía no está activado** (`403 livemode_not_enabled`).
+
+### País del comprador (`country`)
+
+Si lo sabes, mándalo al crear la sesión: Monetiser puede elegir el adquirente según
+el país (reglas de routing configuradas por Monetiser).
+
+```json
+{ "amount": 4999, "currency": "EUR", "country": "ES" }
+```
+
+### Métodos de pago
+
+`GET /v1/payment-methods` dice qué métodos están disponibles hoy (solo tarjeta;
+Bizum, Apple Pay y Google Pay aparecen como no disponibles con el motivo). Puedes
+limitar los de una sesión con `"paymentMethods": ["card"]`. Si en el futuro hay
+varios, el checkout enseñará una pantalla para elegir.
+
+### Tarjeta guardada (todavía DESACTIVADO)
+
+Preparado pero apagado hasta verificarlo con Paylands: `saveCard: { customerRef }` en
+la sesión (el comprador decide con una casilla), tokens `pm_…` propios de Monetiser
+(`GET /v1/payment-tokens`) y cobro con `POST /v1/payments`. Hoy responden
+`saved_cards_not_enabled`. Te avisaremos cuando se active.
 
 ## Resumen de lo que NO hay que hacer
 

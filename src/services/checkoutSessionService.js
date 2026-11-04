@@ -20,6 +20,7 @@ const Transaction = require('../models/Transaction');
 const Merchant = require('../models/Merchant');
 const { resultOf } = require('../utils/checkoutResult');
 const { getTotals } = require('./paymentLifecycleService');
+const routingService = require('./routingService');
 
 const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos
 const MAX_SESSION_SECONDS = 3 * 60 * 60;          // 3 horas
@@ -58,20 +59,35 @@ function iso(d) {
   return d ? new Date(d).toISOString() : null;
 }
 
+// Filtro de modo: test incluye los pagos antiguos sin el campo.
+function modeFilter(livemode) {
+  return livemode ? true : { $ne: true };
+}
+
+// La Idempotency-Key se guarda con prefijo en modo live para que una misma
+// clave usada en test y en live no choque en el índice único (merchantId+key).
+// En test se guarda tal cual (compatibilidad con lo ya guardado).
+function storedIdemKey(key, livemode) {
+  return key && livemode ? `live:${key}` : key;
+}
+
 function toCheckoutSession(tx, baseUrl, now = new Date()) {
   const path = `/hpp/${encodeURIComponent(tx.hostedCheckoutId)}`;
   return {
     id:            tx.paymentId,
     object:        'checkout_session',
+    livemode:      Boolean(tx.livemode),
     status:        sessionStatus(tx, now),
     result:        resultOf(tx.status),
     paymentStatus: tx.status,
     amount:        tx.amount,
     currency:      tx.currency,
     reference:     tx.merchantReference || null,
+    paymentMethods: tx.paymentMethods && tx.paymentMethods.length ? tx.paymentMethods : ['card'],
     url:           baseUrl ? `${baseUrl}${path}` : path,
     returnUrl:     tx.returnUrl || null,
     webhookUrl:    tx.callbackUrl || null,
+    ...(tx.saveCardOffer && tx.saveCardOffer.customerRef ? { saveCard: { customerRef: tx.saveCardOffer.customerRef } } : {}),
     expiresAt:     iso(tx.sessionExpiresAt),
     createdAt:     iso(tx.createdAt),
   };
@@ -82,11 +98,13 @@ async function toPayment(tx) {
   return {
     id:             tx.paymentId,
     object:         'payment',
+    livemode:       Boolean(tx.livemode),
     status:         tx.status,
     result:         resultOf(tx.status),
     amount:         tx.amount,
     currency:       tx.currency,
     reference:      tx.merchantReference || null,
+    paymentMethod:  tx.method || 'card',
     capturedAmount,
     refundedAmount,
     card: tx.cardLast4 || tx.cardBrand ? {
@@ -123,7 +141,9 @@ function sameRequest(tx, input) {
  * Devuelve { tx, created }.
  */
 async function createCheckoutSession(merchantId, input) {
-  const { amount, currency, reference = null, returnUrl = null, webhookUrl = null, idempotencyKey = null } = input;
+  const { amount, currency, reference = null, returnUrl = null, webhookUrl = null } = input;
+  const livemode = Boolean(input.livemode);
+  const idempotencyKey = storedIdemKey(input.idempotencyKey || null, livemode);
 
   if (idempotencyKey) {
     const prior = await Transaction.findOne({ merchantId, idempotencyKey }).lean();
@@ -131,6 +151,19 @@ async function createCheckoutSession(merchantId, input) {
       if (!sameRequest(prior, input)) throw idempotencyConflict();
       return { tx: prior, created: false };
     }
+  }
+
+  // Routing pre-captura: a qué PSP va este pago ANTES de pedir la tarjeta
+  // (framework multi-PSP). Sin ningún PSP capaz → no se crea la sesión.
+  const routing = await routingService.decideSafe({
+    merchantId, amount, currency, country: input.country || null,
+    paymentMethod: 'card', livemode: Boolean(input.livemode), channel: 'checkout',
+  });
+  if (!routing.connector) {
+    const e = new Error('no_connector_available');
+    e.code = 'no_connector_available';
+    e.routing = routing;
+    throw e;
   }
 
   const merchant = await Merchant.findOne({ merchantId }, { webhookUrl: 1, _id: 0 }).lean();
@@ -149,6 +182,11 @@ async function createCheckoutSession(merchantId, input) {
     callbackUrl:      webhookUrl || (merchant && merchant.webhookUrl) || null,
     createdAt:        now,
     sessionExpiresAt: computeSessionExpiry(now),
+    routing,
+    connectorAccountId: routing.accountId,
+    ...(livemode ? { livemode: true } : {}),
+    ...(Array.isArray(input.paymentMethods) && input.paymentMethods.length ? { paymentMethods: input.paymentMethods } : {}),
+    ...(input.saveCard && input.saveCard.customerRef ? { saveCardOffer: { customerRef: input.saveCard.customerRef }, initiator: 'customer' } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 
@@ -168,9 +206,12 @@ async function createCheckoutSession(merchantId, input) {
   }
 }
 
-async function findPayment(merchantId, paymentId) {
+async function findPayment(merchantId, paymentId, livemode = false) {
   if (!paymentId || typeof paymentId !== 'string' || paymentId.length > 64) return null;
-  return Transaction.findOne({ paymentId, merchantId }).lean();
+  const tx = await Transaction.findOne({ paymentId, merchantId }).lean();
+  // Aislamiento por modo: una clave test no ve pagos live y al revés.
+  if (!tx || Boolean(tx.livemode) !== Boolean(livemode)) return null;
+  return tx;
 }
 
 module.exports = {
@@ -182,4 +223,5 @@ module.exports = {
   toPayment,
   createCheckoutSession,
   findPayment,
+  modeFilter,
 };

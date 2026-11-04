@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.12.0
+  version: 2.14.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -16,6 +16,30 @@ info:
     campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
     a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
     abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.14.0 (4 nov 2026)** — **framework multi-PSP**. Solo cambios ADITIVOS; nada
+    de lo existente cambia de forma ni de significado:
+    - `POST /v1/checkout-sessions` acepta `country` (país del comprador, para el
+      routing entre adquirentes), `paymentMethods` y `saveCard` (este último
+      apagado: `400 saved_cards_not_enabled`). Nuevo error `422
+      no_connector_available` (ningún adquirente puede procesar el pago) y `422
+      payment_method_not_available`.
+    - Sesiones y pagos v1 devuelven `livemode`; la sesión, `paymentMethods`; el pago,
+      `paymentMethod`. Claves nuevas con modo en el prefijo: `ms_test_…` / `ms_live_…`
+      (las `ms_…` anteriores siguen valiendo, en modo test). Modo live APAGADO.
+    - `GET /v1/payment-methods` (catálogo con disponibilidad real: hoy solo tarjeta).
+    - Tarjeta guardada (APAGADO, `FEATURE_SAVED_CARDS`): `GET /v1/payment-tokens`,
+      `GET|DELETE /v1/payment-tokens/{id}`, `POST /v1/payments` (cobro con `pm_…`).
+    - Webhooks salientes: `data.livemode`.
+    La forma de llamar a Paylands no cambia (congelada por un test del cable).
+
+    **v2.13.0 (4 nov 2026)** — las rutas de la **API v1** pasan de `beta` a
+    `estable` (decisión de Marcos): verificadas end-to-end contra Paylands sandbox
+    con la colección Postman v1 — sesión → pago 3DS (`4018810000100036`) → vuelta a
+    `gracias.html?result=succeeded` → `authorized` → refund antes de capturar =
+    `409 capture_required` → capture = `captured` → refund parcial 1000 =
+    `partially_refunded`; y segunda sesión → pago → cancel = `cancelled`.
+    Sin cambios de contrato.
 
     **v2.12.0 (26 sep 2026)** — **API v1**: `POST /v1/checkout-sessions`,
     `GET /v1/checkout-sessions/{id}`, `GET /v1/payments/{id}` y
@@ -280,13 +304,15 @@ paths:
       tags: [API v1]
       summary: Crear una sesión de pago
       operationId: v1CreateCheckoutSession
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Crea un pago y devuelve la `url` del checkout de Monetiser (se embebe con
         `/v1/monetiser.js` o se abre a pantalla completa). Por debajo es un Hosted
-        Checkout como el de `POST /{merchantId}/payments/hosted` (flujo estable):
-        `beta` solo porque esta forma de pedirlo es nueva.
+        Checkout como el de `POST /{merchantId}/payments/hosted` (flujo estable).
+        **Estable desde v2.13.0**: verificado end-to-end contra Paylands sandbox
+        el 4 nov 2026 (sesión → pago 3DS → vuelta a la returnUrl → capture /
+        refund / cancel).
 
         **Nunca** admite datos de tarjeta (`400 card_data_not_accepted`): el
         comprador los escribe en los campos de Paylands (PCI DSS SAQ A).
@@ -312,6 +338,7 @@ paths:
                   reference: PEDIDO-1234
                   returnUrl: https://tutienda.com/pedido/1234/gracias
                   webhookUrl: https://tutienda.com/webhooks/monetiser
+                  country: ES
       responses:
         '201':
           description: Sesión creada.
@@ -339,15 +366,161 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/V1Error' }
+        '422':
+          description: |
+            `no_connector_available` — ningún adquirente configurado puede procesar
+            este pago (método, divisa o país); o `payment_method_not_available` —
+            ninguno de los `paymentMethods` pedidos está disponible (con `details`:
+            `[{ method, reason }]`). No se crea ningún pago.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
         '429':
           description: '`rate_limit_exceeded`.'
+
+  /v1/payment-methods:
+    get:
+      tags: [API v1]
+      summary: Métodos de pago y su disponibilidad
+      operationId: v1ListPaymentMethods
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Catálogo de métodos con su disponibilidad REAL. Hoy solo `card`. Bizum,
+        Apple Pay y Google Pay aparecen con `available:false` y el motivo
+        (pendientes de verificar con PayNoPain).
+      responses:
+        '200':
+          description: Lista.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/V1PaymentMethodAvailability' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+
+  /v1/payment-tokens:
+    get:
+      tags: [API v1]
+      summary: '[APAGADO] Tarjetas guardadas de un cliente'
+      operationId: v1ListPaymentTokens
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        **Desactivado por defecto** (`FEATURE_SAVED_CARDS`): responde `404
+        saved_cards_not_enabled`. Devuelve los tokens ACTIVOS (`pm_…`) del merchant y
+        del modo de la clave. Nunca el token del adquirente.
+      parameters:
+        - name: customerRef
+          in: query
+          schema: { type: string, maxLength: 128 }
+          description: Tu identificador del cliente (el de `saveCard.customerRef`).
+      responses:
+        '200':
+          description: Lista.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/V1PaymentToken' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+
+  /v1/payment-tokens/{id}:
+    get:
+      tags: [API v1]
+      summary: '[APAGADO] Consultar una tarjeta guardada'
+      operationId: v1GetPaymentToken
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^pm_[0-9a-f]{32}$' } }
+      responses:
+        '200':
+          description: El token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1PaymentToken' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+    delete:
+      tags: [API v1]
+      summary: '[APAGADO] Borrar (revocar) una tarjeta guardada'
+      operationId: v1RevokePaymentToken
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^pm_[0-9a-f]{32}$' } }
+      responses:
+        '200':
+          description: Token revocado (`status:'revoked'`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1PaymentToken' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+
+  /v1/payments:
+    post:
+      tags: [API v1]
+      summary: '[APAGADO] Cobrar con una tarjeta guardada'
+      operationId: v1CreateTokenPayment
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        **Desactivado por defecto** (`FEATURE_SAVED_CARDS`). Cobra con un token
+        `pm_…` del merchant (nunca datos de tarjeta: `400 card_data_not_accepted`).
+        - `initiator: customer` (el cliente está delante): mismo cobro tokenizado con
+          3DS que el checkout → `status: pending_3ds` + `nextAction.redirect`.
+        - `initiator: merchant` (sin el cliente: suscripciones) → `422
+          merchant_initiated_not_supported` mientras el adquirente no tenga
+          verificados sus indicadores (Paylands: pendiente con PayNoPain).
+        Un solo intento, en el adquirente que emitió el token.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyV1'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V1TokenPaymentCreate' }
+      responses:
+        '201':
+          description: Pago creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '200':
+          description: Reintento con la misma Idempotency-Key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Payment' }
+        '400': { $ref: '#/components/responses/V1BadRequest' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404':
+          description: '`saved_cards_not_enabled` o `payment_token_not_found` (no existe, revocado, de otro merchant o de otro modo).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+        '422':
+          description: '`merchant_initiated_not_supported`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
 
   /v1/checkout-sessions/{id}:
     get:
       tags: [API v1]
       summary: Consultar una sesión de pago
       operationId: v1GetCheckoutSession
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       parameters:
         - $ref: '#/components/parameters/V1PaymentId'
@@ -369,7 +542,7 @@ paths:
       tags: [API v1]
       summary: Consultar un pago
       operationId: v1GetPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Estado del pago, importes capturado y devuelto y la tarjeta truncada
@@ -395,7 +568,7 @@ paths:
       tags: [API v1]
       summary: Capturar (cobrar) un pago autorizado
       operationId: v1CapturePayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Cobra lo retenido (total, o una parte con `amount`). Mismo servicio que
@@ -425,7 +598,7 @@ paths:
       tags: [API v1]
       summary: Devolver (total o parcial)
       operationId: v1RefundPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Devuelve lo cobrado (total, o una parte con `amount`). Exige captura previa:
@@ -455,7 +628,7 @@ paths:
       tags: [API v1]
       summary: Anular una autorización sin capturar
       operationId: v1CancelPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: Libera la retención de un pago `authorized` que no se ha capturado.
       parameters:
@@ -477,7 +650,7 @@ paths:
       tags: [API v1]
       summary: Snippet para embeber el checkout
       operationId: v1Snippet
-      x-madurez: beta
+      x-madurez: estable
       security: []
       description: |
         JavaScript sin dependencias para la web del comercio:
@@ -2513,12 +2686,91 @@ components:
           format: uri
           pattern: '^https://'
           description: Destino de los webhooks de este pago (si no, el de la ficha del merchant).
+        country:
+          type: [string, 'null']
+          pattern: '^[A-Za-z]{2}$'
+          description: |
+            (v2.14.0) País del comprador, ISO 3166-1 alfa-2. Opcional: lo usan las
+            reglas de routing entre adquirentes (`country.in`).
+        paymentMethods:
+          type: array
+          items: { type: string, enum: [card, bizum, apple_pay, google_pay, paypal, sepa_debit, bank_transfer] }
+          description: |
+            (v2.14.0) Métodos que permites en esta sesión. Por defecto, todos los
+            disponibles (hoy solo `card`). Ver `GET /v1/payment-methods`.
+        saveCard:
+          type: object
+          description: |
+            (v2.14.0, **APAGADO**) Ofrecer al comprador guardar la tarjeta para tu
+            cliente `customerRef`. El checkout enseña una casilla desmarcada; solo si
+            el titular la marca se crea un token `pm_…`.
+          required: [customerRef]
+          properties:
+            customerRef: { type: string, pattern: '^[A-Za-z0-9_.:@-]{1,128}$' }
+
+    V1PaymentMethodAvailability:
+      type: object
+      properties:
+        method: { type: string }
+        available: { type: boolean }
+        connectors:
+          type: array
+          items: { type: string }
+          description: Adquirentes que lo declaran.
+        reason: { type: [string, 'null'], description: 'Por qué no está disponible.' }
+
+    V1PaymentToken:
+      type: object
+      properties:
+        id: { type: string, description: 'Token de Monetiser (pm_…). Nunca el del adquirente.' }
+        object: { type: string, const: payment_token }
+        livemode: { type: boolean }
+        customerRef: { type: string }
+        status: { type: string, enum: [active, revoked] }
+        card:
+          type: object
+          properties:
+            brand: { type: [string, 'null'] }
+            last4: { type: [string, 'null'] }
+            expMonth: { type: [string, 'null'] }
+            expYear: { type: [string, 'null'] }
+            country: { type: [string, 'null'] }
+        connector: { type: string }
+        firstPaymentId: { type: string }
+        consentAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: [string, 'null'], format: date-time }
+
+    V1TokenPaymentCreate:
+      type: object
+      required: [amount, currency, paymentToken, initiator]
+      additionalProperties: false
+      properties:
+        amount: { type: integer, minimum: 1 }
+        currency: { type: string, enum: [EUR] }
+        paymentToken: { type: string, pattern: '^pm_[0-9a-f]{32}$' }
+        initiator: { type: string, enum: [customer, merchant] }
+        reason:
+          type: string
+          enum: [recurring, unscheduled, installment]
+          description: 'Obligatorio con initiator = merchant.'
+        reference: { type: [string, 'null'], maxLength: 128 }
+        webhookUrl: { type: [string, 'null'], format: uri, pattern: '^https://' }
 
     V1CheckoutSession:
       type: object
       properties:
         id: { type: string, description: 'Id del pago (paymentId).' }
         object: { type: string, const: checkout_session }
+        livemode: { type: boolean, description: '(v2.14.0) false = modo test (sandbox).' }
+        paymentMethods:
+          type: array
+          items: { type: string }
+          description: (v2.14.0) Métodos que el checkout ofrecerá.
+        saveCard:
+          type: object
+          description: (v2.14.0) Solo si se pidió guardar tarjeta.
+          properties:
+            customerRef: { type: string }
         status:
           type: string
           enum: [open, processing, complete, expired]
@@ -2545,6 +2797,14 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: payment }
+        livemode: { type: boolean, description: '(v2.14.0) false = modo test (sandbox).' }
+        paymentMethod: { type: string, description: '(v2.14.0) Método usado (hoy `card`).' }
+        nextAction:
+          type: object
+          description: (v2.14.0) Solo en `POST /v1/payments` con 3DS pendiente.
+          properties:
+            type: { type: string, const: redirect }
+            url: { type: string, format: uri }
         status: { $ref: '#/components/schemas/TransactionStatus' }
         result: { type: string, enum: [pending, succeeded, failed] }
         amount: { type: integer }
@@ -3059,6 +3319,9 @@ components:
               type: string
               nullable: true
               description: 'Conector que procesó el pago. `unknown` si no consta.'
+            livemode:
+              type: boolean
+              description: '(v2.14.0) false = modo test (sandbox). Aditivo.'
             reasonCode: { type: string, nullable: true }
             timestamp: { type: string, format: date-time }
             cardInfo:

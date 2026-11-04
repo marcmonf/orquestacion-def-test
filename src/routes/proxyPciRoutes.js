@@ -37,7 +37,22 @@ const router     = express.Router({ mergeParams: true });
 const rateLimiter = require('../middleware/rateLimiterCheckout');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
-const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
+// Cobro a través del CONTRATO de conector (framework multi-PSP, nov 2026). Este
+// router es el backend del proveedor de campos 'paylands_proxyfields': el token
+// lo emite el Proxy PCI de Paylands, así que el cobro va siempre a Paylands.
+// El cable no cambia (tests/golden/paylandsWire.test.js).
+const { getProvider } = require('../services/connectorRegistry');
+const PAYLANDS = 'payNoPain';
+const FIELDS_PROVIDER = 'paylands_proxyfields';
+const health = require('../services/connectorHealth');
+const paymentTokens = require('../services/paymentTokenService');
+
+// ¿Este pago se enrutó a los campos de Paylands? Los pagos anteriores al
+// framework multi-PSP no tienen `routing` → Paylands (como siempre).
+function routedHere(tx) {
+  const fp = tx && tx.routing && tx.routing.fieldsProvider;
+  return !fp || fp === FIELDS_PROVIDER;
+}
 const { resultPath } = require('../utils/checkoutResult');
 const logger      = require('../utils/logger');
 
@@ -89,6 +104,10 @@ router.post('/session', rateLimiter, async (req, res) => {
       });
     }
 
+    if (!routedHere(tx)) {
+      return res.status(409).json({ success: false, message: 'wrong_fields_provider: este pago no se cobra con los campos de Paylands' });
+    }
+
     const sessionToken = await pciProxy.issueTokenizationToken(paymentId);
 
     logger.info('PROXY_PCI_SESSION_ISSUED', {
@@ -119,6 +138,7 @@ router.post('/session', rateLimiter, async (req, res) => {
 router.post('/charge', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
   const { paymentId, expiryMonth, expiryYear, cardHolder } = req.body || {};
+  const saveCardConsent = (req.body || {}).saveCard === true;
 
   if (!paymentId || typeof paymentId !== 'string') {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
@@ -167,6 +187,11 @@ router.post('/charge', rateLimiter, async (req, res) => {
     } catch (_) { /* no-op */ }
   }
 
+  if (!routedHere(tx)) {
+    await releaseReservation();
+    return res.status(409).json({ success: false, message: 'wrong_fields_provider: este pago no se cobra con los campos de Paylands' });
+  }
+
   let chargeStarted = false;
   try {
     // Paso 1: Obtener el token PCI generado por ProxyFields tras el submit del browser
@@ -198,18 +223,49 @@ router.post('/charge', rateLimiter, async (req, res) => {
 
     // Paso 2: Cobrar directamente en Paylands con el token PCI
     chargeStarted = true;
-    const chargeResult = await chargeWithToken({
+    const payment = await getProvider(PAYLANDS).createPayment({
       paymentId:   tx.paymentId,
       merchantId:  tx.merchantId,
       amount:      tx.amount,
       currency:    tx.currency,
-      cardToken:   tokenResult.token,
+      sourceToken: tokenResult.token,
       expiryMonth: expiryMonth || tokenResult.expiryMonth,
       expiryYear:  expiryYear  || tokenResult.expiryYear,
       cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
+    // Salud del conector (circuit breaker del routing pre-captura). Solo
+    // informa a FUTUROS checkouts: este pago no se reintenta en ningún otro PSP.
+    health.recordResult(PAYLANDS, payment);
+    // Resultado normalizado del contrato → la forma que este router ya usaba.
+    const chargeResult = {
+      success:            payment.status === 'authorized',
+      requires3DS:        payment.status === 'requires_action',
+      threeDsUrl:         payment.action ? payment.action.url : null,
+      processorReference: payment.processorReference || null,
+      error:              payment.status === 'error' ? (payment.error && payment.error.code) || 'error' : null,
+    };
 
     const meta = cardMetadata(tokenResult);
+
+    // F6 (FEATURE_SAVED_CARDS): el titular marcó "guardar tarjeta" y el comercio
+    // lo ofreció → token Monetiser 'pending' con el token del PSP CIFRADO. Se
+    // activa cuando el webhook confirme el pago. Un fallo aquí nunca afecta al cobro.
+    if (saveCardConsent && paymentTokens.enabled() && tx.saveCardOffer && tx.saveCardOffer.customerRef
+        && (payment.status === 'requires_action' || payment.status === 'authorized')) {
+      try {
+        await paymentTokens.createPending({
+          tx: { ...(typeof tx.toObject === 'function' ? tx.toObject() : tx), processor: PAYLANDS },
+          pspToken: tokenResult.token,
+          card: { brand: meta.cardBrand, last4: meta.cardLast4, bin: meta.bin, country: meta.issuerCountry,
+            expMonth: tokenResult.expiryMonth ? String(tokenResult.expiryMonth) : undefined,
+            expYear: tokenResult.expiryYear ? String(tokenResult.expiryYear) : undefined },
+          consent: { ip: req.ip, userAgent: req.headers['user-agent'] },
+        });
+        await Transaction.updateOne({ paymentId, merchantId }, { $set: { storedCredential: { usage: 'first' } } });
+      } catch (e) {
+        logger.warn('SAVED_CARD_CREATE_FAILED', { component: 'proxyPciRoutes', data: { paymentId, error: e.message } });
+      }
+    }
 
     // Paso 3: Determinar status correcto y guardar UNA sola vez
     // Primero verificamos si hay 3DS pendiente para no guardar 'declined' prematuramente
@@ -219,7 +275,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
         { $set: {
           status:             'pending_3ds',
           processorReference: chargeResult.processorReference || null,
-          processor:          'payNoPain',
+          processor:          PAYLANDS,
           updatedAt:          new Date(),
           ...meta,
         } }
@@ -251,7 +307,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
       { $set: {
         status:             finalStatus,
         processorReference: chargeResult.processorReference || null,
-        processor:          'payNoPain',
+        processor:          PAYLANDS,
         updatedAt:          new Date(),
         ...meta,
       } }
@@ -287,6 +343,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
       data: { merchantId, paymentId, error: err.message },
     });
 
+    if (chargeStarted) health.recordFailure(PAYLANDS, 'processor_unavailable');
     if (!chargeStarted) {
       await releaseReservation();
       // El pago vuelve a su estado inicial: el comprador puede reintentarlo.

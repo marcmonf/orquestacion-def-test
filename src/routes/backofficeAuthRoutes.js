@@ -6,6 +6,7 @@ const router         = express.Router();
 const crypto         = require('crypto');
 const BackofficeUser = require('../models/BackofficeUser');
 const adminAuth      = require('../middleware/adminAuth');
+const totpService    = require('../services/backofficeTotpService');
 const {
   signBackofficeToken, verifyBackofficeToken, revokeSessions, isConfigured,
 } = require('../middleware/backofficeAuth');
@@ -57,6 +58,16 @@ router.post('/login', loginLimiters, async (req, res) => {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(401).json({ success: false, error: 'invalid_credentials' });
 
+    // 2FA TOTP (F7): con la 2FA activa hace falta además el código de la app.
+    // Los intentos fallidos cuentan en los mismos límites de login.
+    if (user.totp && user.totp.enabled) {
+      const code = (req.body || {}).totp;
+      if (!code) return res.status(401).json({ success: false, error: 'totp_required' });
+      if (!(await totpService.checkAndConsume(user, String(code)))) {
+        return res.status(401).json({ success: false, error: 'invalid_totp' });
+      }
+    }
+
     // Actualizar último login
     await BackofficeUser.updateOne({ _id: user._id }, {
       lastLoginAt: new Date(),
@@ -80,6 +91,10 @@ router.post('/login', loginLimiters, async (req, res) => {
         name:          user.name,
         role:          user.role,
         merchantScope: user.merchantScope,
+        twoFactor: {
+          enabled:  Boolean(user.totp && user.totp.enabled),
+          required: totpService.required() && user.role === 'superadmin',
+        },
       }
     });
   } catch (err) {
@@ -182,6 +197,24 @@ router.post('/reset-password', adminAuth, async (req, res) => {
     return res.status(200).json({ success: true, message: 'password_reset_ok', email: user.email });
   } catch (err) {
     console.error('❌ [backoffice/reset-password]', err);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /backoffice/auth/reset-2fa   (X-Admin-Token)   { email }
+// Recuperación si se pierde el móvil: desactiva la 2FA del usuario y cierra
+// todas sus sesiones. Mismo nivel de acceso que reset-password.
+// ─────────────────────────────────────────────
+router.post('/reset-2fa', adminAuth, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') return res.status(400).json({ success: false, error: 'email_required' });
+  try {
+    const out = await totpService.resetByEmail(email);
+    return res.status(200).json({ success: true, message: 'two_factor_reset_ok', ...out });
+  } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code });
+    console.error('❌ [backoffice/reset-2fa]', err);
     return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });

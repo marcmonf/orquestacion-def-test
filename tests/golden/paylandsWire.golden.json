@@ -1,0 +1,209 @@
+{
+  "checkout": {
+    "requests": [
+      {
+        "hostname": "pci-proxy-api.paynopain.com",
+        "port": 443,
+        "path": "/sandbox/customers",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "58"
+        },
+        "body": "{\"apiKey\":\"golden-api-key\",\"signature\":\"golden-signature\"}"
+      },
+      {
+        "hostname": "pci-proxy-api.paynopain.com",
+        "port": 443,
+        "path": "/sandbox/tokenize/pay-golden-1",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer jwt-bearer-golden"
+        },
+        "body": null
+      },
+      {
+        "hostname": "pci-proxy-api.paynopain.com",
+        "port": 443,
+        "path": "/sandbox/card/reference/pay-golden-1",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer jwt-bearer-golden"
+        },
+        "body": null
+      },
+      {
+        "hostname": "api.paylands.com",
+        "port": 443,
+        "path": "/v1/sandbox/payment",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "725",
+          "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+        },
+        "body": "{\"operative\":\"DEFERRED\",\"service\":\"GOLDEN-SERVICE-UUID\",\"order_id\":\"pay-golden-1\",\"amount\":1999,\"description\":\"Pago demo-merchant\",\"signature\":\"golden-signature\",\"secure\":true,\"source_uuid\":\"CARD-UUID-GOLDEN\",\"customer_ext_id\":\"pay-golden-1\",\"url_post\":\"https://orquestacion-def-test.onrender.com/webhooks/paynopain\",\"url_ok\":\"https://orquestacion-def-test.onrender.com/checkout/result/pay-golden-1?outcome=ok&exp=1793086400000&sig=e8f2919e4276aec5dd752297edce09643971e97b4b95fdfd28196b2ebcab87d7\",\"url_ko\":\"https://orquestacion-def-test.onrender.com/checkout/result/pay-golden-1?outcome=ko&exp=1793086400000&sig=14adef5194a83e7dc7aa0bc5e846a56ec2982e686db460f6efb466a280c31449\",\"additional\":\"pay-golden-1\",\"save_card\":false}"
+      }
+    ],
+    "sessionResponse": {
+      "status": 200,
+      "body": {
+        "success": true,
+        "sessionToken": "session-token-golden",
+        "paymentId": "pay-golden-1"
+      }
+    },
+    "chargeResponse": {
+      "status": 200,
+      "body": {
+        "success": true,
+        "requires3DS": true,
+        "threeDsUrl": "https://api.paylands.com/v1/sandbox/payment/tokenized/ORDER-TOKEN-GOLDEN",
+        "paymentId": "pay-golden-1"
+      }
+    },
+    "txAfter": {
+      "status": "pending_3ds",
+      "processorReference": "ORDER-UUID-GOLDEN",
+      "processor": "payNoPain",
+      "bin": "401881",
+      "cardLast4": "0036",
+      "cardBrand": "visa",
+      "cardType": "debit",
+      "issuerName": "Banco Golden",
+      "issuerCountry": "ES"
+    }
+  },
+  "lifecycle": {
+    "captureTotal": {
+      "requests": [
+        {
+          "hostname": "api.paylands.com",
+          "port": 443,
+          "path": "/v1/sandbox/payment/confirmation",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Content-Length": "79",
+            "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+          },
+          "body": "{\"signature\":\"golden-signature\",\"order_uuid\":\"ORDER-UUID-GOLDEN\",\"amount\":1000}"
+        }
+      ],
+      "result": {
+        "success": true,
+        "status": "SUCCESS",
+        "capturedTotal": 1000
+      }
+    },
+    "capturePartial": {
+      "requests": [
+        {
+          "hostname": "api.paylands.com",
+          "port": 443,
+          "path": "/v1/sandbox/payment/confirmation",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Content-Length": "78",
+            "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+          },
+          "body": "{\"signature\":\"golden-signature\",\"order_uuid\":\"ORDER-UUID-GOLDEN\",\"amount\":400}"
+        }
+      ],
+      "result": {
+        "success": true,
+        "status": "SUCCESS",
+        "capturedTotal": 1000
+      }
+    },
+    "cancel": {
+      "requests": [
+        {
+          "hostname": "api.paylands.com",
+          "port": 443,
+          "path": "/v1/sandbox/payment/cancellation",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Content-Length": "65",
+            "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+          },
+          "body": "{\"signature\":\"golden-signature\",\"order_uuid\":\"ORDER-UUID-GOLDEN\"}"
+        }
+      ],
+      "result": {
+        "success": true,
+        "status": "CANCELLED"
+      }
+    },
+    "refundTotal": {
+      "requests": [
+        {
+          "hostname": "api.paylands.com",
+          "port": 443,
+          "path": "/v1/sandbox/payment/refund",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Content-Length": "79",
+            "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+          },
+          "body": "{\"signature\":\"golden-signature\",\"order_uuid\":\"ORDER-UUID-GOLDEN\",\"amount\":1000}"
+        }
+      ],
+      "result": {
+        "success": true,
+        "status": "REFUNDED",
+        "refundedTotal": 1000
+      }
+    },
+    "refundPartial": {
+      "requests": [
+        {
+          "hostname": "api.paylands.com",
+          "port": 443,
+          "path": "/v1/sandbox/payment/refund",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Content-Length": "78",
+            "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+          },
+          "body": "{\"signature\":\"golden-signature\",\"order_uuid\":\"ORDER-UUID-GOLDEN\",\"amount\":250}"
+        }
+      ],
+      "result": {
+        "success": true,
+        "status": "REFUNDED",
+        "refundedTotal": 1000
+      }
+    }
+  },
+  "s2s": {
+    "requests": [
+      {
+        "hostname": "api.paylands.com",
+        "port": 443,
+        "path": "/v1/sandbox/payment",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "732",
+          "Authorization": "Basic Z29sZGVuLWFwaS1rZXk6"
+        },
+        "body": "{\"operative\":\"DEFERRED\",\"service\":\"GOLDEN-SERVICE-UUID\",\"order_id\":\"pay-golden-s2s\",\"amount\":5000,\"description\":\"Pago demo-merchant\",\"signature\":\"golden-signature\",\"secure\":true,\"source_uuid\":\"CARD-UUID-S2S\",\"customer_ext_id\":\"pay-golden-s2s\",\"url_post\":\"https://orquestacion-def-test.onrender.com/webhooks/paynopain\",\"url_ok\":\"https://orquestacion-def-test.onrender.com/checkout/result/pay-golden-s2s?outcome=ok&exp=1793086400000&sig=ce6d0e13b35ae2cc4762e0ce8cabf9894d17c4760da695856c27b5efc2b94405\",\"url_ko\":\"https://orquestacion-def-test.onrender.com/checkout/result/pay-golden-s2s?outcome=ko&exp=1793086400000&sig=d225bbd355391b378f4f2ac7f39a223fa904574160a828246f64b8ca5930a12d\",\"additional\":\"pay-golden-s2s\",\"save_card\":false}"
+      }
+    ],
+    "result": {
+      "success": false,
+      "requires3DS": true,
+      "threeDsUrl": "https://api.paylands.com/v1/sandbox/payment/tokenized/ORDER-TOKEN-GOLDEN",
+      "responseCode": "pending_3ds",
+      "processorReference": "ORDER-UUID-GOLDEN",
+      "redirectUrl": null
+    }
+  }
+}

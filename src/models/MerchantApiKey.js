@@ -42,6 +42,14 @@ const merchantApiKeySchema = new mongoose.Schema({
 
   // ── Metadatos ─────────────────────────────────────────────────────────────
   label:       { type: String, default: '' },
+
+  // Modo de la clave (F4 multi-PSP, nov 2026, estilo Stripe):
+  //   false → modo TEST (sandbox). Secreto ms_test_... Las claves ANTERIORES
+  //           (ms_<hex>, sin prefijo de modo) no tienen el campo → modo test:
+  //           siguen valiendo y apuntan al entorno de siempre.
+  //   true  → modo LIVE. Secreto ms_live_... Solo se crean y solo autentican
+  //           con FEATURE_LIVEMODE=true, y solo en la API v1.
+  livemode:    { type: Boolean, default: false },
   active:      { type: Boolean, default: true, index: true },
 
   // Auditoría de uso

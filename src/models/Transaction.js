@@ -39,7 +39,39 @@ const transactionSchema = new mongoose.Schema({
 
   // Otros
   authCode:           String,
+  // Conector que PROCESÓ el pago (se fija al cobrar). Puede diferir de
+  // routing.connector solo si el pago es anterior al framework multi-PSP.
   processor:          String,
+
+  // ── Routing pre-captura (framework multi-PSP, nov 2026) ───────────────────
+  // Decisión completa tomada al crear la sesión (src/services/routingService):
+  // conector, cuenta, regla que casó, candidatos descartados y por qué
+  // (explain). Las transacciones anteriores no lo tienen → Paylands.
+  routing:            { type: mongoose.Schema.Types.Mixed, default: undefined },
+  // Cuenta del merchant en el PSP con la que se opera ('platform' = cuenta de
+  // plataforma, variables de entorno). Ver connectorAccountService.
+  connectorAccountId: { type: String, default: null },
+
+  // Modo (F4, estilo Stripe): false = test (sandbox), true = live. Los pagos
+  // anteriores no lo tienen → test. Aísla datos por modo en la API v1.
+  livemode:           { type: Boolean, default: false },
+
+  // Métodos que el comercio permitió en la sesión (F5, API v1). Sin el campo:
+  // los disponibles (hoy solo tarjeta). `method` sigue siendo el método usado.
+  paymentMethods:     { type: [String], default: undefined },
+
+  // ── Tarjeta guardada / recurrentes (F6, detrás de FEATURE_SAVED_CARDS) ────
+  // Oferta de guardar la tarjeta en esta sesión (cliente del comercio).
+  saveCardOffer:      { customerRef: { type: String } },
+  // Quién inicia el pago: 'customer' (CIT, cliente delante) o 'merchant' (MIT).
+  initiator:          { type: String, default: undefined },
+  // Credencial guardada: 'first' (pago que la guarda) o 'subsequent' (pago con
+  // el token pm_), su motivo y el token Monetiser usado.
+  storedCredential:   {
+    usage:   { type: String },
+    reason:  { type: String },
+    tokenId: { type: String },
+  },
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
   callbackUrl:        String,

@@ -17,11 +17,23 @@
  * que fallaba por red podía acabar "authorized" por el simulador, sin cobrar a
  * nadie. Un servidor con dinero real no debe tener un conector que aprueba todo.
  *
- * Nassau comentado — pendiente de implementación futura.
+ * FRAMEWORK MULTI-PSP (nov 2026). Dos vistas de cada conector:
+ *   - getProvider(id): el conector según el CONTRATO único
+ *     (src/connectors/contract.js): capacidades + operaciones normalizadas. Es
+ *     lo que usan el routing, el checkout y todo código nuevo.
+ *   - getConnector(id): el adaptador LEGADO { authorize, capture, void, refund,
+ *     isSoftDecline } que usan paymentService y paymentLifecycleService. Para
+ *     Paylands y dummyCard es exactamente el de antes (el cable no cambia:
+ *     tests/golden/paylandsWire.test.js). Para un conector nuevo se genera a
+ *     partir del contrato (legacyFromProvider), así el núcleo no se toca.
+ *
+ * Añadir un PSP: docs/conectores.md.
  */
 
 const dummyCard   = require('../connectors/dummy/dummyCardConnector');
 const payNoPain   = require('../connectors/paynopain/payNoPainConnector');
+const payNoPainProvider = require('../connectors/paylands');
+const dummyProvider     = require('../connectors/dummy');
 const { isDevOrTest } = require('../utils/runtimeSecrets');
 
 const DEFAULT_CONNECTOR = 'payNoPain';
@@ -111,12 +123,42 @@ function adaptPayNoPain(connector) {
   };
 }
 
+// ─── Adaptador genérico: contrato → interfaz legada ──────────────────────────
+// Para conectores nuevos. Traduce las respuestas normalizadas del contrato a lo
+// que esperan paymentService y paymentLifecycleService (que no se tocan).
+function legacyFromProvider(provider) {
+  const errText = (r) => (r && r.error ? (r.error.code || String(r.error)) : undefined);
+  return {
+    name: provider.id,
+    async authorize(paymentData, ctx) {
+      const r = await provider.createPayment({ ...paymentData, sourceToken: paymentData.cardToken || paymentData.sourceToken }, ctx);
+      return {
+        success:            r.status === 'authorized' || r.status === 'captured',
+        requires3DS:        r.status === 'requires_action',
+        threeDsUrl:         r.action && r.action.url ? r.action.url : null,
+        responseCode:       r.error ? r.error.code : r.status,
+        processorReference: r.processorReference || null,
+      };
+    },
+    async capture(data, ctx) { const r = await provider.capture(data, ctx); return { ...r, error: errText(r) }; },
+    async void(data, ctx)    { const r = await provider.cancel(data, ctx);  return { ...r, error: errText(r) }; },
+    async refund(data, ctx)  { const r = await provider.refund(data, ctx);  return { ...r, error: errText(r) }; },
+    isSoftDecline() { return false; },
+  };
+}
+
 // ─── Registro ────────────────────────────────────────────────────────────────
 const registry = {
   payNoPain:  adaptPayNoPain(payNoPain),
   // nassauBank: adaptNassau(nassauBank),  ← pendiente
 };
-if (dummyEnabled()) registry.dummyCard = adaptDummy(dummyCard);
+const providers = {
+  payNoPain: payNoPainProvider,
+};
+if (dummyEnabled()) {
+  registry.dummyCard = adaptDummy(dummyCard);
+  providers.dummyCard = dummyProvider;
+}
 
 /**
  * Obtiene un conector por nombre.
@@ -141,4 +183,48 @@ function listConnectors() {
   return Object.keys(registry);
 }
 
-module.exports = { getConnector, listConnectors, DEFAULT_CONNECTOR };
+/** Conector según el contrato (capacidades + operaciones normalizadas). */
+function getProvider(name) {
+  const p = providers[name];
+  if (!p) throw new Error(`Provider '${name}' not registered. Available: [${Object.keys(providers).join(', ')}]`);
+  return p;
+}
+
+function hasProvider(name) {
+  return Object.prototype.hasOwnProperty.call(providers, name);
+}
+
+/** [{ id, displayName, capabilities }] de los conectores registrados. */
+function listProviders() {
+  return Object.values(providers).map((p) => ({ id: p.id, displayName: p.displayName, capabilities: p.capabilities }));
+}
+
+/**
+ * Registra un conector que cumple el contrato. Para conectores reales se añade
+ * a mano arriba (con su require); esta función existe para los TESTS (conector
+ * de prueba "B") y se niega a funcionar fuera de development/test, igual que
+ * cualquier conector marcado testOnly o simulated.
+ */
+function registerProvider(provider) {
+  if (!provider || !provider.id || typeof provider.createPayment !== 'function') {
+    throw new Error('registerProvider: el conector no cumple el contrato (usa defineConnector)');
+  }
+  if (!isDevOrTest()) {
+    throw new Error(`registerProvider('${provider.id}') solo está permitido en development/test`);
+  }
+  providers[provider.id] = provider;
+  registry[provider.id] = legacyFromProvider(provider);
+  return provider;
+}
+
+function unregisterProvider(id) {
+  if (!isDevOrTest()) throw new Error('unregisterProvider solo en development/test');
+  if (id === 'payNoPain') throw new Error('payNoPain no se puede desregistrar');
+  delete providers[id];
+  delete registry[id];
+}
+
+module.exports = {
+  getConnector, listConnectors, DEFAULT_CONNECTOR,
+  getProvider, hasProvider, listProviders, registerProvider, unregisterProvider, legacyFromProvider,
+};
