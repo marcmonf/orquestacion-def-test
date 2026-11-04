@@ -1192,6 +1192,51 @@ router.post('/security/reencrypt', requireRole('superadmin'), async (req, res) =
   }
 });
 
+// Enlaces de pago (nov 2026): ver, crear y anular desde /admin (con alcance).
+const paymentLinkService = require('../services/paymentLinkService');
+const { resolveBaseUrl: boBaseUrl } = require('../services/checkoutSessionService');
+function inScope(req, merchantId) {
+  const sc = scopeOf(req.backofficeUser);
+  return sc.includes('all') || sc.includes(merchantId);
+}
+router.get('/payment-links', async (req, res) => {
+  try {
+    const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : null;
+    const PaymentLink = require('../models/PaymentLink');
+    const q = {};
+    if (merchantId) { if (!inScope(req, merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' }); q.merchantId = merchantId; }
+    else if (!scopeOf(req.backofficeUser).includes('all')) q.merchantId = { $in: scopeOf(req.backofficeUser) };
+    const rows = await PaymentLink.find(q).sort({ createdAt: -1 }).limit(200).lean();
+    return res.json({ success: true, links: rows.map((l) => ({ ...paymentLinkService.toPublic(l, boBaseUrl(req)), merchantId: l.merchantId, createdBy: l.createdBy || null })) });
+  } catch (err) { console.error('❌ [backoffice/payment-links]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.post('/merchants/:merchantId/payment-links', requireRole('operator'), async (req, res) => {
+  const merchantId = String(req.params.merchantId);
+  if (!inScope(req, merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+  try {
+    const exists = await Merchant.findOne({ merchantId }).lean();
+    if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const link = await paymentLinkService.create(merchantId, req.body || {}, { livemode: require('../utils/environment').isProduction(), createdBy: req.backofficeUser.email });
+    return res.status(201).json({ success: true, link: paymentLinkService.toPublic(link, boBaseUrl(req)) });
+  } catch (err) {
+    if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, ...(err.details ? { details: err.details } : {}) });
+    console.error('❌ [backoffice/payment-links POST]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+router.post('/payment-links/:linkId/cancel', requireRole('operator'), async (req, res) => {
+  try {
+    const PaymentLink = require('../models/PaymentLink');
+    const doc = await PaymentLink.findOne({ linkId: String(req.params.linkId) }).lean();
+    if (!doc) return res.status(404).json({ success: false, error: 'not_found' });
+    if (!inScope(req, doc.merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+    const link = await paymentLinkService.cancel(doc.merchantId, doc.linkId, { actor: req.backofficeUser.email });
+    return res.json({ success: true, link: paymentLinkService.toPublic(link, boBaseUrl(req)) });
+  } catch (err) {
+    if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code });
+    console.error('❌ [backoffice/payment-links cancel]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // Checklist de variables para pasar a real (F7). Solo dice si cada una está
 // bien, nunca su valor. Guía: docs/produccion.md.
 router.get('/production-readiness', requireRole('superadmin'), (req, res) => {

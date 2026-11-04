@@ -223,6 +223,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <button class="tab-btn" id="tabBtnMerchants" style="display:none">Merchants</button>
     <button class="tab-btn" id="tabBtnRules" style="display:none">Reglas</button>
     <button class="tab-btn" id="tabBtnBilling" style="display:none">Facturación</button>
+    <button class="tab-btn" id="tabBtnLinks">Enlaces de pago</button>
   </div>
 
   <!-- DASHBOARD TAB -->
@@ -324,6 +325,18 @@ main{padding:24px;max-width:1600px;margin:0 auto}
   </div>
 
   <!-- BILLING / SOCIEDAD TAB -->
+  <div id="tabLinks" style="display:none;padding:24px;max-width:1200px;margin:0 auto">
+    <div class="users-header">
+      <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Enlaces de pago (todos los comercios de tu alcance)</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="linksMerchant" placeholder="merchantId (vacío = todos)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px"/>
+        <button class="btn" id="linksReloadBtn">Buscar</button>
+      </div>
+    </div>
+    <div class="modal-err" id="linksErr"></div>
+    <div id="linksTable" style="font-size:13px">–</div>
+  </div>
+
   <div id="tabBilling" style="display:none;padding:24px;max-width:1000px;margin:0 auto">
     <div class="users-header">
       <h2 style="font-size:15px;font-weight:500;color:var(--text2)">Datos de tu Sociedad · emisor de las facturas</h2>

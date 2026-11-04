@@ -179,6 +179,41 @@ router.get('/payment-methods', (req, res) => {
   return res.json({ object: 'list', data: paymentMethods.catalog() });
 });
 
+// ── Enlaces de pago (nov 2026) ───────────────────────────────────────────────
+// URL compartible + QR → página con la marca del comercio → checkout de siempre.
+const paymentLinks = require('../services/paymentLinkService');
+function linkError(res, err) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, ...(err.details ? { details: err.details } : {}), ...(err.message && err.message !== err.code ? { message: err.message } : {}) });
+  logger.error('V1_PAYMENT_LINK_ERROR', { component: 'v1', data: { error: err && err.message } });
+  return fail(res, 500, 'internal_error');
+}
+router.post('/payment-links', async (req, res) => {
+  try {
+    const link = await paymentLinks.create(req.merchantId, req.body || {}, { livemode: Boolean(req.livemode), createdBy: 'api' });
+    return res.status(201).json(paymentLinks.toPublic(link, sessions.resolveBaseUrl(req)));
+  } catch (err) { return linkError(res, err); }
+});
+router.get('/payment-links', async (req, res) => {
+  try {
+    const rows = await paymentLinks.list(req.merchantId, { livemode: Boolean(req.livemode) });
+    return res.json({ object: 'list', data: rows.map((l) => paymentLinks.toPublic(l, sessions.resolveBaseUrl(req))) });
+  } catch (err) { return linkError(res, err); }
+});
+router.get('/payment-links/:id', async (req, res) => {
+  try {
+    const link = await paymentLinks.get(req.merchantId, req.params.id, { livemode: Boolean(req.livemode) });
+    if (!link) return fail(res, 404, 'not_found');
+    return res.json(paymentLinks.toPublic(link, sessions.resolveBaseUrl(req)));
+  } catch (err) { return linkError(res, err); }
+});
+router.post('/payment-links/:id/cancel', async (req, res) => {
+  try {
+    const link = await paymentLinks.cancel(req.merchantId, req.params.id, { livemode: Boolean(req.livemode), actor: 'api' });
+    if (!link) return fail(res, 404, 'not_found');
+    return res.json(paymentLinks.toPublic(link, sessions.resolveBaseUrl(req)));
+  } catch (err) { return linkError(res, err); }
+});
+
 // ── Tarjetas guardadas (F6, FEATURE_SAVED_CARDS) ─────────────────────────────
 // El comercio solo ve pm_... y el resumen de la tarjeta; nunca el token del PSP.
 function savedCardsGate(req, res, next) {

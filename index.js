@@ -86,7 +86,7 @@ const corsMiddleware = cors({
 //    el navegador no deja usarla desde una web, así que un secreto puesto por
 //    error en el frontend falla a la primera en vez de quedar expuesto.
 app.use((req, res, next) => (
-  req.path.startsWith('/checkout/result/') || req.path.startsWith('/v1/')
+  req.path.startsWith('/checkout/result/') || req.path.startsWith('/v1/') || req.path.startsWith('/pay/')
     ? next()
     : corsMiddleware(req, res, next)
 ));
@@ -158,6 +158,11 @@ const ensureRouter = (moduleExport, moduleName) => {
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/:merchantId/iframe', iframeRouter);
+
+// Enlaces de pago (nov 2026): página pública del enlace + QR → checkout de siempre.
+app.use('/pay', ensureRouter(require('./src/routes/payLinks'), 'payLinks'));
+// Terminal en tienda (app Android "Monetiser POS"): JWT de portal, nunca la clave ms_.
+app.use('/pos', ensureRouter(require('./src/routes/pos'), 'pos'));
 
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));

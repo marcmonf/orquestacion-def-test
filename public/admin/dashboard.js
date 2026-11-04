@@ -1429,15 +1429,53 @@
     document.getElementById('tabMerchants').style.display  = tab==='merchants'?'block':'none';
     document.getElementById('tabRules').style.display      = tab==='rules'?'block':'none';
     document.getElementById('tabBilling').style.display    = tab==='billing'?'block':'none';
-    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling' };
+    document.getElementById('tabLinks').style.display      = tab==='links'?'block':'none';
+    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling', links:'tabBtnLinks' };
     Object.keys(map).forEach(function(k){ var b = document.getElementById(map[k]); if (b) b.classList.toggle('active', k === tab); });
     if(tab==='users') loadUsers();
     if(tab==='merchants') loadMerchants();
+    if(tab==='links') loadLinks();
     if(tab==='billing') {
       loadCompany();
       var bp = document.getElementById('billPeriod');
       if (bp && !bp.value) bp.value = lastClosedPeriod();
     }
+  }
+
+  /* ── ENLACES DE PAGO (nov 2026) ── */
+  var LINK_STATE = { active: 'Activo', completed: 'Pagado', cancelled: 'Anulado', expired: 'Caducado' };
+  function loadLinks() {
+    var m = document.getElementById('linksMerchant').value.trim();
+    var el = document.getElementById('linksTable');
+    document.getElementById('linksErr').textContent = '';
+    el.textContent = 'Cargando…';
+    api('/backoffice/payment-links' + (m ? '?merchantId=' + encodeURIComponent(m) : '')).then(function (r) {
+      var rows = r.links || [];
+      if (!rows.length) { el.textContent = 'No hay enlaces de pago.'; return; }
+      var canCancel = session && session.user && ['superadmin', 'admin', 'operator'].indexOf(session.user.role) !== -1;
+      el.innerHTML = '<table style="width:100%;border-collapse:collapse"><thead><tr>' +
+        ['Comercio', 'Concepto', 'Importe', 'Uso', 'Estado', 'Pagos', 'Creado por', 'Enlace', ''].map(function (h) { return '<th style="text-align:left;padding:6px;color:var(--text3);font-weight:500">' + esc(h) + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + rows.map(function (l) {
+          return '<tr style="border-top:1px solid var(--border)">' +
+            '<td style="padding:6px">' + esc(l.merchantId) + '</td>' +
+            '<td style="padding:6px">' + esc(l.concept) + '</td>' +
+            '<td style="padding:6px">' + esc((l.amount / 100).toFixed(2) + ' ' + l.currency) + '</td>' +
+            '<td style="padding:6px">' + (l.reusable ? 'Varios' : 'Único') + '</td>' +
+            '<td style="padding:6px">' + esc(LINK_STATE[l.status] || l.status) + '</td>' +
+            '<td style="padding:6px">' + esc(String(l.paidCount || 0)) + '</td>' +
+            '<td style="padding:6px">' + esc(l.createdBy || '–') + '</td>' +
+            '<td style="padding:6px"><a href="' + esc(l.url) + '" target="_blank" rel="noopener" style="color:var(--purple2)">abrir</a> · <a href="' + esc(l.qrUrl) + '" target="_blank" rel="noopener" style="color:var(--purple2)">QR</a></td>' +
+            '<td style="padding:6px">' + (canCancel && l.status === 'active' ? '<button class="btn" data-link-cancel="' + esc(l.id) + '">Anular</button>' : '') + '</td>' +
+            '</tr>';
+        }).join('') + '</tbody></table>';
+      el.querySelectorAll('[data-link-cancel]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          if (!confirm('¿Anular este enlace? Nadie podrá pagar con él.')) return;
+          api('/backoffice/payment-links/' + encodeURIComponent(b.getAttribute('data-link-cancel')) + '/cancel', { method: 'POST' })
+            .then(loadLinks).catch(function (e) { document.getElementById('linksErr').textContent = e.message; });
+        });
+      });
+    }).catch(function (e) { el.textContent = ''; document.getElementById('linksErr').textContent = e.message; });
   }
 
   /* ── SEARCH ── */
@@ -1584,6 +1622,8 @@
     if(tabRul)  tabRul.addEventListener('click',function(){showTab('rules');});
     var tabBil = document.getElementById('tabBtnBilling');
     if(tabBil)  tabBil.addEventListener('click',function(){showTab('billing');});
+    document.getElementById('tabBtnLinks').addEventListener('click',function(){showTab('links');});
+    document.getElementById('linksReloadBtn').addEventListener('click', loadLinks);
     document.getElementById('saveCompanyBtn').addEventListener('click', saveCompany);
     document.getElementById('finalizeInvoiceBtn').addEventListener('click', finalizeInvoice);
     document.getElementById('portalUsersModalClose').addEventListener('click',function(){document.getElementById('portalUsersModal').classList.remove('open');});

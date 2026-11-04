@@ -469,6 +469,41 @@ router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, 
 // solo lo nuestro). Multi-adquirente preparado para N; hoy Paylands en vivo.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ENLACES DE PAGO (nov 2026) — del PROPIO merchant
+//   GET  /portal/payment-links              (cualquier rol)
+//   POST /portal/payment-links              (merchant_operator o más)
+//   POST /portal/payment-links/:id/cancel   (merchant_operator o más)
+// Se crean en el modo del despliegue (producción → live; pruebas → test).
+// ═══════════════════════════════════════════════════════════════════════════
+const paymentLinks = require('../services/paymentLinkService');
+const { resolveBaseUrl } = require('../services/checkoutSessionService');
+const environment = require('../utils/environment');
+function portalLinkError(res, err) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, ...(err.details ? { details: err.details } : {}) });
+  console.error('❌ [portal/payment-links]', err && err.message);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+router.get('/payment-links', async (req, res) => {
+  try {
+    const rows = await paymentLinks.list(req.portalUser.merchantId, {});
+    return res.json({ success: true, links: rows.map((l) => paymentLinks.toPublic(l, resolveBaseUrl(req))) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+router.post('/payment-links', requirePortalRole('merchant_operator'), async (req, res) => {
+  try {
+    const link = await paymentLinks.create(req.portalUser.merchantId, req.body || {}, { livemode: environment.isProduction(), createdBy: req.portalUser.email || 'portal' });
+    return res.status(201).json({ success: true, link: paymentLinks.toPublic(link, resolveBaseUrl(req)) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+router.post('/payment-links/:id/cancel', requirePortalRole('merchant_operator'), async (req, res) => {
+  try {
+    const link = await paymentLinks.cancel(req.portalUser.merchantId, String(req.params.id), { actor: req.portalUser.email || 'portal' });
+    if (!link) return res.status(404).json({ success: false, error: 'not_found' });
+    return res.json({ success: true, link: paymentLinks.toPublic(link, resolveBaseUrl(req)) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+
 // La ficha lleva también la CUENTA del merchant en el PSP (credenciales
 // cifradas, multi-PSP nov 2026). El portal NUNCA las ve ni las toca: se quitan
 // de las respuestas y no se puede borrar/desactivar una ficha que las tenga

@@ -27,6 +27,7 @@ const logger       = require('../utils/logger');
 const adminAuth    = require('../middleware/adminAuth');
 const { ACQUIRER_TRANSITIONS } = require('../utils/paymentStatus');
 const paymentTokens = require('../services/paymentTokenService');
+const paymentLinks = require('../services/paymentLinkService');
 
 // Verificación del validation_hash y mapa de estados de Paylands: viven en el
 // conector (src/connectors/paylands/webhook.js) desde el framework multi-PSP
@@ -239,6 +240,14 @@ router.post('/paynopain', async (req, res) => {
     }
   }
 
+  // ── 5c. Enlace de pago: un pago aprobado cuenta en su enlace (y cierra el de
+  //        uso único). Solo si el pago viene de un enlace.
+  if (changed && tx.paymentLinkId && tx.status === 'authorized') {
+    try { await paymentLinks.onPaymentApproved(tx); } catch (e) {
+      logger.warn('WEBHOOK_PAYMENT_LINK_UPDATE_FAIL', { component: 'webhooks', data: { error: e.message } });
+    }
+  }
+
   // ── 6. Webhook saliente hacia el merchant (solo si el estado cambió) ────────
   const callbackUrl = tx.callbackUrl || null;
   if (changed && callbackUrl) {
@@ -259,6 +268,7 @@ router.post('/paynopain', async (req, res) => {
             currency:          tx.currency,
             connectorUsed:     'payNoPain',
             livemode:          Boolean(tx.livemode),   // aditivo (F4 multi-PSP)
+            ...(tx.paymentLinkId ? { paymentLinkId: tx.paymentLinkId } : {}),   // aditivo (enlaces de pago)
             timestamp:         new Date().toISOString(),
           }
         }

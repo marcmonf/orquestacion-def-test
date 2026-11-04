@@ -1813,6 +1813,41 @@ idéntico.
 Verificación F2: tests `tests/unit/statusAlerts.test.js` (+8), Chromium real de `/status`
 a 375 px (sin errores de consola ni de CSP).
 
+
+#### F3 — Enlaces de pago + QR (y la API `/pos` del terminal)
+
+1. **Qué es**: el comercio crea un enlace (importe, concepto, caducidad opcional, uso
+   único o múltiple) desde la **API v1** (`POST /v1/payment-links`), el **portal**
+   (pestaña "Enlaces de pago", rol operador o más) o **/admin** (pestaña "Enlaces de
+   pago"). Obtiene una URL `https://…/pay/pl_…` y un **QR** (`/pay/pl_…/qr.svg`, y
+   `.png` para el terminal). El comprador abre la URL → página con la marca del comercio
+   (sin JavaScript, concepto escapado) → "Pagar" → **checkout de siempre** (sesión normal
+   con su routing; la tarjeta solo en los campos del PSP) → **webhook de siempre** (con
+   `data.paymentLinkId`, aditivo). Anulable (v1, portal, /admin).
+2. **Uso único sin doble pago**: mientras hay una sesión abierta del enlace, todo el que
+   pulsa "Pagar" va a ESA sesión (reserva atómica); durante el 3DS nadie puede empezar
+   otro (409); si el pago falla se puede reintentar; al aprobarse (webhook) el enlace pasa
+   a `completed`.
+3. **API `/pos`** (base de la app Android, F3b): `GET /pos/me`, `POST /pos/payments`
+   (importe + concepto → enlace de uso único con caducidad corta, `POS_LINK_TTL_MIN`, 15
+   min), `GET /pos/payments/:id` (estado `paid|pending|failed|expired|cancelled`), `POST
+   …/cancel` (no si está pagado o en pleno 3DS) y `GET /pos/payments` (historial de HOY
+   de la tienda con total cobrado). Autenticación: **usuario del portal** (JWT de portal),
+   operador o más y **ligado a una tienda** (`hierarchyNodeId`; si no, `403
+   pos_user_without_store`). Una tienda no ve los cobros de otra. **Nunca la clave ms_.**
+4. Modo: los enlaces de portal, /admin y /pos se crean en el modo del despliegue
+   (producción → live; pruebas → test); los de la API v1, en el de la clave.
+5. Dependencia nueva: `qrcode` 1.5.4 (genera el QR en el servidor). `npm audit --omit=dev`:
+   0 vulnerabilidades.
+
+Verificación F3: tests `tests/integration/paymentLinks.test.js` (+12) y
+`tests/integration/pos.test.js` (+6). **Chromium real**: en el portal el operador crea un
+enlace de 12,50 € → sale en la tabla con su QR (imagen cargada); el comprador (375 px)
+abre la URL → página con la marca y el concepto escapado → "Pagar" → checkout con 12.50 y
+el pago lleva `paymentLinkId`; en /admin el superadmin lo ve y lo anula → la URL responde
+410. Sin errores de JavaScript. **Prueba real en sandbox posible**: runbook E1–E4 en
+`docs/runbook-sesion-5nov.md`.
+
 ---
 
 ## 7. Elementos de seguridad

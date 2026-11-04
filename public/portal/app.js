@@ -124,11 +124,13 @@ async function loadDashboard() {
 }
 
 function isAdmin() { return state.me && state.me.role === 'merchant_admin'; }
+function isOperator() { return state.me && ['merchant_admin', 'merchant_operator'].includes(state.me.role); }
 
 function renderShell() {
   const tabs = [
     ['resumen', 'Resumen'],
     ['transacciones', 'Transacciones'],
+    ['enlaces', 'Enlaces de pago'],
     ...(isAdmin() ? [['adquirentes', 'Adquirentes'], ['costes', 'Coste real'], ['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
   ];
   ROOT.innerHTML = `
@@ -169,6 +171,76 @@ function selectTab(tab) {
   if (tab === 'facturacion') return viewFacturacion();
   if (tab === 'adquirentes') return viewAdquirentes();
   if (tab === 'costes') return viewCostes();
+  if (tab === 'enlaces') return viewEnlaces();
+}
+
+// ── Tab: Enlaces de pago (nov 2026) ─────────────────────────────────────────
+// Crear un enlace (importe, concepto, uso único o múltiple, caducidad) → URL +
+// QR para compartir. El comprador paga en el checkout de siempre.
+const LINK_STATE = { active: 'Activo', completed: 'Pagado', cancelled: 'Anulado', expired: 'Caducado' };
+function eurosToCents(v) {
+  const n = Number(String(v || '').replace(/\s/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+}
+async function viewEnlaces() {
+  view().innerHTML = `
+    ${isOperator() ? `<div class="card" style="margin-bottom:14px">
+      <strong>Nuevo enlace de pago</strong>
+      <div id="plMsg"></div>
+      <div class="row" style="margin-top:10px; align-items:end">
+        <div style="min-width:120px"><label>Importe (€)</label><input id="plAmount" inputmode="decimal" placeholder="25,00" /></div>
+        <div style="flex:1; min-width:180px"><label>Concepto</label><input id="plConcept" maxlength="200" placeholder="Clase de yoga del martes" /></div>
+        <div style="min-width:140px"><label>Uso</label>
+          <select id="plReusable"><option value="false">Un solo pago</option><option value="true">Varios pagos</option></select></div>
+        <div style="min-width:150px"><label>Caduca en (horas, opcional)</label><input id="plHours" inputmode="numeric" placeholder="48" /></div>
+        <button id="plCreate">Crear enlace</button>
+      </div>
+    </div>` : ''}
+    <div class="card" id="plTable">Cargando…</div>`;
+  if (isOperator()) {
+    document.getElementById('plCreate').onclick = async () => {
+      const amount = eurosToCents(val('plAmount'));
+      const concept = val('plConcept');
+      if (!Number.isInteger(amount) || amount < 1) return banner('plMsg', 'Importe no válido.');
+      if (!concept) return banner('plMsg', 'Escribe el concepto.');
+      const body = { amount, currency: 'EUR', concept, reusable: val('plReusable') === 'true' };
+      const hours = Number(val('plHours'));
+      if (val('plHours') && (!Number.isFinite(hours) || hours <= 0)) return banner('plMsg', 'Horas no válidas.');
+      if (hours > 0) body.expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+      const r = await api('/portal/payment-links', { method: 'POST', body: JSON.stringify(body) });
+      if (!r.ok) return banner('plMsg', r.body.error === 'validation_error' ? 'Revisa los datos.' : 'No se pudo crear.');
+      banner('plMsg', 'Enlace creado: ' + r.body.link.url, 'ok');
+      loadEnlaces();
+    };
+  }
+  loadEnlaces();
+}
+async function loadEnlaces() {
+  const r = await api('/portal/payment-links');
+  const el = document.getElementById('plTable');
+  if (!r.ok) { el.innerHTML = '<div class="muted">No se pudieron cargar los enlaces.</div>'; return; }
+  const rows = r.body.links || [];
+  if (!rows.length) { el.innerHTML = '<div class="muted">Todavía no hay enlaces de pago.</div>'; return; }
+  el.innerHTML = `<table><thead><tr><th>QR</th><th>Concepto</th><th>Importe</th><th>Uso</th><th>Estado</th><th>Pagos</th><th>Enlace</th><th></th></tr></thead>
+    <tbody>${rows.map(l => `<tr>
+      <td><a href="${esc(l.qrUrl)}" target="_blank" rel="noopener"><img src="${esc(l.qrUrl)}" alt="QR" width="56" height="56"></a></td>
+      <td>${esc(l.concept)}</td>
+      <td>${money(l.amount, l.currency)}</td>
+      <td>${l.reusable ? 'Varios' : 'Único'}</td>
+      <td>${esc(LINK_STATE[l.status] || l.status)}${l.expiresAt ? `<div class="muted" style="font-size:11px">hasta ${fmtDate(l.expiresAt)}</div>` : ''}</td>
+      <td>${Number(l.paidCount) || 0}</td>
+      <td><input readonly value="${esc(l.url)}" style="min-width:220px" data-copy="1"></td>
+      <td>${isOperator() && l.status === 'active' ? `<button class="ghost small" data-cancel="${esc(l.id)}">Anular</button>` : ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+  el.querySelectorAll('[data-copy]').forEach(i => { i.onclick = () => i.select(); });
+  el.querySelectorAll('[data-cancel]').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm('¿Anular este enlace? Nadie podrá pagar con él.')) return;
+      const r2 = await api('/portal/payment-links/' + encodeURIComponent(b.dataset.cancel) + '/cancel', { method: 'POST' });
+      if (!r2.ok) return alert('No se pudo anular.');
+      loadEnlaces();
+    };
+  });
 }
 const view = () => document.getElementById('view');
 
