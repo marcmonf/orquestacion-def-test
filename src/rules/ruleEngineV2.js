@@ -11,6 +11,9 @@
  *   • cardType.in: [ "credit", "debit", "prepaid", "corporate" ]
  *   • currency.in: [ "EUR", "USD", ... ]
  *   • amount.{lte,lt,eq,gt,gte}: number
+ *   • country.in: [ "ES", "PT" ]   país del COMPRADOR (no del emisor) — conocido
+ *                                   antes de pedir la tarjeta (nov 2026, multi-PSP)
+ *   • paymentMethod.in: [ "card", "bizum", ... ]  método de pago (nov 2026)
  *   • latencyP50.lte OR latencyMs.lte: number (ms)            (ADV)
  *   • successRate.gte: 0..1                                    (ADV)
  *   • saturation.lt OR saturationPct.lt: 0..1                  (ADV)
@@ -96,6 +99,15 @@ function checkPredicates(ruleId, when, ctx, explain, advEnabled) {
   if (when.currency?.in) {
     const ok = inArray(ctx.currency, when.currency.in);
     if (!explainPush(explain, ruleId, 'currency.in', when.currency.in, ctx.currency, ok)) return false;
+  }
+  if (when.country?.in) {
+    const ok = inArray(ctx.country, when.country.in);
+    if (!explainPush(explain, ruleId, 'country.in', when.country.in, ctx.country, ok)) return false;
+  }
+  if (when.paymentMethod?.in) {
+    const method = ctx.paymentMethod || ctx.method;
+    const ok = inArray(method, when.paymentMethod.in);
+    if (!explainPush(explain, ruleId, 'paymentMethod.in', when.paymentMethod.in, method, ok)) return false;
   }
   if (when.amount && typeof when.amount === 'object') {
     const ok = cmpNumeric(Number(ctx.amount), when.amount);

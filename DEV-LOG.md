@@ -1437,6 +1437,49 @@ clasifica por la frase estándar; los códigos de error propios de Paylands est�
 
 Verificación F1: **478/478** (+62), arranque real sin avisos de montaje.
 
+
+#### F2 — Cuentas, routing pre-captura y salud por conector
+
+1. **Cuentas de adquirente por merchant** (`src/services/connectorAccountService.js`):
+   reutiliza `MerchantAcquirer` (la ficha de M7) como "cuenta del merchant en ese PSP" y
+   le añade `credentialsEnc.{test,live}` cifradas con AES-256-GCM
+   (`cryptoUtils.encryptSecret`, contexto AAD propio `monetiser:credentials:v1`, clave
+   `CREDENTIALS_ENCRYPTION_KEY` o `ENCRYPTION_KEY`; sin clave → 503, nunca en claro) y
+   `credentialsMeta` con lo que se puede enseñar (`••••` + 4 últimos). Validación contra
+   los `credentialFields` que declara el conector.
+   **Paylands sigue con la cuenta de PLATAFORMA** (`PAYNOPAIN_*` en Render): guardar
+   credenciales de Paylands para un merchant responde `409 platform_account_only` a
+   propósito, para que nadie crea que se usan. Ver decisiones pendientes.
+2. **Routing pre-captura** (`src/services/routingService.js`): al crear la sesión (API v1
+   y API antigua), la política del merchant (`MerchantRules`, la de /admin → Reglas) se
+   evalúa con `ruleEngineV2` sobre importe, divisa, **país del comprador** y **método de
+   pago** (predicados nuevos `country.in` y `paymentMethod.in`, aditivos). Candidatos:
+   primario + `fallback.order` + Paylands; se elige el primero registrado, capaz
+   (capacidades), con proveedor de campos en el checkout, con credenciales para el modo y
+   sano. **Ese es el único failover y ocurre antes de pedir la tarjeta** (invariante 5).
+   La decisión completa (regla, candidatos descartados y por qué, explain) se guarda en
+   `Transaction.routing` + `connectorAccountId`. Un fallo del propio routing (Mongo)
+   cae a Paylands marcado `routing_error_platform_default` (el comportamiento anterior).
+   Si NINGÚN PSP puede (p. ej. una divisa que nadie procesa) → `422
+   no_connector_available` (antes se habría mandado a Paylands, que cobra en la divisa de
+   su servicio). Con `SUPPORTED_CURRENCIES=EUR` (por defecto) no cambia nada hoy.
+3. **Salud por conector** (`src/services/connectorHealth.js`): circuit breaker en memoria;
+   solo cuentan fallos técnicos (5xx, red, timeout, credenciales), nunca rechazos del
+   banco. Lo alimenta el cobro del checkout. Si todos los capaces están "abiertos" se usa
+   el primero capaz (no se deja de cobrar por no haber alternativa).
+4. **Ciclo de vida**: con cuenta de plataforma la llamada al conector es EXACTAMENTE la de
+   antes (sin segundo argumento); con cuenta de merchant recibe `ctx.credentials`.
+5. **Checkout**: `/proxy-pci/session` y `/charge` se niegan (`409 wrong_fields_provider`)
+   a cobrar con ProxyFields un pago enrutado a otro proveedor de campos.
+6. **/backoffice (superadmin)**: `GET /backoffice/connectors` (capacidades + salud),
+   `GET|PUT|DELETE /backoffice/merchants/:merchantId/connector-accounts/:acquirerCode/credentials[/:mode]`
+   y `POST /backoffice/routing/:merchantId/simulate`.
+7. API v1: campo opcional `country` en `POST /v1/checkout-sessions` (aditivo).
+
+Verificación F2: **499/499** (+21: `tests/unit/multiPspRouting.test.js`,
+`tests/integration/multiPspBackoffice.test.js`), golden del cable idéntico, arranque real
+limpio. Sin cambios en `public/` en esta fase.
+
 ---
 
 ## 7. Elementos de seguridad

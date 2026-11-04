@@ -43,6 +43,15 @@ const pciProxy    = require('../services/pciProxyService');
 // El cable no cambia (tests/golden/paylandsWire.test.js).
 const { getProvider } = require('../services/connectorRegistry');
 const PAYLANDS = 'payNoPain';
+const FIELDS_PROVIDER = 'paylands_proxyfields';
+const health = require('../services/connectorHealth');
+
+// ¿Este pago se enrutó a los campos de Paylands? Los pagos anteriores al
+// framework multi-PSP no tienen `routing` → Paylands (como siempre).
+function routedHere(tx) {
+  const fp = tx && tx.routing && tx.routing.fieldsProvider;
+  return !fp || fp === FIELDS_PROVIDER;
+}
 const { resultPath } = require('../utils/checkoutResult');
 const logger      = require('../utils/logger');
 
@@ -92,6 +101,10 @@ router.post('/session', rateLimiter, async (req, res) => {
         success: false,
         message: `Transacción en estado no válido: ${tx.status}`,
       });
+    }
+
+    if (!routedHere(tx)) {
+      return res.status(409).json({ success: false, message: 'wrong_fields_provider: este pago no se cobra con los campos de Paylands' });
     }
 
     const sessionToken = await pciProxy.issueTokenizationToken(paymentId);
@@ -172,6 +185,11 @@ router.post('/charge', rateLimiter, async (req, res) => {
     } catch (_) { /* no-op */ }
   }
 
+  if (!routedHere(tx)) {
+    await releaseReservation();
+    return res.status(409).json({ success: false, message: 'wrong_fields_provider: este pago no se cobra con los campos de Paylands' });
+  }
+
   let chargeStarted = false;
   try {
     // Paso 1: Obtener el token PCI generado por ProxyFields tras el submit del browser
@@ -213,6 +231,9 @@ router.post('/charge', rateLimiter, async (req, res) => {
       expiryYear:  expiryYear  || tokenResult.expiryYear,
       cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
+    // Salud del conector (circuit breaker del routing pre-captura). Solo
+    // informa a FUTUROS checkouts: este pago no se reintenta en ningún otro PSP.
+    health.recordResult(PAYLANDS, payment);
     // Resultado normalizado del contrato → la forma que este router ya usaba.
     const chargeResult = {
       success:            payment.status === 'authorized',
@@ -300,6 +321,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
       data: { merchantId, paymentId, error: err.message },
     });
 
+    if (chargeStarted) health.recordFailure(PAYLANDS, 'processor_unavailable');
     if (!chargeStarted) {
       await releaseReservation();
       // El pago vuelve a su estado inicial: el comprador puede reintentarlo.

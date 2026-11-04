@@ -20,6 +20,7 @@ const Transaction = require('../models/Transaction');
 const Merchant = require('../models/Merchant');
 const { resultOf } = require('../utils/checkoutResult');
 const { getTotals } = require('./paymentLifecycleService');
+const routingService = require('./routingService');
 
 const DEFAULT_SESSION_TIMEOUT_SECONDS = 30 * 60; // 30 minutos
 const MAX_SESSION_SECONDS = 3 * 60 * 60;          // 3 horas
@@ -133,6 +134,19 @@ async function createCheckoutSession(merchantId, input) {
     }
   }
 
+  // Routing pre-captura: a qué PSP va este pago ANTES de pedir la tarjeta
+  // (framework multi-PSP). Sin ningún PSP capaz → no se crea la sesión.
+  const routing = await routingService.decideSafe({
+    merchantId, amount, currency, country: input.country || null,
+    paymentMethod: 'card', livemode: Boolean(input.livemode), channel: 'checkout',
+  });
+  if (!routing.connector) {
+    const e = new Error('no_connector_available');
+    e.code = 'no_connector_available';
+    e.routing = routing;
+    throw e;
+  }
+
   const merchant = await Merchant.findOne({ merchantId }, { webhookUrl: 1, _id: 0 }).lean();
   const now = new Date();
   const doc = {
@@ -149,6 +163,8 @@ async function createCheckoutSession(merchantId, input) {
     callbackUrl:      webhookUrl || (merchant && merchant.webhookUrl) || null,
     createdAt:        now,
     sessionExpiresAt: computeSessionExpiry(now),
+    routing,
+    connectorAccountId: routing.accountId,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 

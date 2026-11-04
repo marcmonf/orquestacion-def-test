@@ -67,6 +67,9 @@ const createSchema = Joi.object({
   reference:  Joi.string().trim().max(128).allow(null, ''),
   returnUrl:  RedirectUrl().allow(null, ''),
   webhookUrl: WebhookUrl().allow(null, ''),
+  // País del comprador (ISO 3166-1 alfa-2). Opcional: lo usa el routing
+  // multi-PSP (reglas country.in). Cambio aditivo (nov 2026).
+  country:    Joi.string().trim().uppercase().pattern(/^[A-Z]{2}$/).allow(null, ''),
 }).options({ stripUnknown: false, abortEarly: false });
 
 const amountSchema = Joi.object({
@@ -102,6 +105,7 @@ router.post('/checkout-sessions', async (req, res) => {
       reference:  value.reference || null,
       returnUrl:  value.returnUrl || null,
       webhookUrl: value.webhookUrl || null,
+      country:    value.country || null,
       idempotencyKey: idem.key,
     });
     if (created) {
@@ -111,6 +115,9 @@ router.post('/checkout-sessions', async (req, res) => {
     }
     return res.status(created ? 201 : 200).json(sessions.toCheckoutSession(tx, sessions.resolveBaseUrl(req)));
   } catch (err) {
+    if (err.code === 'no_connector_available') {
+      return fail(res, 422, 'no_connector_available', 'Ningún adquirente configurado puede procesar este pago (método, divisa o país).');
+    }
     if (err.code === 'idempotency_key_reused') {
       return fail(res, 409, 'idempotency_key_reused', 'Esa Idempotency-Key ya se usó para otro pago con datos distintos.');
     }

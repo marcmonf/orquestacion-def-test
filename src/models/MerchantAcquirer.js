@@ -26,6 +26,17 @@ const merchantAcquirerSchema = new mongoose.Schema({
   fixedFee:      { type: Number, default: 0 },   // céntimos por operación
 
   config:    { type: mongoose.Schema.Types.Mixed, default: {} },  // serviceUuid propio, etc.
+
+  // ── Cuenta del merchant en el PSP (framework multi-PSP, nov 2026) ─────────
+  // Credenciales POR MODO (test = sandbox, live = producción), cifradas con
+  // AES-256-GCM (cryptoUtils.encryptSecret). Nunca se devuelven en claro: la
+  // API enseña solo credentialsMeta (qué campos hay y sus 4 últimos).
+  // Ver src/services/connectorAccountService.js.
+  credentialsEnc: {
+    test: { type: String, default: null },
+    live: { type: String, default: null },
+  },
+  credentialsMeta: { type: mongoose.Schema.Types.Mixed, default: {} }, // { test: { fields:{name:hint}, updatedAt, updatedBy }, live: {...} }
   updatedBy: { type: String, default: null },
   updatedAt: { type: Date, default: Date.now },
 }, { collection: 'merchantacquirers' });

@@ -39,7 +39,18 @@ const transactionSchema = new mongoose.Schema({
 
   // Otros
   authCode:           String,
+  // Conector que PROCESÓ el pago (se fija al cobrar). Puede diferir de
+  // routing.connector solo si el pago es anterior al framework multi-PSP.
   processor:          String,
+
+  // ── Routing pre-captura (framework multi-PSP, nov 2026) ───────────────────
+  // Decisión completa tomada al crear la sesión (src/services/routingService):
+  // conector, cuenta, regla que casó, candidatos descartados y por qué
+  // (explain). Las transacciones anteriores no lo tienen → Paylands.
+  routing:            { type: mongoose.Schema.Types.Mixed, default: undefined },
+  // Cuenta del merchant en el PSP con la que se opera ('platform' = cuenta de
+  // plataforma, variables de entorno). Ver connectorAccountService.
+  connectorAccountId: { type: String, default: null },
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
   callbackUrl:        String,

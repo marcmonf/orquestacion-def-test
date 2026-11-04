@@ -33,8 +33,6 @@ module.exports = {
   on,
   PAYLANDS_METHOD_FLAGS,
   paylandsExtraMethods,
-  // F2 — credenciales de PSP por cuenta de merchant en Paylands (hoy: cuenta de plataforma).
-  merchantPspCredentials: () => on('FEATURE_MERCHANT_PSP_CREDENTIALS'),
   // F4 — modo live (claves ms_live_ y credenciales PSP de producción).
   livemode: () => on('FEATURE_LIVEMODE'),
   // F6 — tarjeta guardada / cobros sin el cliente delante.

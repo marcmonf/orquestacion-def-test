@@ -130,8 +130,8 @@ function legacyFromProvider(provider) {
   const errText = (r) => (r && r.error ? (r.error.code || String(r.error)) : undefined);
   return {
     name: provider.id,
-    async authorize(paymentData) {
-      const r = await provider.createPayment({ ...paymentData, sourceToken: paymentData.cardToken || paymentData.sourceToken });
+    async authorize(paymentData, ctx) {
+      const r = await provider.createPayment({ ...paymentData, sourceToken: paymentData.cardToken || paymentData.sourceToken }, ctx);
       return {
         success:            r.status === 'authorized' || r.status === 'captured',
         requires3DS:        r.status === 'requires_action',
@@ -140,9 +140,9 @@ function legacyFromProvider(provider) {
         processorReference: r.processorReference || null,
       };
     },
-    async capture(data) { const r = await provider.capture(data); return { ...r, error: errText(r) }; },
-    async void(data)    { const r = await provider.cancel(data);  return { ...r, error: errText(r) }; },
-    async refund(data)  { const r = await provider.refund(data);  return { ...r, error: errText(r) }; },
+    async capture(data, ctx) { const r = await provider.capture(data, ctx); return { ...r, error: errText(r) }; },
+    async void(data, ctx)    { const r = await provider.cancel(data, ctx);  return { ...r, error: errText(r) }; },
+    async refund(data, ctx)  { const r = await provider.refund(data, ctx);  return { ...r, error: errText(r) }; },
     isSoftDecline() { return false; },
   };
 }

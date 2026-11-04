@@ -36,6 +36,7 @@ const Operation         = require('../models/Operation');
 const logger            = require('../utils/logger');
 const auditLogger       = require('../logs/auditLogger');
 const { getConnector }  = require('./connectorRegistry');
+const accounts          = require('./connectorAccountService');
 const webhookDispatcher = require('./webhookDispatcher');
 
 const LOCK_MS = 60 * 1000;
@@ -163,16 +164,30 @@ async function sendLifecycleWebhook(tx, event, extra) {
   }
 }
 
-function resolveConnector(tx) {
+async function resolveConnector(tx) {
   // Sin processor registrado no hay a quién pedir el movimiento de dinero.
   // NUNCA se sustituye por un conector simulado.
   if (!tx.processor) return { error: result(409, { success: false, message: 'missing_processor' }) };
   if (!tx.processorReference) return { error: result(409, { success: false, message: 'missing_processor_reference' }) };
+  let connector;
   try {
-    return { connector: getConnector(tx.processor) };
+    connector = getConnector(tx.processor);
   } catch (e) {
     return { error: result(500, { success: false, message: 'connector_not_configured' }) };
   }
+  // Credenciales de la cuenta del merchant (framework multi-PSP). Con cuenta de
+  // plataforma (Paylands hoy) no hay contexto y la llamada es EXACTAMENTE la de
+  // antes: connector.op(data), sin segundo argumento.
+  let ctx = null;
+  try {
+    const acc = await accounts.resolveContext({ merchantId: tx.merchantId, connector: tx.processor, livemode: Boolean(tx.livemode) });
+    if (acc && acc.source === 'merchant') ctx = { credentials: acc.credentials, livemode: Boolean(tx.livemode), accountId: acc.accountId };
+  } catch (_) { ctx = null; }
+  return { connector, ctx };
+}
+
+function callConnector(connector, op, data, ctx) {
+  return ctx ? connector[op](data, ctx) : connector[op](data);
 }
 
 // Esqueleto común: búsqueda aislada → replay → bloqueo → reserva → operación.
@@ -229,10 +244,10 @@ async function capture({ paymentId, merchantId, idempotencyKey, amount: reqAmoun
         return { httpStatus: 409, body: { success: false, message: 'Capture exceeds authorized amount' } };
       }
 
-      const { connector, error } = resolveConnector(tx);
+      const { connector, ctx, error } = await resolveConnector(tx);
       if (error) return error;
 
-      const connectorResult = await connector.capture({ processorReference: tx.processorReference, amount });
+      const connectorResult = await callConnector(connector, 'capture', { processorReference: tx.processorReference, amount }, ctx);
       if (!connectorResult || connectorResult.success !== true) {
         logger.error('CAPTURE.CONNECTOR_FAILED', {
           component: 'paymentLifecycle', paymentId, data: { connector: tx.processor, error: connectorResult?.error },
@@ -301,10 +316,10 @@ async function refund({ paymentId, merchantId, idempotencyKey, amount: reqAmount
         return { httpStatus: 409, body: { success: false, message: 'Refund exceeds refundable amount' } };
       }
 
-      const { connector, error } = resolveConnector(tx);
+      const { connector, ctx, error } = await resolveConnector(tx);
       if (error) return error;
 
-      const connectorResult = await connector.refund({ processorReference: tx.processorReference, amount });
+      const connectorResult = await callConnector(connector, 'refund', { processorReference: tx.processorReference, amount }, ctx);
       if (!connectorResult || connectorResult.success !== true) {
         logger.error('REFUND.CONNECTOR_FAILED', {
           component: 'paymentLifecycle', paymentId, data: { connector: tx.processor, error: connectorResult?.error },
@@ -368,10 +383,10 @@ async function cancel({ paymentId, merchantId, idempotencyKey, isFinal, operatio
         return { httpStatus: 409, body: { success: false, message: 'Cannot cancel: already captured. Use refund instead.' } };
       }
 
-      const { connector, error } = resolveConnector(tx);
+      const { connector, ctx, error } = await resolveConnector(tx);
       if (error) return error;
 
-      const connectorResult = await connector.void({ processorReference: tx.processorReference });
+      const connectorResult = await callConnector(connector, 'void', { processorReference: tx.processorReference }, ctx);
       if (!connectorResult || connectorResult.success !== true) {
         logger.error('CANCEL.CONNECTOR_FAILED', {
           component: 'paymentLifecycle', paymentId, data: { connector: tx.processor, error: connectorResult?.error },
