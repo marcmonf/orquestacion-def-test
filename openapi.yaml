@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.12.0
+  version: 2.13.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -16,6 +16,14 @@ info:
     campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
     a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
     abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.13.0 (4 nov 2026)** — las rutas de la **API v1** pasan de `beta` a
+    `estable` (decisión de Marcos): verificadas end-to-end contra Paylands sandbox
+    con la colección Postman v1 — sesión → pago 3DS (`4018810000100036`) → vuelta a
+    `gracias.html?result=succeeded` → `authorized` → refund antes de capturar =
+    `409 capture_required` → capture = `captured` → refund parcial 1000 =
+    `partially_refunded`; y segunda sesión → pago → cancel = `cancelled`.
+    Sin cambios de contrato.
 
     **v2.12.0 (26 sep 2026)** — **API v1**: `POST /v1/checkout-sessions`,
     `GET /v1/checkout-sessions/{id}`, `GET /v1/payments/{id}` y
@@ -280,13 +288,15 @@ paths:
       tags: [API v1]
       summary: Crear una sesión de pago
       operationId: v1CreateCheckoutSession
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Crea un pago y devuelve la `url` del checkout de Monetiser (se embebe con
         `/v1/monetiser.js` o se abre a pantalla completa). Por debajo es un Hosted
-        Checkout como el de `POST /{merchantId}/payments/hosted` (flujo estable):
-        `beta` solo porque esta forma de pedirlo es nueva.
+        Checkout como el de `POST /{merchantId}/payments/hosted` (flujo estable).
+        **Estable desde v2.13.0**: verificado end-to-end contra Paylands sandbox
+        el 4 nov 2026 (sesión → pago 3DS → vuelta a la returnUrl → capture /
+        refund / cancel).
 
         **Nunca** admite datos de tarjeta (`400 card_data_not_accepted`): el
         comprador los escribe en los campos de Paylands (PCI DSS SAQ A).
@@ -347,7 +357,7 @@ paths:
       tags: [API v1]
       summary: Consultar una sesión de pago
       operationId: v1GetCheckoutSession
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       parameters:
         - $ref: '#/components/parameters/V1PaymentId'
@@ -369,7 +379,7 @@ paths:
       tags: [API v1]
       summary: Consultar un pago
       operationId: v1GetPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Estado del pago, importes capturado y devuelto y la tarjeta truncada
@@ -395,7 +405,7 @@ paths:
       tags: [API v1]
       summary: Capturar (cobrar) un pago autorizado
       operationId: v1CapturePayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Cobra lo retenido (total, o una parte con `amount`). Mismo servicio que
@@ -425,7 +435,7 @@ paths:
       tags: [API v1]
       summary: Devolver (total o parcial)
       operationId: v1RefundPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: |
         Devuelve lo cobrado (total, o una parte con `amount`). Exige captura previa:
@@ -455,7 +465,7 @@ paths:
       tags: [API v1]
       summary: Anular una autorización sin capturar
       operationId: v1CancelPayment
-      x-madurez: beta
+      x-madurez: estable
       security: [{ BearerApiKey: [] }]
       description: Libera la retención de un pago `authorized` que no se ha capturado.
       parameters:
@@ -477,7 +487,7 @@ paths:
       tags: [API v1]
       summary: Snippet para embeber el checkout
       operationId: v1Snippet
-      x-madurez: beta
+      x-madurez: estable
       security: []
       description: |
         JavaScript sin dependencias para la web del comercio:

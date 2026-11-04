@@ -990,8 +990,10 @@ informe completo (con el plan al MVP y las preguntas para Marcos) se publicó ap
 
 **✅ FUSIONADO Y DESPLEGADO el 26 sep 2026** (PR #2 → `main`, commit `8a55689`; Manual Deploy
 de Marcos con `HPP_SIGNING_SECRET` definido y `ADMIN_TOKEN` de 64 caracteres, arranque sin
-avisos `[CONFIG]`). **Pendiente:** la prueba de sandbox de la "Vuelta del comprador" (más
-abajo), revocar la API key de demo-merchant y rellenar los datos fiscales antes de facturar.
+avisos `[CONFIG]`). ~~Pendiente: la prueba de sandbox de la "Vuelta del comprador"~~ →
+✅ **HECHA Y OK por Marcos el 4 nov 2026** (ver sesión del 4 nov → "Verificación en
+sandbox de la API v1"). **Sigue pendiente:** revocar la API key de demo-merchant y
+rellenar los datos fiscales antes de facturar.
 
 **Trabajo hecho en la rama `claude/clever-bohr-fk3164`** (entonces aún NO en `main`; nada estaba desplegado
 hasta que Marcos fusione y lance Manual Deploy). **Al terminar la Fase 0: 346/346** (+73 tests
@@ -1172,7 +1174,9 @@ returnUrl, ese caso fallaría EN SILENCIO). Cuando exista el snippet `monetiser.
 (API simple, Fase 2), que sabe desde qué web se abre el checkout, se fijará el origen
 exacto.
 
-**⚠️ Verificación pendiente en sandbox (Marcos, tras desplegar).** `url_ok`/`url_ko`
+**✅ VERIFICADO en sandbox por Marcos el 4 nov 2026** (vuelta a
+`gracias.html?…&result=succeeded` tras el 3DS; detalle en la sesión del 4 nov). Texto
+original de cuando estaba pendiente: `url_ok`/`url_ko`
 son parámetros documentados de `POST /payment` de Paylands, pero TOCAN la llamada de
 creación de orden que está verificada end-to-end. La doc no aclara si Paylands añade
 parámetros a esas URLs ni si vuelve por GET o por POST: la página acepta los dos y
@@ -1334,9 +1338,9 @@ sesión creada con la API (se ve el importe), `onResult` recibe el resultado al
 terminar, una URL ajena se rechaza, y la API v1 llamada desde esa web queda bloqueada
 por el navegador.
 
-**⚠️ Tras desplegar (Marcos):** repetir la prueba de sandbox de la "Vuelta del
-comprador" usando la colección Postman nueva (petición 1 → abrir la `url` → pagar →
-petición 3 → `authorized` → petición 4 capturar).
+~~Tras desplegar (Marcos): repetir la prueba de sandbox de la "Vuelta del comprador"
+con la colección Postman nueva~~ → ✅ **HECHA Y OK el 4 nov 2026** (sesión del 4 nov).
+La API v1 pasa a `estable` en `openapi.yaml` v2.13.0.
 
 **Pendiente (ver informe):** entorno de producción separado, 2FA de superadmin,
 routing del portal conectado al flujo real, conector #2, fijar el origen exacto del
@@ -1363,6 +1367,28 @@ tarjeta guardada, MIT, consulta de orden, credenciales por merchant) queda detr�
 flags APAGADOS y "pendiente de verificar con PayNoPain".
 
 Línea base al empezar: **416/416** y arranque limpio.
+
+#### Verificación en sandbox de la API v1 (Marcos, 4 nov 2026) — ✅ OK
+
+Marcos ejecutó contra **Paylands real (sandbox)**, con la colección Postman de la API v1,
+las pruebas que estaban pendientes desde el 26 sep. Todas OK:
+
+1. `POST /v1/checkout-sessions` → abrir la `url` → pago con 3DS con `4018810000100036`.
+2. Vuelta del comprador a `gracias.html` con `result=succeeded` (los `url_ok`/`url_ko`
+   firmados funcionan con Paylands real).
+3. `GET /v1/payments/:id` → `authorized`.
+4. Refund ANTES de capturar → `409 capture_required` (correcto con DEFERRED: no hay dinero
+   movido que devolver).
+5. Capture → `captured`.
+6. Refund parcial de 1000 → `partially_refunded`.
+7. Segunda sesión → pago → cancel → `cancelled`.
+
+Consecuencias: quitadas de pendientes la prueba de la "Vuelta del comprador" (26 sep) y la
+repetición con la colección v1; las 7 rutas `/v1` pasan de `beta` a **`estable`** en
+`openapi.yaml` **v2.13.0** (decisión de Marcos; sin cambios de contrato). Nota honesta: el
+snippet `/v1/monetiser.js` y `GET /v1/checkout-sessions/:id` no figuran explícitamente en la
+lista de pasos de Marcos; se marcan estables por su decisión (comparten el mismo camino
+verificado). S2S sigue en `beta` (no forma parte de esta prueba).
 
 #### F0 — Inventario de lo que ya existía para multi-adquirente
 
@@ -1794,6 +1820,7 @@ estados en Mongo. Simulacion pura.
 | Refund (total/parcial) | POST /payments/:paymentId/refund | POST /payment/refund (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
 | Captura | POST /payments/:paymentId/capture | **POST /payment/confirmation** (order_uuid + amount opcional) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
 | Cancelacion (void) | POST /payments/:paymentId/cancel | **POST /payment/cancellation** (order_uuid, solo pre-captura) | ✅ VERIFICADO end-to-end contra Paylands real (16 jul) |
+| API v1 completa (sesión → 3DS → vuelta → capture/refund/cancel) | POST /v1/checkout-sessions · /v1/payments/:id/{capture,refund,cancel} | los mismos | ✅ VERIFICADO end-to-end contra Paylands sandbox por Marcos (4 nov 2026) |
 
 ### Ciclo de vida de una transaccion
 
