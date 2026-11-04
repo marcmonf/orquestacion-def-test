@@ -203,10 +203,14 @@ async function processDueOnce(limit = 20) {
 }
 
 let timer = null;
+let lastRunAt = null;     // para /health/ready y la página de estado
+let lastRunError = null;
 function startWorker() {
   if (timer) return;
   timer = setInterval(() => {
-    processDueOnce().catch((e) => console.warn('⚠️ [webhookDispatcher] worker:', e.message));
+    processDueOnce()
+      .then(() => { lastRunAt = new Date(); lastRunError = null; })
+      .catch((e) => { lastRunError = e.message; console.warn('⚠️ [webhookDispatcher] worker:', e.message); });
   }, WORKER_INTERVAL_MS);
   if (timer.unref) timer.unref();
 }
@@ -215,11 +219,30 @@ function stopWorker() {
   timer = null;
 }
 
+// Estado de la cola (nunca datos de pagos ni URLs): pendientes, el más
+// antiguo vencido sin procesar y fallidos definitivos recientes.
+async function queueStats(now = new Date()) {
+  const pendingFilter = { deliveredAt: null, failedAt: null };
+  const [pending, oldestDue, failedLastHour] = await Promise.all([
+    WebhookLog.countDocuments(pendingFilter),
+    WebhookLog.findOne({ ...pendingFilter, nextAttemptAt: { $lte: now } }).sort({ nextAttemptAt: 1 }).select('nextAttemptAt').lean(),
+    WebhookLog.countDocuments({ failedAt: { $gte: new Date(now.getTime() - 3600 * 1000) } }),
+  ]);
+  const oldestDueAgeMs = oldestDue && oldestDue.nextAttemptAt ? Math.max(0, now - new Date(oldestDue.nextAttemptAt)) : 0;
+  return { pending, oldestDueAgeMs, failedLastHour };
+}
+
+function workerState() {
+  return { running: Boolean(timer), intervalMs: WORKER_INTERVAL_MS, lastRunAt: lastRunAt ? lastRunAt.toISOString() : null, lastRunError };
+}
+
 module.exports = {
   enqueue,
   startWorker,
   stopWorker,
   processDueOnce,
+  queueStats,
+  workerState,
   // expuestos para tests
   _test: { sign, attemptDelivery, resolveSecret, generateSigningSecret, RETRY_SCHEDULE, MAX_ATTEMPTS },
   generateSigningSecret,

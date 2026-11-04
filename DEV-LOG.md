@@ -1783,6 +1783,36 @@ Verificación F1: **551/551** en el árbol commiteado, arranque real limpio, Chr
 checkout: `saveCard` viaja con su nonce y sin oferta no hay casilla). Golden del cable
 idéntico.
 
+
+#### F2 — Producción de verdad: dos entornos, readiness, estado público y alertas
+
+1. **Dos entornos separados** (código + runbook `docs/entornos.md`): `MONETISER_ENV`
+   (`sandbox` | `production`, por defecto sandbox) en cada despliegue, cada uno con su
+   servicio Render, su base de datos Atlas, sus credenciales de Paylands y sus secretos.
+   El código detecta mezclas peligrosas (`MONETISER_ENV` ≠ `PAYNOPAIN_ENV`, o una
+   `MONGO_URI` de pruebas en producción): aviso `⚠️ [CONFIG] ENTORNO INCOHERENTE` al
+   arrancar, `/health/ready` en 503 y bloqueante en `/backoffice/production-readiness`.
+   Lo que es panel de Render/Atlas está en el runbook (no se pudieron abrir sus webs:
+   nombres de menú "habituales", a confirmar).
+2. **Health/readiness**: `/health` (vivo, ahora con `environment`) y **`/health/ready`**
+   (Mongo responde con ping, worker de webhooks en marcha, entorno coherente → 200/503).
+   Recomendado para Render: health check en `/health` (no en `/ready`, para no reiniciar
+   en bucle ante un corte breve de Atlas).
+3. **Página de estado pública** `/status` (+ `/status.json`, cacheado 30 s): API, base de
+   datos, webhooks a comercios (operativo / con retraso) y cada adquirente (según su
+   circuit breaker). Sin datos de comercios ni de pagos; sin JavaScript en línea.
+4. **Alertas por email** (`src/services/alertService.js`, mailer existente, cada 60 s):
+   circuito de un adquirente abierto; webhooks atascados (> 15 min vencidos) o > 20
+   fallidos en 1 h; > 10 errores TÉCNICOS del adquirente en 15 min (los rechazos del banco
+   no cuentan). Aviso al abrirse, recordatorio como mucho cada hora y "RESUELTA". Sin
+   destinatarios (`ALERT_EMAILS`) o sin SMTP → solo log. Nunca datos de comercios.
+5. **Copias de seguridad de Atlas**: runbook en `docs/entornos.md` §6 (Cloud Backup,
+   Point in Time si el plan lo permite, export mensual de facturación, prueba de
+   restauración trimestral a otro cluster y qué hacer si hay que restaurar).
+
+Verificación F2: tests `tests/unit/statusAlerts.test.js` (+8), Chromium real de `/status`
+a 375 px (sin errores de consola ni de CSP).
+
 ---
 
 ## 7. Elementos de seguridad

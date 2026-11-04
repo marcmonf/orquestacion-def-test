@@ -26,6 +26,11 @@
 const { ERROR_CODES } = require('../connectors/errors');
 
 const state = new Map(); // id → { failures:[ts], openedAt, status }
+// Registro de fallos técnicos de los últimos 15 min por conector, para la
+// alerta de "pico de errores del adquirente" (alertService). Independiente del
+// breaker (que se vacía con un éxito).
+const ERROR_LOG_MS = 15 * 60 * 1000;
+const errorLog = new Map(); // id → [ts]
 
 function cfg() {
   const num = (k, d) => { const v = parseInt(process.env[k] || '', 10); return Number.isFinite(v) && v > 0 ? v : d; };
@@ -58,6 +63,9 @@ function recordFailure(id, errorCode, now = Date.now()) {
   const e = entry(id);
   const { threshold, windowMs } = cfg();
   e.lastError = { code: errorCode || 'unknown', at: new Date(now).toISOString() };
+  const log = (errorLog.get(id) || []).filter((t) => now - t < ERROR_LOG_MS);
+  log.push(now);
+  errorLog.set(id, log);
   if (statusOf(id, now) === 'half_open') { e.status = 'open'; e.openedAt = now; return; }
   e.failures = e.failures.filter((t) => now - t < windowMs);
   e.failures.push(now);
@@ -86,6 +94,13 @@ function snapshot() {
   return out;
 }
 
-function _reset() { state.clear(); }
+// Fallos técnicos de un conector en los últimos `ms` (máx. 15 min).
+function recentTechnicalErrors(id, ms = ERROR_LOG_MS, now = Date.now()) {
+  return (errorLog.get(id) || []).filter((t) => now - t < Math.min(ms, ERROR_LOG_MS)).length;
+}
 
-module.exports = { isAvailable, statusOf, recordSuccess, recordFailure, recordResult, snapshot, _reset };
+function knownConnectors() { return [...new Set([...state.keys(), ...errorLog.keys()])]; }
+
+function _reset() { state.clear(); errorLog.clear(); }
+
+module.exports = { isAvailable, statusOf, recordSuccess, recordFailure, recordResult, snapshot, recentTechnicalErrors, knownConnectors, _reset };
