@@ -55,6 +55,10 @@ const transactionSchema = new mongoose.Schema({
   // Modo (F4, estilo Stripe): false = test (sandbox), true = live. Los pagos
   // anteriores no lo tienen → test. Aísla datos por modo en la API v1.
   livemode:           { type: Boolean, default: false },
+
+  // Métodos que el comercio permitió en la sesión (F5, API v1). Sin el campo:
+  // los disponibles (hoy solo tarjeta). `method` sigue siendo el método usado.
+  paymentMethods:     { type: [String], default: undefined },
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
   callbackUrl:        String,

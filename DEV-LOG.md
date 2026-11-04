@@ -1535,6 +1535,28 @@ Verificación F4: **512/512** (+7 `tests/integration/v1Livemode.test.js`), golde
 Pendiente aparte: filtro test/live en los listados de /admin y del portal (hoy no hay
 datos live: el flag está apagado).
 
+
+#### F5 — Métodos de pago (solo tarjeta disponible; el resto APAGADO)
+
+1. **Catálogo** (`src/services/paymentMethodService.js`): un método está disponible solo
+   si (a) un conector real lo declara, (b) el checkout sabe presentarlo
+   (`CHECKOUT_METHOD_UI`, hoy solo `card`) y (c) para Paylands, su flag está encendido.
+2. **API v1** (aditivo): `GET /v1/payment-methods` (catálogo con `available` y `reason`);
+   `paymentMethods` opcional en `POST /v1/checkout-sessions` (los pedidos ∩ disponibles;
+   ninguno → `422 payment_method_not_available` con el motivo de cada uno); la sesión
+   devuelve `paymentMethods` y el pago `paymentMethod`.
+3. **Paylands**: flags `FEATURE_PAYLANDS_BIZUM`, `FEATURE_PAYLANDS_APPLE_PAY`,
+   `FEATURE_PAYLANDS_GOOGLE_PAY` (APAGADOS). Encenderlos solo hace que el conector los
+   DECLARE; **no** se pueden cobrar porque no existe flujo de navegador ni llamada a
+   Paylands para ellos: **la doc de Paylands no se pudo consultar desde esta sesión y no
+   se ha inventado ningún endpoint ni campo**. Pendiente de verificar con PayNoPain:
+   endpoint/parámetros de Bizum, validación de comercio y dominio de Apple Pay, Google Pay;
+   y que Marcos tenga cada servicio activado en sandbox. Con eso, el trabajo restante es:
+   operación en el conector, módulo de navegador del método y añadirlo a
+   `CHECKOUT_METHOD_UI` (la pantalla de selección de F3 ya existe).
+
+Verificación F5: **517/517** (+5 `tests/unit/paymentMethods.test.js`).
+
 ---
 
 ## 7. Elementos de seguridad

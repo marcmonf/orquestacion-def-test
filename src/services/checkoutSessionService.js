@@ -83,6 +83,7 @@ function toCheckoutSession(tx, baseUrl, now = new Date()) {
     amount:        tx.amount,
     currency:      tx.currency,
     reference:     tx.merchantReference || null,
+    paymentMethods: tx.paymentMethods && tx.paymentMethods.length ? tx.paymentMethods : ['card'],
     url:           baseUrl ? `${baseUrl}${path}` : path,
     returnUrl:     tx.returnUrl || null,
     webhookUrl:    tx.callbackUrl || null,
@@ -102,6 +103,7 @@ async function toPayment(tx) {
     amount:         tx.amount,
     currency:       tx.currency,
     reference:      tx.merchantReference || null,
+    paymentMethod:  tx.method || 'card',
     capturedAmount,
     refundedAmount,
     card: tx.cardLast4 || tx.cardBrand ? {
@@ -182,6 +184,7 @@ async function createCheckoutSession(merchantId, input) {
     routing,
     connectorAccountId: routing.accountId,
     ...(livemode ? { livemode: true } : {}),
+    ...(Array.isArray(input.paymentMethods) && input.paymentMethods.length ? { paymentMethods: input.paymentMethods } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 

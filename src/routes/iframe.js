@@ -49,7 +49,8 @@ function paymentMethodsFor(tx) {
   const connector = (tx && tx.routing && tx.routing.connector) || registry.DEFAULT_CONNECTOR;
   let declared = ['card'];
   try { declared = registry.getProvider(connector).capabilities.paymentMethods; } catch (_) { /* conector ya no registrado */ }
-  const methods = declared.filter((m) => checkoutProviders.CHECKOUT_METHOD_UI.includes(m));
+  const allowed = Array.isArray(tx && tx.paymentMethods) && tx.paymentMethods.length ? tx.paymentMethods : null;
+  const methods = declared.filter((m) => checkoutProviders.CHECKOUT_METHOD_UI.includes(m) && (!allowed || allowed.includes(m)));
   return methods.length ? methods : ['card'];
 }
 

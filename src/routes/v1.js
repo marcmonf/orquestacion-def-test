@@ -34,6 +34,8 @@ const lifecycle = require('../services/paymentLifecycleService');
 const sessions  = require('../services/checkoutSessionService');
 const { MAX_PAYMENT_AMOUNT, RedirectUrl, WebhookUrl } = require('../dtos/paymentNodeDTOs');
 const { getSupportedCurrencies } = require('../utils/currencyConfig');
+const paymentMethods = require('../services/paymentMethodService');
+const { PAYMENT_METHODS } = require('../connectors/contract');
 const logger = require('../utils/logger');
 
 // Todas las rutas: límite por IP antes de autenticar, credencial, límite por merchant.
@@ -70,6 +72,9 @@ const createSchema = Joi.object({
   // País del comprador (ISO 3166-1 alfa-2). Opcional: lo usa el routing
   // multi-PSP (reglas country.in). Cambio aditivo (nov 2026).
   country:    Joi.string().trim().uppercase().pattern(/^[A-Z]{2}$/).allow(null, ''),
+  // Métodos que el comercio permite en esta sesión (F5, opcional). Por defecto,
+  // todos los disponibles. Hoy solo 'card' está disponible.
+  paymentMethods: Joi.array().items(Joi.string().valid(...PAYMENT_METHODS)).min(1).max(PAYMENT_METHODS.length).unique(),
 }).options({ stripUnknown: false, abortEarly: false });
 
 const amountSchema = Joi.object({
@@ -98,6 +103,21 @@ router.post('/checkout-sessions', async (req, res) => {
   const idem = idempotencyKeyOf(req, res);
   if (idem.error) return undefined;
 
+  // Métodos: los pedidos ∩ los disponibles. Ninguno → 422 con el motivo de cada uno.
+  let allowedMethods = null;
+  if (value.paymentMethods) {
+    const avail = paymentMethods.availableMethods();
+    const ok = value.paymentMethods.filter((m) => avail.includes(m));
+    if (!ok.length) {
+      const cat = paymentMethods.catalog();
+      return res.status(422).json({
+        success: false, error: 'payment_method_not_available',
+        details: value.paymentMethods.map((m) => ({ method: m, reason: (cat.find((c) => c.method === m) || {}).reason })),
+      });
+    }
+    allowedMethods = ok;
+  }
+
   try {
     const { tx, created } = await sessions.createCheckoutSession(req.merchantId, {
       amount:     value.amount,
@@ -107,6 +127,7 @@ router.post('/checkout-sessions', async (req, res) => {
       webhookUrl: value.webhookUrl || null,
       country:    value.country || null,
       livemode:   Boolean(req.livemode),
+      paymentMethods: allowedMethods,
       idempotencyKey: idem.key,
     });
     if (created) {
@@ -136,6 +157,12 @@ router.get('/checkout-sessions/:id', async (req, res) => {
     logger.error('V1_CHECKOUT_SESSION_GET_ERROR', { component: 'v1', data: { error: err.message } });
     return fail(res, 500, 'internal_error');
   }
+});
+
+// ── Métodos de pago (F5) ─────────────────────────────────────────────────────
+// Catálogo con disponibilidad real: hoy solo 'card'; el resto con su motivo.
+router.get('/payment-methods', (req, res) => {
+  return res.json({ object: 'list', data: paymentMethods.catalog() });
 });
 
 // ── Pagos ────────────────────────────────────────────────────────────────────
