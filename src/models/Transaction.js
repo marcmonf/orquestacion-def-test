@@ -51,6 +51,10 @@ const transactionSchema = new mongoose.Schema({
   // Cuenta del merchant en el PSP con la que se opera ('platform' = cuenta de
   // plataforma, variables de entorno). Ver connectorAccountService.
   connectorAccountId: { type: String, default: null },
+
+  // Modo (F4, estilo Stripe): false = test (sandbox), true = live. Los pagos
+  // anteriores no lo tienen → test. Aísla datos por modo en la API v1.
+  livemode:           { type: Boolean, default: false },
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
   callbackUrl:        String,

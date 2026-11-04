@@ -1510,6 +1510,31 @@ no envía nada. Cero errores de consola o de CSP, sin scroll horizontal. Suite *
 desplegar (runbook del cierre, prueba R1) — el cambio de `public/` solo se ha probado con
 Paylands simulado.
 
+
+#### F4 — Modo test / live estilo Stripe (live APAGADO)
+
+1. **Claves**: las nuevas llevan el modo en el secreto: `ms_test_…` (por defecto) y
+   `ms_live_…`. `MerchantApiKey.livemode`. **Las claves `ms_…` anteriores siguen
+   valiendo** y son modo test (el entorno de siempre, sandbox). Crear una clave live
+   (`POST /backoffice/merchants/:id/api-keys` con `{ "livemode": true }`) exige
+   `FEATURE_LIVEMODE=true` (si no, `409 livemode_not_enabled`), y una clave live existente
+   deja de autenticar si el flag se apaga (`403 livemode_not_enabled`, fail-closed).
+   La API antigua (`x-api-key` / HMAC) **solo acepta claves test**: live solo por `/v1`.
+2. **`livemode`** en sesiones y pagos de la API v1 y en los webhooks salientes
+   (`data.livemode`, aditivo). `Transaction.livemode` (sin el campo = test).
+3. **Aislamiento**: una clave test no ve, ni captura/devuelve/anula, pagos live y al revés
+   (404). La misma `Idempotency-Key` en test y en live no choca (en live se guarda con
+   prefijo `live:`).
+4. **Credenciales de PSP por modo**: `credentialsEnc.test` / `.live` de la cuenta (F2). El
+   routing usa las del modo del pago. **Paylands no tiene modo live activado**
+   (`capabilities.livemode=false`): con `PAYNOPAIN_ENV` global por despliegue, un pago
+   live hoy responde `422 no_connector_available`. Ver decisión pendiente sobre cómo
+   separar producción.
+
+Verificación F4: **512/512** (+7 `tests/integration/v1Livemode.test.js`), golden idéntico.
+Pendiente aparte: filtro test/live en los listados de /admin y del portal (hoy no hay
+datos live: el flag está apagado).
+
 ---
 
 ## 7. Elementos de seguridad

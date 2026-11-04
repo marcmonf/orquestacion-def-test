@@ -244,6 +244,7 @@ router.post('/paynopain', async (req, res) => {
             amount:            tx.amount,
             currency:          tx.currency,
             connectorUsed:     'payNoPain',
+            livemode:          Boolean(tx.livemode),   // aditivo (F4 multi-PSP)
             timestamp:         new Date().toISOString(),
           }
         }

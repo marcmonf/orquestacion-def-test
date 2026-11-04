@@ -682,11 +682,25 @@ router.get('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (
 router.post('/merchants/:merchantId/api-keys', requireRole('superadmin'), async (req, res) => {
   try {
     const { label = '' } = req.body || {};
+    // F4 (modo live estilo Stripe): { livemode: true } crea una clave ms_live_.
+    // Solo con FEATURE_LIVEMODE=true; si no → 409 livemode_not_enabled.
+    const livemode = (req.body || {}).livemode === true;
     // Solo para merchants que existen (antes se creaban keys para cualquier id).
     const exists = await Merchant.findOne({ merchantId: String(req.params.merchantId) }, { _id: 1 }).lean();
     if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
-    const result = await createApiKey(req.params.merchantId, String(label).slice(0, 100));
+    let result;
+    try {
+      result = livemode
+        ? await createApiKey(req.params.merchantId, String(label).slice(0, 100), { livemode: true })
+        : await createApiKey(req.params.merchantId, String(label).slice(0, 100));
+    } catch (e) {
+      if (e && e.code === 'livemode_not_enabled') {
+        return res.status(409).json({ success: false, error: 'livemode_not_enabled', message: 'El modo live está apagado (FEATURE_LIVEMODE).' });
+      }
+      throw e;
+    }
     return res.status(201).json({
+      livemode:     Boolean(result.livemode),
       success:      true,
       message:      'API key creada. Guarda rawKeyId y rawSecret — no se podrán recuperar después.',
       merchantId:   result.merchantId,

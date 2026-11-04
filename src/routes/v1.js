@@ -106,6 +106,7 @@ router.post('/checkout-sessions', async (req, res) => {
       returnUrl:  value.returnUrl || null,
       webhookUrl: value.webhookUrl || null,
       country:    value.country || null,
+      livemode:   Boolean(req.livemode),
       idempotencyKey: idem.key,
     });
     if (created) {
@@ -128,7 +129,7 @@ router.post('/checkout-sessions', async (req, res) => {
 
 router.get('/checkout-sessions/:id', async (req, res) => {
   try {
-    const tx = await sessions.findPayment(req.merchantId, req.params.id);
+    const tx = await sessions.findPayment(req.merchantId, req.params.id, req.livemode);
     if (!tx || !tx.hostedCheckoutId) return fail(res, 404, 'not_found');
     return res.json(sessions.toCheckoutSession(tx, sessions.resolveBaseUrl(req)));
   } catch (err) {
@@ -140,7 +141,7 @@ router.get('/checkout-sessions/:id', async (req, res) => {
 // ── Pagos ────────────────────────────────────────────────────────────────────
 router.get('/payments/:id', async (req, res) => {
   try {
-    const tx = await sessions.findPayment(req.merchantId, req.params.id);
+    const tx = await sessions.findPayment(req.merchantId, req.params.id, req.livemode);
     if (!tx) return fail(res, 404, 'not_found');
     return res.json(await sessions.toPayment(tx));
   } catch (err) {
@@ -181,6 +182,10 @@ function operation(type) {
     const paymentId = String(req.params.id || '');
 
     try {
+      // Aislamiento por modo ANTES de mover dinero: un pago de otro modo no existe.
+      if (!(await sessions.findPayment(req.merchantId, paymentId, req.livemode))) {
+        return fail(res, 404, 'not_found');
+      }
       const common = { paymentId, merchantId: req.merchantId, idempotencyKey, actor: 'merchant_api_v1' };
       const out =
         type === 'capture' ? await lifecycle.capture({ ...common, amount: value.amount })
@@ -191,7 +196,7 @@ function operation(type) {
         const e = lifecycleError(out);
         return fail(res, e.status, e.code, e.message);
       }
-      const tx = await sessions.findPayment(req.merchantId, paymentId);
+      const tx = await sessions.findPayment(req.merchantId, paymentId, req.livemode);
       return res.json(await sessions.toPayment(tx));
     } catch (err) {
       logger.error('V1_PAYMENT_OPERATION_ERROR', { component: 'v1', data: { type, paymentId, error: err.message } });

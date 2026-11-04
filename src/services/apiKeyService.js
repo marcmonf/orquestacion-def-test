@@ -4,6 +4,7 @@
 const crypto         = require('crypto');
 const MerchantApiKey = require('../models/MerchantApiKey');
 const logger         = require('../utils/logger');
+const flags          = require('../utils/featureFlags');
 
 // ─── Generación ───────────────────────────────────────────────────────────────
 
@@ -17,9 +18,11 @@ const logger         = require('../utils/logger');
  *
  * Devuelve: { keyId, keyIdHash, keyIdPrefix, secret, secretHash, secretPrefix }
  */
-function generateCredentials() {
+function generateCredentials(livemode = false) {
   const keyIdRaw    = 'mk_' + crypto.randomBytes(16).toString('hex');
-  const secretRaw   = 'ms_' + crypto.randomBytes(32).toString('hex');
+  // Desde F4 (nov 2026) el secreto lleva el modo, como Stripe: ms_test_ / ms_live_.
+  // Las claves antiguas ms_<hex> siguen valiendo (modo test).
+  const secretRaw   = (livemode ? 'ms_live_' : 'ms_test_') + crypto.randomBytes(32).toString('hex');
 
   return {
     keyId:        keyIdRaw,
@@ -41,8 +44,14 @@ function hashKey(raw) {
  * Crea un nuevo par de credenciales HMAC para un merchant.
  * Devuelve keyId y secret en claro UNA SOLA VEZ — no recuperables después.
  */
-async function createApiKey(merchantId, label = '') {
-  const creds = generateCredentials();
+async function createApiKey(merchantId, label = '', opts = {}) {
+  const livemode = opts.livemode === true;
+  if (livemode && !flags.livemode()) {
+    const e = new Error('livemode_not_enabled');
+    e.code = 'livemode_not_enabled';
+    throw e;
+  }
+  const creds = generateCredentials(livemode);
 
   const doc = await MerchantApiKey.create({
     merchantId,
@@ -53,6 +62,7 @@ async function createApiKey(merchantId, label = '') {
     secretPrefix: creds.secretPrefix,
     label,
     active: true,
+    livemode,
   });
 
   logger.info('apiKeyService: credenciales creadas', {
@@ -67,6 +77,7 @@ async function createApiKey(merchantId, label = '') {
     keyPrefix:    doc.keyPrefix,
     secretPrefix: doc.secretPrefix,
     label:        doc.label,
+    livemode:     Boolean(doc.livemode),
     // En claro solo aquí:
     rawKeyId:     creds.keyId,
     rawSecret:    creds.secret,
@@ -86,6 +97,7 @@ async function findActiveByKeyId(keyId, merchantId) {
     keyId,
     merchantId,
     active: { $ne: false }, // tolera legacy data donde 'active' no sea boolean estricto
+    livemode: { $ne: true }, // la API antigua es solo modo test
   }).lean();
 
   if (!doc) return null;
@@ -138,6 +150,7 @@ async function validateApiKey(rawKey, merchantId, ip = null) {
     merchantId,
     secretHash: hashKey(rawKey),
     active: { $ne: false }, // tolera legacy data donde 'active' no sea boolean estricto
+    livemode: { $ne: true }, // la API antigua es solo modo test: las claves live solo valen en /v1
   }).lean();
 
   if (!doc) return null;
@@ -164,7 +177,7 @@ async function authenticateSecret(rawSecret, ip = null) {
   if (!doc) return null;
   if (doc.expiresAt && new Date() > new Date(doc.expiresAt)) return null;
   touchLastUsed(doc._id, ip);
-  return { merchantId: doc.merchantId, keyId: doc.keyId };
+  return { merchantId: doc.merchantId, keyId: doc.keyId, livemode: Boolean(doc.livemode) };
 }
 
 /**

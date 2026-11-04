@@ -59,11 +59,24 @@ function iso(d) {
   return d ? new Date(d).toISOString() : null;
 }
 
+// Filtro de modo: test incluye los pagos antiguos sin el campo.
+function modeFilter(livemode) {
+  return livemode ? true : { $ne: true };
+}
+
+// La Idempotency-Key se guarda con prefijo en modo live para que una misma
+// clave usada en test y en live no choque en el índice único (merchantId+key).
+// En test se guarda tal cual (compatibilidad con lo ya guardado).
+function storedIdemKey(key, livemode) {
+  return key && livemode ? `live:${key}` : key;
+}
+
 function toCheckoutSession(tx, baseUrl, now = new Date()) {
   const path = `/hpp/${encodeURIComponent(tx.hostedCheckoutId)}`;
   return {
     id:            tx.paymentId,
     object:        'checkout_session',
+    livemode:      Boolean(tx.livemode),
     status:        sessionStatus(tx, now),
     result:        resultOf(tx.status),
     paymentStatus: tx.status,
@@ -83,6 +96,7 @@ async function toPayment(tx) {
   return {
     id:             tx.paymentId,
     object:         'payment',
+    livemode:       Boolean(tx.livemode),
     status:         tx.status,
     result:         resultOf(tx.status),
     amount:         tx.amount,
@@ -124,7 +138,9 @@ function sameRequest(tx, input) {
  * Devuelve { tx, created }.
  */
 async function createCheckoutSession(merchantId, input) {
-  const { amount, currency, reference = null, returnUrl = null, webhookUrl = null, idempotencyKey = null } = input;
+  const { amount, currency, reference = null, returnUrl = null, webhookUrl = null } = input;
+  const livemode = Boolean(input.livemode);
+  const idempotencyKey = storedIdemKey(input.idempotencyKey || null, livemode);
 
   if (idempotencyKey) {
     const prior = await Transaction.findOne({ merchantId, idempotencyKey }).lean();
@@ -165,6 +181,7 @@ async function createCheckoutSession(merchantId, input) {
     sessionExpiresAt: computeSessionExpiry(now),
     routing,
     connectorAccountId: routing.accountId,
+    ...(livemode ? { livemode: true } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 
@@ -184,9 +201,12 @@ async function createCheckoutSession(merchantId, input) {
   }
 }
 
-async function findPayment(merchantId, paymentId) {
+async function findPayment(merchantId, paymentId, livemode = false) {
   if (!paymentId || typeof paymentId !== 'string' || paymentId.length > 64) return null;
-  return Transaction.findOne({ paymentId, merchantId }).lean();
+  const tx = await Transaction.findOne({ paymentId, merchantId }).lean();
+  // Aislamiento por modo: una clave test no ve pagos live y al revés.
+  if (!tx || Boolean(tx.livemode) !== Boolean(livemode)) return null;
+  return tx;
 }
 
 module.exports = {
@@ -198,4 +218,5 @@ module.exports = {
   toPayment,
   createCheckoutSession,
   findPayment,
+  modeFilter,
 };

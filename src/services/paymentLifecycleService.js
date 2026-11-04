@@ -147,6 +147,7 @@ async function sendLifecycleWebhook(tx, event, extra) {
           amount:            tx.amount,
           currency:          tx.currency,
           connectorUsed:     tx.processor || 'unknown',
+          livemode:          Boolean(tx.livemode),   // aditivo (F4 multi-PSP)
           reasonCode:        null,
           timestamp:         new Date().toISOString(),
           cardInfo: {

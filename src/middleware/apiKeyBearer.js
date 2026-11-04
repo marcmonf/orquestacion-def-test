@@ -12,6 +12,7 @@
 
 const { authenticateSecret } = require('../services/apiKeyService');
 const { merchantIsSuspended } = require('./hmacAuth');
+const flags = require('../utils/featureFlags');
 
 function fail(res, status, error, message) {
   return res.status(status).json({ success: false, error, message });
@@ -30,12 +31,18 @@ module.exports = async function apiKeyBearer(req, res, next) {
   try {
     const auth = await authenticateSecret(secret, req.ip || null);
     if (!auth) return fail(res, 401, 'unauthorized', 'API key no válida o revocada.');
+    // Clave live con el modo live apagado → no autentica (fail-closed).
+    if (auth.livemode && !flags.livemode()) {
+      return fail(res, 403, 'livemode_not_enabled', 'El modo live no está activado en Monetiser.');
+    }
     if (await merchantIsSuspended(auth.merchantId)) {
       return fail(res, 403, 'merchant_suspended', 'El comercio está suspendido.');
     }
     req.merchantId = auth.merchantId;
     req.authKeyId  = auth.keyId;
     req.authMethod = 'bearer_v1';
+    // Modo de la clave: aísla los datos (una clave test no ve pagos live y al revés).
+    req.livemode   = Boolean(auth.livemode);
     return next();
   } catch (err) {
     console.error('❌ [apiKeyBearer]', err && err.message);
