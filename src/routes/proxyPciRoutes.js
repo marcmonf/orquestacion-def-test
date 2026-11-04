@@ -37,7 +37,12 @@ const router     = express.Router({ mergeParams: true });
 const rateLimiter = require('../middleware/rateLimiterCheckout');
 const Transaction = require('../models/Transaction');
 const pciProxy    = require('../services/pciProxyService');
-const { chargeWithToken } = require('../connectors/paynopain/payNoPainConnector');
+// Cobro a través del CONTRATO de conector (framework multi-PSP, nov 2026). Este
+// router es el backend del proveedor de campos 'paylands_proxyfields': el token
+// lo emite el Proxy PCI de Paylands, así que el cobro va siempre a Paylands.
+// El cable no cambia (tests/golden/paylandsWire.test.js).
+const { getProvider } = require('../services/connectorRegistry');
+const PAYLANDS = 'payNoPain';
 const { resultPath } = require('../utils/checkoutResult');
 const logger      = require('../utils/logger');
 
@@ -198,16 +203,24 @@ router.post('/charge', rateLimiter, async (req, res) => {
 
     // Paso 2: Cobrar directamente en Paylands con el token PCI
     chargeStarted = true;
-    const chargeResult = await chargeWithToken({
+    const payment = await getProvider(PAYLANDS).createPayment({
       paymentId:   tx.paymentId,
       merchantId:  tx.merchantId,
       amount:      tx.amount,
       currency:    tx.currency,
-      cardToken:   tokenResult.token,
+      sourceToken: tokenResult.token,
       expiryMonth: expiryMonth || tokenResult.expiryMonth,
       expiryYear:  expiryYear  || tokenResult.expiryYear,
       cardHolder:  cardHolder  || tokenResult.holder || 'Cardholder',
     });
+    // Resultado normalizado del contrato → la forma que este router ya usaba.
+    const chargeResult = {
+      success:            payment.status === 'authorized',
+      requires3DS:        payment.status === 'requires_action',
+      threeDsUrl:         payment.action ? payment.action.url : null,
+      processorReference: payment.processorReference || null,
+      error:              payment.status === 'error' ? (payment.error && payment.error.code) || 'error' : null,
+    };
 
     const meta = cardMetadata(tokenResult);
 
@@ -219,7 +232,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
         { $set: {
           status:             'pending_3ds',
           processorReference: chargeResult.processorReference || null,
-          processor:          'payNoPain',
+          processor:          PAYLANDS,
           updatedAt:          new Date(),
           ...meta,
         } }
@@ -251,7 +264,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
       { $set: {
         status:             finalStatus,
         processorReference: chargeResult.processorReference || null,
-        processor:          'payNoPain',
+        processor:          PAYLANDS,
         updatedAt:          new Date(),
         ...meta,
       } }

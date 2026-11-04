@@ -18,7 +18,6 @@
  */
 
 const express  = require('express');
-const crypto   = require('crypto');
 const router   = express.Router();
 
 const Transaction  = require('../models/Transaction');
@@ -28,77 +27,10 @@ const logger       = require('../utils/logger');
 const adminAuth    = require('../middleware/adminAuth');
 const { ACQUIRER_TRANSITIONS } = require('../utils/paymentStatus');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Verificación del validation_hash de Paylands
-//
-//   validation_hash = SHA-256( JSON({ order, client [, extra_data] }) + PAYNOPAIN_SIGNATURE )
-//
-// OJO: extra_data entra en el hash SOLO si viene en el body. Incluirlo como null
-// hacía que el hash no cuadrase NUNCA — bug real, ver DEV-LOG §4.
-//
-// Serialización: el contrato verificado contra Paylands real es JSON.stringify
-// (variante 1, sin cambios). Se acepta ADEMÁS la serialización por defecto de
-// PHP json_encode (variante 2: "/" como "\/" y no-ASCII como \uXXXX), porque es
-// la que produciría Paylands si un campo lleva una URL o una tilde (p. ej. el
-// titular "José Pérez"). Con solo la variante 1, ese pago quedaba colgado para
-// siempre. Aceptar la variante 2 no debilita nada: sigue haciendo falta conocer
-// PAYNOPAIN_SIGNATURE para producir cualquiera de los dos hashes.
-// ─────────────────────────────────────────────────────────────────────────────
-function phpJsonEncode(value) {
-  return JSON.stringify(value)
-    .replace(/\//g, '\\/')
-    .replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
-}
-
-function sha256Hex(s) {
-  return crypto.createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-function timingSafeEqualHex(a, b) {
-  const A = Buffer.from(String(a), 'utf8');
-  const B = Buffer.from(String(b), 'utf8');
-  return A.length === B.length && crypto.timingSafeEqual(A, B);
-}
-
-function verifyPaylandsHash(body, signatureKey) {
-  const receivedHash = String(body.validation_hash || '');
-  if (!receivedHash) return false;
-
-  const hashObj = { order: body.order || null, client: body.client || null };
-  if (body.extra_data !== undefined) hashObj.extra_data = body.extra_data;
-
-  const candidates = [JSON.stringify(hashObj), phpJsonEncode(hashObj)];
-  let ok = false;
-  for (const c of candidates) {
-    // Sin cortocircuito: se comparan siempre todas las variantes.
-    if (timingSafeEqualHex(sha256Hex(c + signatureKey), receivedHash)) ok = true;
-  }
-  return ok;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mapa de estados Paylands → Monetiser. Verificado contra docs.paylands.com.
-// OJO con el ciclo DEFERRED: una orden DEFERRED autorizada correctamente NO
-// devuelve SUCCESS (eso es AUTHORIZATION, que mueve el dinero al instante),
-// sino PENDING_CONFIRMATION — el saldo está retenido esperando confirmation
-// (capture) o cancellation (cancel). Para Monetiser eso ES 'authorized'.
-// ─────────────────────────────────────────────────────────────────────────────
-const STATUS_MAP = {
-  'success':               'authorized',
-  'paid':                  'authorized',
-  'confirmed':             'authorized',
-  'pending_confirmation':  'authorized',   // ← DEFERRED autorizado, saldo retenido
-  'refused':               'declined',
-  'error':                 'declined',
-  'expired':               'declined',
-  'fraud':                 'declined',
-  'blacklisted':           'declined',
-  'cancelled':             'cancelled',
-  'user_cancelled':        'cancelled',
-  'pending':               'pending',
-  'refunded':              'refunded',
-  'partially_refunded':    'partially_refunded',
-};
+// Verificación del validation_hash y mapa de estados de Paylands: viven en el
+// conector (src/connectors/paylands/webhook.js) desde el framework multi-PSP
+// (nov 2026). Mismo código, movido sin cambios.
+const { verifyPaylandsHash, phpJsonEncode, STATUS_MAP } = require('../connectors/paylands/webhook');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /webhooks/paynopain

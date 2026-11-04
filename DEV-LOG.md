@@ -1343,6 +1343,74 @@ routing del portal conectado al flujo real, conector #2, fijar el origen exacto 
 aviso `postMessage` usando `monetiser.js`. `RETURNMAC` (respuesta del alta del Hosted
 Checkout de la API antigua) no se usa en ningún sitio: la API v1 no lo incluye.
 
+
+### Sesión 4 nov 2026 — framework de orquestación multi-PSP
+
+**Contexto.** Marcos pidió convertir Monetiser de pasarela de un solo PSP (Paylands) en
+un framework multi-PSP listo para enchufar el segundo adquirente sin tocar el núcleo.
+Marcos NO estaba disponible: cada duda se resolvió con la opción más conservadora y se
+apunta abajo como **DECISIÓN PENDIENTE DE MARCOS**. Rama de trabajo:
+`claude/monetiser-multi-psp-framework-3dlfch` (la que el entorno de esta sesión tiene
+autorizada para push; Marcos pidió `claude/framework-multipsp` — ver decisiones
+pendientes). **Nada desplegado** (Render es manual).
+
+**Aviso sobre la documentación de Paylands:** desde el contenedor de esta sesión
+`docs.paylands.com` **no era accesible** (la política de red lo bloquea). Por eso NO se
+ha añadido ningún endpoint ni campo nuevo de Paylands: solo se reutiliza lo ya
+verificado en sesiones anteriores (citado en el código con
+`https://docs.paylands.com/en/reference`). Todo lo demás (Bizum, Apple Pay, Google Pay,
+tarjeta guardada, MIT, consulta de orden, credenciales por merchant) queda detrás de
+flags APAGADOS y "pendiente de verificar con PayNoPain".
+
+Línea base al empezar: **416/416** y arranque limpio.
+
+#### F0 — Inventario de lo que ya existía para multi-adquirente
+
+| Pieza | Estado al empezar | Qué se hizo |
+|---|---|---|
+| `src/services/connectorRegistry.js` | Registro con `payNoPain` y `dummyCard` (solo dev/test), interfaz legada `authorize/capture/void/refund`. | Se mantiene la interfaz legada (la usan paymentService y paymentLifecycleService) y se añade la vista por **contrato** (`getProvider`, `listProviders`, `registerProvider` solo en tests). |
+| `src/connectors/paynopain/payNoPainConnector.js` | Cliente de bajo nivel de Paylands, credenciales de plataforma leídas al cargar. `createOrder`/`createOrder3DS` sin uso. | **No se toca su cable.** Lo envuelve `src/connectors/paylands/index.js`. |
+| `src/routes/proxyPciRoutes.js` | El cobro del checkout llamaba a `chargeWithToken` **directamente**, sin pasar por routing. | Cobra vía `getProvider('payNoPain').createPayment` (mismo cable). |
+| `src/services/paymentService.js` + `src/rules/ruleEngineV2.js` | Solo el S2S pasaba por el motor de reglas (`MerchantRules.policy`). El checkout no. | El routing del checkout se construye sobre el mismo motor (F2). |
+| `src/models/Acquirer.js`, `MerchantAcquirer.js`, `MerchantRoutingRule.js`, `acquirerService.js`, `costService.js` | Catálogo, fichas de adquirente por merchant con pricing ICH++ y BIN routing ESTÁTICO del portal (M7 B2). No se aplicaba al pago vivo. | `MerchantAcquirer` se reutiliza como "cuenta del merchant en un PSP" (F2): se le añaden credenciales cifradas por modo. |
+| `src/orchestrator/metrics/metricsService.js` | Métricas en memoria; solo las alimentaba `dummyCard`. | La salud por conector (circuit breaker) va aparte, en `connectorHealth.js` (F2). |
+| `src/utils/cryptoUtils.js` | AES-256-GCM; `decryptAesGcm` bloqueado salvo `ALLOW_PAN_DECRYPT`. | Funciones nuevas para credenciales con otro contexto AAD (F2). |
+| Checkout atado a ProxyFields | `public/iframe.html` cargaba ProxyFields a pelo; CSP del iFrame con dominios de Paylands. | Proveedor de campos elegido por el conector enrutado (F3). |
+
+#### F1 — Contrato de conector PSP-agnóstico
+
+1. **Primero, congelar el cable** (`7ea6965`): `tests/golden/paylandsWire.test.js` captura
+   host, ruta, método, cabeceras y cuerpo EXACTOS de cada petición a Paylands y al Proxy
+   PCI con el código de `main` (sesión+cobro del checkout, capture total/parcial, cancel,
+   refund total/parcial, S2S) y los guarda en `paylandsWire.golden.json`. Escrito ANTES de
+   refactorizar; sigue pasando idéntico tras todos los cambios.
+2. **Contrato** `src/connectors/contract.js`: capacidades declaradas (métodos, divisas,
+   países, captura diferida/parcial, cancel, refund parcial, 3DS, tokenización, tarjeta
+   guardada, MIT, consulta, webhooks, credenciales por cuenta, live, proveedor de campos
+   del checkout, campos de credencial) y operaciones (`createPayment`, `capture`,
+   `cancel`, `refund`, `retrieve`, `verifyWebhook`, `parseWebhook`, `mapStatus`,
+   `normalizeError`). `defineConnector` valida al arrancar y rellena lo no implementado
+   con `not_supported`.
+3. **Taxonomía de errores** `src/connectors/errors.js` (card_declined, fraud_suspected,
+   configuration_error, conflict, rate_limited, processor_unavailable, timeout…). Un
+   timeout es resultado desconocido y nunca "rechazo".
+4. **Paylands detrás del contrato** `src/connectors/paylands/` (index + webhook): capa de
+   traducción sobre el cliente de bajo nivel, sin cambiar el cable. La verificación del
+   `validation_hash` y el mapa de estados se movieron sin cambios desde
+   `routes/webhooks.js`. Solo `card` + `EUR` declarados.
+5. **Suite de contrato** `tests/contract/connectorContract.js`: la pasan Paylands,
+   `dummyCard` y el **conector de prueba "B"** (`tests/helpers/testConnectorB.js`, existe
+   solo en tests; no imita a ningún PSP real). B se registra y el servicio REAL de ciclo
+   de vida lo usa sin cambios.
+6. **Guía** `docs/conectores.md`: cómo añadir un PSP paso a paso.
+
+Hallazgo: cuando Paylands responde con su propio `message` (p. ej. `Conflict` en el 409
+de refund sin captura), el cliente de bajo nivel pierde el código HTTP. El conector
+clasifica por la frase estándar; los códigos de error propios de Paylands están
+**pendientes de verificar con PayNoPain** (lo no reconocido sale `unknown`).
+
+Verificación F1: **478/478** (+62), arranque real sin avisos de montaje.
+
 ---
 
 ## 7. Elementos de seguridad
