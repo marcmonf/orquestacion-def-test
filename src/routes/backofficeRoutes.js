@@ -1202,17 +1202,40 @@ function totpError(res, err) {
   console.error('❌ [backoffice/2fa]', err && err.message);
   return res.status(500).json({ success: false, error: 'internal_error' });
 }
+// Límite POR USUARIO en las rutas que comprueban códigos o contraseña (revisión
+// 5 nov, M4): 10 intentos / 15 min. Antes solo el límite global por IP.
+const rateLimit = require('express-rate-limit');
+const twoFactorLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RL_2FA_MAX) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `2fa:${req.backofficeUser && req.backofficeUser.userId}`,
+  message: { success: false, error: 'too_many_attempts' },
+});
+const { signBackofficeToken } = require('../middleware/backofficeAuth');
+// Token nuevo para la sesión que hace el cambio (las demás quedan cerradas).
+function freshToken(req, tokenVersion) {
+  const u = req.backofficeUser;
+  return signBackofficeToken({ userId: u.userId, email: u.email, name: u.name, role: u.role, merchantScope: u.merchantScope, tv: tokenVersion || 0 });
+}
 router.get('/2fa', async (req, res) => {
   try { return res.json({ success: true, ...(await totpService.status(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/setup', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/setup', twoFactorLimiter, async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId, (req.body || {}).password)) }); } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/enable', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/enable', twoFactorLimiter, async (req, res) => {
+  try {
+    const { enabled, tokenVersion } = await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''));
+    return res.json({ success: true, enabled, token: freshToken(req, tokenVersion) });
+  } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/disable', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/disable', twoFactorLimiter, async (req, res) => {
+  try {
+    const { enabled, tokenVersion } = await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''), (req.body || {}).password);
+    return res.json({ success: true, enabled, token: freshToken(req, tokenVersion) });
+  } catch (err) { return totpError(res, err); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

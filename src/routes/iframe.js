@@ -33,6 +33,7 @@ const ALLOWED_INITIAL_STATUSES = ['initialized', 'hosted_pending'];
 const checkoutProviders = require('../utils/checkoutProviders');
 const registry = require('../services/connectorRegistry');
 const paymentTokens = require('../services/paymentTokenService');
+const nodeCrypto = require('crypto');
 const CSP_HEADER = checkoutProviders.buildCsp(checkoutProviders.PROVIDERS[checkoutProviders.DEFAULT_FIELDS_PROVIDER]);
 const { pciClientUrl } = checkoutProviders;
 
@@ -80,6 +81,7 @@ function injectRuntime(html, branding, runtime) {
     // F6 (FEATURE_SAVED_CARDS): casilla de consentimiento para guardar la tarjeta.
     saveCardOffered: rt.saveCardOffered === true,
     saveCardText: rt.saveCardOffered === true ? paymentTokens.CONSENT_TEXT : undefined,
+    saveCardNonce: rt.saveCardOffered === true && rt.saveCardNonce ? rt.saveCardNonce : undefined,
     branding: {
       logoUrl:      safeLogoUrl(b.logoUrl),
       brandColor:   safeColor(b.brandColor, '#0070f3'),
@@ -150,6 +152,14 @@ router.get('/', async (req, res) => {
       { name: 1, logoUrl: 1, brandColor: 1, accentColor: 1, branding: 1, _id: 0 }
     ).lean();
 
+    // F6 (tarjeta guardada): nonce de consentimiento ligado a ESTE iFrame
+    // firmado. Solo se guarda su hash.
+    let saveCardNonce = null;
+    if (paymentTokens.enabled() && tx.saveCardOffer && tx.saveCardOffer.customerRef) {
+      saveCardNonce = nodeCrypto.randomBytes(16).toString('hex');
+      tx.saveCardNonceHash = nodeCrypto.createHash('sha256').update(saveCardNonce).digest('hex');
+    }
+
     tx.iframeServedAt = new Date();
     tx.iframeClientIp  = req.ip || null;
     tx.iframeUserAgent = String(req.headers['user-agent'] || '').slice(0, 512) || null;
@@ -174,7 +184,8 @@ router.get('/', async (req, res) => {
       paymentId:  tx.paymentId,
       fieldsProvider: provider,
       paymentMethods: paymentMethodsFor(tx),
-      saveCardOffered: paymentTokens.enabled() && Boolean(tx.saveCardOffer && tx.saveCardOffer.customerRef),
+      saveCardOffered: Boolean(saveCardNonce),
+      saveCardNonce,
     };
 
     const baseHtml = readHtml(publicFile('iframe.html'));

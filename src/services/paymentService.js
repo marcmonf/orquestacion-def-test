@@ -14,6 +14,7 @@ const PaymentAttempt = require('../models/PaymentAttempt');
 const MerchantRules  = require('../models/MerchantRules');
 const { getConnector, DEFAULT_CONNECTOR } = require('./connectorRegistry');
 const { evaluate }   = require('../rules/ruleEngineV2');
+const accounts       = require('./connectorAccountService');
 
 const MAX_RETRIES_PER_CONNECTOR = 2;   // reintentos ante soft decline
 const CONNECTOR_TIMEOUT_MS      = 7000;
@@ -88,6 +89,17 @@ async function processCardPayment(paymentData) {
     } catch (e) {
       // Si el conector no está registrado, saltamos al siguiente
       console.warn(`[paymentService] Conector '${connectorName}' no registrado, saltando.`);
+      continue;
+    }
+
+    // La API antigua (S2S) es solo modo TEST: nunca contra un entorno real del
+    // PSP (revisión 5 nov, H1). Si este despliegue apunta a producción, no hay
+    // conector para ella.
+    const registry = require('./connectorRegistry');
+    const known = typeof registry.hasProvider === 'function' && registry.hasProvider(connectorName);
+    const modeOk = !known || await accounts.resolveContext({ merchantId: paymentData.merchantId, connector: connectorName, livemode: false }).catch(() => null);
+    if (!modeOk) {
+      console.warn(`[paymentService] Conector '${connectorName}' no disponible en modo test, saltando.`);
       continue;
     }
 

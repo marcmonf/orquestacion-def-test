@@ -22,6 +22,24 @@ const flags = require('../utils/featureFlags');
 
 function required() { return flags.on('BACKOFFICE_2FA_REQUIRED'); }
 
+let bcrypt = null;
+try { bcrypt = require('bcryptjs'); } catch (_) { bcrypt = null; }
+
+// Revisión 5 nov (M4): activar/desactivar la 2FA exige la CONTRASEÑA además de
+// la sesión (un token robado no basta para poner la 2FA del atacante ni quitarla).
+async function checkPassword(user, password) {
+  if (!bcrypt || !user || !user.passwordHash || typeof password !== 'string' || !password) return false;
+  return bcrypt.compare(password, user.passwordHash);
+}
+
+// Activar o desactivar la 2FA cierra TODAS las demás sesiones del usuario
+// (sube tokenVersion); quien hace el cambio recibe un token nuevo.
+async function bumpSessions(userId) {
+  await BackofficeUser.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
+  const u = await BackofficeUser.findOne({ _id: userId }).lean();
+  return u ? Number(u.tokenVersion) || 0 : null;
+}
+
 function fail(code, httpStatus, message) {
   const e = new Error(message || code); e.code = code; e.httpStatus = httpStatus; return e;
 }
@@ -32,9 +50,10 @@ async function status(userId) {
   return { enabled: Boolean(u.totp && u.totp.enabled), pending: Boolean(u.totp && u.totp.pendingSecretEnc), required: required() && u.role === 'superadmin' };
 }
 
-async function setup(userId) {
+async function setup(userId, password) {
   const u = await BackofficeUser.findOne({ _id: userId }).lean();
   if (!u) throw fail('not_found', 404);
+  if (!(await checkPassword(u, password))) throw fail('invalid_password', 400);
   if (u.totp && u.totp.enabled) throw fail('two_factor_already_enabled', 409);
   const secret = totp.generateSecret();
   let enc;
@@ -52,7 +71,7 @@ async function enable(userId, code) {
     'totp.enabled': true, 'totp.secretEnc': u.totp.pendingSecretEnc, 'totp.pendingSecretEnc': null,
     'totp.lastUsedStep': step, 'totp.enabledAt': new Date(),
   } });
-  return { enabled: true };
+  return { enabled: true, tokenVersion: await bumpSessions(userId) };
 }
 
 // Comprueba un código de un usuario con 2FA activa y lo "gasta" (anti-replay).
@@ -69,12 +88,13 @@ async function checkAndConsume(user, code) {
   return Boolean(r && (r.modifiedCount === 1 || r.matchedCount === 1));
 }
 
-async function disable(userId, code) {
+async function disable(userId, code, password) {
   const u = await BackofficeUser.findOne({ _id: userId }).lean();
   if (!u || !u.totp || !u.totp.enabled) throw fail('two_factor_not_enabled', 409);
+  if (!(await checkPassword(u, password))) throw fail('invalid_password', 400);
   if (!(await checkAndConsume(u, code))) throw fail('invalid_totp', 400);
   await BackofficeUser.updateOne({ _id: userId }, { $set: { 'totp.enabled': false, 'totp.secretEnc': null, 'totp.pendingSecretEnc': null, 'totp.enabledAt': null } });
-  return { enabled: false };
+  return { enabled: false, tokenVersion: await bumpSessions(userId) };
 }
 
 async function resetByEmail(email) {

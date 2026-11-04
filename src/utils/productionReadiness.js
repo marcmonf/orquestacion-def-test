@@ -16,6 +16,8 @@ function env(k) { return process.env[k]; }
 function isTrue(k) { return ['true', '1'].includes(String(env(k) || '').trim().toLowerCase()); }
 
 const CHECKS = [
+  { var: 'MONETISER_ENV', severity: 'blocker', ok: () => require('./environment').isProduction() && require('./environment').mismatches().length === 0, fix: "'production' en el despliegue de producción (y 'sandbox' en el de pruebas). Debe casar con PAYNOPAIN_ENV y con una MONGO_URI propia." },
+  { var: 'ALERT_EMAILS + SMTP_*', severity: 'recommended', ok: () => Boolean(process.env.ALERT_EMAILS && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS), fix: 'Destinatarios de alertas (circuit breaker, webhooks atascados, errores del adquirente) y el SMTP de Workspace.' },
   { var: 'PAYNOPAIN_ENV', severity: 'blocker', ok: () => env('PAYNOPAIN_ENV') === 'production', fix: "Poner 'production' SOLO cuando PayNoPain entregue las credenciales reales." },
   { var: 'PAYNOPAIN_API_KEY / PAYNOPAIN_SIGNATURE / PAYNOPAIN_SERVICE_UUID', severity: 'blocker', ok: () => Boolean(env('PAYNOPAIN_API_KEY') && env('PAYNOPAIN_SIGNATURE') && env('PAYNOPAIN_SERVICE_UUID')), fix: 'Las de la cuenta REAL de Paylands (no las de sandbox).' },
   { var: 'PAYNOPAIN_PCI_CLIENT_URL', severity: 'blocker', ok: () => Boolean(env('PAYNOPAIN_PCI_CLIENT_URL')), fix: 'URL de ProxyFields de producción CONFIRMADA por Paylands (el valor por defecto es una suposición).' },
@@ -31,7 +33,11 @@ const CHECKS = [
   { var: 'WEBHOOK_SECRET', severity: 'recommended', ok: () => String(env('WEBHOOK_SECRET') || '').length >= 32, fix: 'Secreto de respaldo para firmar webhooks de merchants sin secreto propio.' },
   { var: 'ALLOWED_ORIGINS', severity: 'recommended', ok: () => Boolean(env('ALLOWED_ORIGINS')), fix: 'Orígenes del panel/portal, separados por coma.' },
   { var: 'DOCS_ENABLED', severity: 'recommended', ok: () => true, fix: "Decidir si /docs queda pública ('false' para ocultarla)." },
-  { var: 'FEATURE_LIVEMODE / FEATURE_SAVED_CARDS / FEATURE_PAYLANDS_*', severity: 'info', ok: () => !isTrue('FEATURE_SAVED_CARDS') && !isTrue('FEATURE_PAYLANDS_BIZUM') && !isTrue('FEATURE_PAYLANDS_APPLE_PAY') && !isTrue('FEATURE_PAYLANDS_GOOGLE_PAY'), fix: 'Apagados hasta verificarlos con PayNoPain (DEV-LOG sesión 4 nov 2026).' },
+  // Revisión 5 nov (H1): con Paylands en producción solo se cobra en modo LIVE
+  // (claves ms_live_ por /v1). Las claves de pruebas y la API antigua dejan de
+  // cobrar en ese despliegue.
+  { var: 'FEATURE_LIVEMODE', severity: 'blocker', ok: () => isTrue('FEATURE_LIVEMODE'), fix: "'true' en el despliegue de producción y crear claves ms_live_ (/admin → API Keys). En producción las claves de pruebas y la API antigua no cobran." },
+  { var: 'FEATURE_SAVED_CARDS / FEATURE_PAYLANDS_*', severity: 'info', ok: () => !isTrue('FEATURE_SAVED_CARDS') && !isTrue('FEATURE_PAYLANDS_BIZUM') && !isTrue('FEATURE_PAYLANDS_APPLE_PAY') && !isTrue('FEATURE_PAYLANDS_GOOGLE_PAY'), fix: 'Apagados hasta verificarlos con PayNoPain (DEV-LOG sesión 4 nov 2026).' },
 ];
 
 function evaluate() {

@@ -89,7 +89,12 @@ describe('Encendido (FEATURE_SAVED_CARDS=true)', () => {
     const s = await request(app()).post('/v1/checkout-sessions').set(bearer(KEY_A)).send({ amount: 1000, currency: 'EUR', saveCard: { customerRef: 'cli-1' } });
     expect(s.status).toBe(201);
     expect(s.body.saveCard).toEqual({ customerRef: 'cli-1' });
-    const c = await request(app()).post('/A/proxy-pci/charge').send(consent ? { paymentId: s.body.id, saveCard: true } : { paymentId: s.body.id });
+    // El iFrame firmado emite un nonce de consentimiento al pintarse (revisión 5 nov, M5).
+    const tx = Transaction.__store.find((t) => t.paymentId === s.body.id);
+    tx.saveCardNonceHash = crypto.createHash('sha256').update('nonce-del-iframe').digest('hex');
+    const body = consent === 'no-nonce' ? { paymentId: s.body.id, saveCard: true }
+      : consent ? { paymentId: s.body.id, saveCard: true, saveCardNonce: 'nonce-del-iframe' } : { paymentId: s.body.id };
+    const c = await request(app()).post('/A/proxy-pci/charge').send(body);
     expect(c.body.requires3DS).toBe(true);
     return s.body.id;
   }
@@ -98,6 +103,11 @@ describe('Encendido (FEATURE_SAVED_CARDS=true)', () => {
     await firstPayment({ consent: false });
     expect(PaymentToken.__store.length).toBe(0);
     expect(sent[0].body.save_card).toBe(false);
+  });
+
+  test('saveCard sin el nonce del iFrame (p. ej. llamada directa del comercio) → no se guarda nada', async () => {
+    await firstPayment({ consent: 'no-nonce' });
+    expect(PaymentToken.__store.length).toBe(0);
   });
 
   test('con consentimiento: token pm_ pendiente, token del PSP CIFRADO, activo al confirmarse el pago', async () => {
@@ -136,6 +146,26 @@ describe('Encendido (FEATURE_SAVED_CARDS=true)', () => {
     expect(sent[0].body).toMatchObject({ operative: 'DEFERRED', secure: true, source_uuid: 'PROXY-CARD-UUID-SECRET', amount: 500 });
     const tx = Transaction.__store.find((t) => t.paymentId === r.body.id);
     expect(tx).toMatchObject({ initiator: 'customer', storedCredential: { usage: 'subsequent', tokenId }, processor: 'payNoPain', processorReference: 'OU-SC' });
+  });
+
+  test('M3 (revisión 5 nov): idempotencia del cobro con token — mismo cuerpo = mismo pago; otro cuerpo = 409', async () => {
+    const pid = await firstPayment({ consent: true });
+    await tokens.activateForPayment(pid);
+    const tokenId = PaymentToken.__store[0].tokenId;
+    const h = { ...bearer(KEY_A), 'Idempotency-Key': 'cobro-token-0001' };
+    const a = await request(app()).post('/v1/payments').set(h).send({ amount: 500, currency: 'EUR', paymentToken: tokenId, initiator: 'customer' });
+    expect(a.status).toBe(201);
+    const b = await request(app()).post('/v1/payments').set(h).send({ amount: 500, currency: 'EUR', paymentToken: tokenId, initiator: 'customer' });
+    expect(b.status).toBe(200);
+    expect(b.body.id).toBe(a.body.id);
+    const c = await request(app()).post('/v1/payments').set(h).send({ amount: 999, currency: 'EUR', paymentToken: tokenId, initiator: 'customer' });
+    expect(c.status).toBe(409);
+    expect(sent.filter((x) => x.path === '/v1/sandbox/payment')).toHaveLength(2); // primer pago + UN cobro con token
+    // Una clave usada para crear una SESIÓN no devuelve esa sesión como "pago".
+    const s2 = await request(app()).post('/v1/checkout-sessions').set({ ...bearer(KEY_A), 'Idempotency-Key': 'clave-sesion-01' }).send({ amount: 500, currency: 'EUR' });
+    expect(s2.status).toBe(201);
+    const d = await request(app()).post('/v1/payments').set({ ...bearer(KEY_A), 'Idempotency-Key': 'clave-sesion-01' }).send({ amount: 500, currency: 'EUR', paymentToken: tokenId, initiator: 'customer' });
+    expect(d.status).toBe(409);
   });
 
   test('cobro sin el cliente delante (MIT) → 422: Paylands no tiene verificados sus indicadores', async () => {

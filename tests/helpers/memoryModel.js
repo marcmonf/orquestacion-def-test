@@ -133,9 +133,18 @@ module.exports = function makeMemoryModel(opts = {}) {
     //   - `await Model.findOne(q)`      → doc REAL (con .save())
     //   - `await Model.findOne(q).lean()` → copia plana (solo lectura)
     findOne(query = {}) {
-      const doc = store.find(d => matches(d, query)) || null;
+      let doc = store.find(d => matches(d, query)) || null;
       const thenable = {
         select() { return thenable; },
+        // sort({ campo: 1|-1 }) — elige el primero según ese orden.
+        sort(spec) {
+          const [k, dir] = Object.entries(spec || {})[0] || [];
+          if (k) {
+            const rows = store.filter(d => matches(d, query)).sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (dir < 0 ? -1 : 1));
+            doc = rows[0] || null;
+          }
+          return thenable;
+        },
         lean()   { return Promise.resolve(doc ? { ...doc } : null); },
         then(resolve, reject) { return Promise.resolve(doc).then(resolve, reject); },
       };

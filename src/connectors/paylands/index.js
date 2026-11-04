@@ -153,5 +153,8 @@ module.exports = defineConnector({
   parseWebhook: (body) => webhook.parseNotification(body),
   mapStatus: (raw) => webhook.mapStatus(raw),
   normalizeError,
+  // Entorno de Paylands de este despliegue (PAYNOPAIN_ENV): sandbox = pagos de
+  // pruebas; production = pagos reales. Ver connectorAccountService.resolveContext.
+  platformMode: () => (process.env.PAYNOPAIN_ENV === 'production' ? 'live' : 'test'),
   extensions: { low, webhook, httpStatusFromMessage },
 });

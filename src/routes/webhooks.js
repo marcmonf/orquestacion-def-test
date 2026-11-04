@@ -228,9 +228,11 @@ router.post('/paynopain', async (req, res) => {
 
   // ── 5b. Tarjeta guardada (F6, FEATURE_SAVED_CARDS): el token se activa solo
   //        cuando el PSP confirma el pago que lo creó; si no se aprueba, se descarta.
-  if (changed && paymentTokens.enabled()) {
+  // (revisión 5 nov, L5) La activación no depende de que el estado cambie: si el
+  // pago ya estaba autorizado/capturado, se activa igual (es idempotente).
+  if (paymentTokens.enabled() && (changed || (tx.storedCredential && tx.storedCredential.usage === 'first'))) {
     try {
-      if (tx.status === 'authorized') await paymentTokens.activateForPayment(tx.paymentId);
+      if (['authorized', 'approved', 'partially_captured', 'captured'].includes(tx.status)) await paymentTokens.activateForPayment(tx.paymentId);
       else if (['declined', 'cancelled'].includes(tx.status)) await paymentTokens.discardForPayment(tx.paymentId);
     } catch (e) {
       logger.warn('WEBHOOK_SAVED_CARD_UPDATE_FAIL', { component: 'webhooks', data: { error: e.message } });

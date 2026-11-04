@@ -142,6 +142,12 @@ function defineConnector(spec) {
       if (typeof spec[op] !== 'function') problems.push(`declara ${cap} pero no implementa ${op}`);
     }
   }
+  // Modo (test/live) de la cuenta de PLATAFORMA del conector en ESTE despliegue
+  // (revisión del 5 nov 2026, hallazgo H1). Un pago solo puede ir a la cuenta de
+  // plataforma si su modo coincide: un pago de pruebas jamás llega al entorno
+  // real del PSP, ni uno real al de pruebas. Por defecto 'test'.
+  connector.platformMode = typeof spec.platformMode === 'function' ? spec.platformMode : () => 'test';
+
   // Extensiones propias del conector (p. ej. Paylands expone su cliente de bajo nivel).
   if (spec.extensions && typeof spec.extensions === 'object') connector.extensions = spec.extensions;
 

@@ -1493,7 +1493,9 @@
     document.getElementById('twoFactorCodeField').style.display = st.enabled ? 'block' : 'none';
     document.getElementById('twoFactorEnableBtn').style.display = 'none';
     document.getElementById('twoFactorSetupBox').style.display = 'none';
+    document.getElementById('twoFactorPassField').style.display = 'block';
     document.getElementById('twoFactorCode').value = '';
+    document.getElementById('twoFactorPass').value = '';
   }
   function openTwoFactor(notice) {
     document.getElementById('twoFactorErr').textContent = '';
@@ -1503,23 +1505,36 @@
   }
   function twoFactorSetup() {
     document.getElementById('twoFactorErr').textContent = '';
-    api('/backoffice/2fa/setup', { method: 'POST' }).then(function (r) {
+    var pass = document.getElementById('twoFactorPass').value;
+    if (!pass) { document.getElementById('twoFactorErr').textContent = 'Escribe tu contraseña'; return; }
+    api('/backoffice/2fa/setup', { method: 'POST', body: JSON.stringify({ password: pass }) }).then(function (r) {
+      document.getElementById('twoFactorPass').value = '';
+      document.getElementById('twoFactorPassField').style.display = 'none';
       document.getElementById('twoFactorSecret').value = r.secret;
       document.getElementById('twoFactorUrl').textContent = r.otpauthUrl;
       document.getElementById('twoFactorSetupBox').style.display = 'block';
       document.getElementById('twoFactorCodeField').style.display = 'block';
       document.getElementById('twoFactorSetupBtn').style.display = 'none';
       document.getElementById('twoFactorEnableBtn').style.display = 'inline-flex';
-    }).catch(function (e) { document.getElementById('twoFactorErr').textContent = e.message; });
+    }).catch(function (e) { document.getElementById('twoFactorErr').textContent = e.message === 'invalid_password' ? 'Contraseña incorrecta' : e.message; });
   }
   function twoFactorSend(path) {
     var code = document.getElementById('twoFactorCode').value.trim();
     document.getElementById('twoFactorErr').textContent = '';
     if (!/^\d{6}$/.test(code)) { document.getElementById('twoFactorErr').textContent = 'El código son 6 cifras'; return; }
-    api(path, { method: 'POST', body: JSON.stringify({ code: code }) }).then(function (r) {
+    var body = { code: code };
+    if (path.indexOf('/disable') !== -1) {
+      body.password = document.getElementById('twoFactorPass').value;
+      if (!body.password) { document.getElementById('twoFactorErr').textContent = 'Escribe tu contraseña'; return; }
+    }
+    api(path, { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
+      // El cambio de 2FA cierra las demás sesiones; esta sigue con el token nuevo.
+      if (r.token) session = saveSession(r.token, session.user);
       twoFactorRender(r, r.enabled ? '2FA activada: desde ahora el login pedirá el código.' : '2FA desactivada.');
     }).catch(function (e) {
-      document.getElementById('twoFactorErr').textContent = e.message === 'invalid_totp' ? 'Código incorrecto o ya usado' : e.message;
+      document.getElementById('twoFactorErr').textContent = e.message === 'invalid_totp' ? 'Código incorrecto o ya usado'
+        : e.message === 'invalid_password' ? 'Contraseña incorrecta'
+        : e.message === 'too_many_attempts' ? 'Demasiados intentos: espera 15 minutos' : e.message;
     });
   }
 

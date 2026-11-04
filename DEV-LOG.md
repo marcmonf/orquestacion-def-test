@@ -1711,6 +1711,78 @@ fuera de pendientes.
     vista de conectores en /admin; filtro test/live en los listados de /admin y del
     portal; enseñar `routing` en el detalle de transacción de /admin.
 
+
+### Sesión 5 nov 2026 — revisión del PR #4, producción de verdad, enlaces de pago, plugins y card present
+
+**Contexto.** `main` = `6f06e54` (PR #4 fusionado, desplegado; R1 OK). Marcos no disponible:
+dudas → opción conservadora → "DECISIÓN PENDIENTE DE MARCOS". Rama: la misma
+`claude/monetiser-multi-psp-framework-3dlfch`, **reconstruida desde `main`** (el entorno
+solo permite subir a ese nombre; el PR #4 ya está fusionado, así que es trabajo nuevo
+sobre `main`, no una continuación). Línea base: **530/530**.
+
+**Dominios bloqueados por la red de esta sesión** (no se pudo leer nada de ellos):
+`docs.paylands.com`, `shopify.dev`, `developer.woocommerce.com`, `woocommerce.com`,
+`wordpress.org`, `devdocs.prestashop-project.org`, `developer.adobe.com`,
+`getcomposer.org`. Accesibles: `registry.npmjs.org`, `packagist.org`.
+
+#### F1 — Dependencias (dato de Marcos: 15 vulnerabilidades en el build de Render)
+
+`npm audit fix` dentro de rango (proxy-addr **crítica**, axios, body-parser,
+follow-redirects, joi, brace-expansion, qs) + **nodemailer 9 → 10.3.1** (versión mayor;
+`mailer.js` solo usa `createTransport`/`sendMail`, cuya API no cambia: probado con un
+transporte real y el de pruebas). Resultado: **0 vulnerabilidades en dependencias de
+producción** (`npm audit --omit=dev`). **Queda 1** (alta) en desarrollo: `deepmerge`, que
+arrastra jest (`jest-config`). No hay versión corregida publicada (la última es 4.3.1 y
+jest 30 la sigue usando); la "solución" de npm es bajar a jest 25 (2020). **Decisión: se
+deja** — jest no se instala en producción (`devDependencies`). Revisar cuando salga
+deepmerge corregido. Commit `4eb24d1`.
+
+#### F1 — Revisión independiente del PR #4
+
+Un subagente revisor que no escribió el código revisó seguridad y dinero (solo lectura,
+~45 comprobaciones). **0 críticos.** Hallazgos y qué se hizo:
+
+| # | Gravedad | Hallazgo | Arreglo |
+|---|---|---|---|
+| H1 | ALTA | Con `PAYNOPAIN_ENV=production`, las claves de PRUEBAS (y las `ms_` antiguas) cobrarían tarjetas reales, registradas como `livemode:false`. | La cuenta de plataforma de cada conector declara su modo (`platformMode`: Paylands = `live` solo con `PAYNOPAIN_ENV=production`). Un pago solo va a la plataforma si su modo coincide (`resolveContext`). Doble comprobación en `/proxy-pci/charge` (`409 mode_mismatch`), en el S2S antiguo y en `POST /v1/payments`. **Consecuencia:** en el despliegue de producción solo cobran claves `ms_live_` por `/v1` (`docs/produccion.md`). |
+| H2 | ALTA | La API antigua ("solo modo test") podía capturar/devolver/anular pagos LIVE. | `paymentLifecycleService` filtra por modo: API antigua `livemode:false`, v1 el de la clave, backoffice sin filtro. |
+| M1 | MEDIA | Espacio de nombres de la Idempotency-Key: una clave test con `live:K` leía la sesión live `K`. | Las claves que empiezan por `live:` se rechazan (400) y el replay comprueba modo y tipo. |
+| M2 | MEDIA | Si el routing fallaba, una sesión live caía a Paylands. | `decideSafe` en live → sin conector (no se crea el pago). |
+| M3 | MEDIA | `POST /v1/payments`: la idempotencia no comprobaba el cuerpo (otro importe → devolvía el pago viejo) ni concurrencia (500). | Compara token, importe, divisa, iniciador y referencia (409 si no); E11000 → replay. |
+| M4 | MEDIA | 2FA: sin límite por usuario; activar/desactivar sin contraseña; sesiones viejas seguían. | Contraseña obligatoria para empezar el alta y para desactivar; 10 intentos / 15 min por usuario (`RL_2FA_MAX`); activar o desactivar cierra las demás sesiones (la actual recibe token nuevo). |
+| M5 | MEDIA (hipótesis) | El consentimiento de guardar tarjeta no estaba ligado al comprador. | Nonce de un solo uso emitido al pintar el iFrame firmado; `/charge` solo acepta `saveCard` con él (apagado igualmente). |
+| L1 | BAJA | AES-GCM aceptaba etiquetas truncadas. | Etiqueta de 16 bytes obligatoria. |
+| L2 | BAJA | La excepción de la 2FA obligatoria era por subcadena (`/2fa` en cualquier parte de la ruta). | Prefijo exacto `/backoffice/2fa`. |
+| L3 | BAJA | El portal devolvía `credentialsEnc`/`credentialsMeta` y podía borrar la ficha con credenciales. | Quitadas de las respuestas (`pspCredentialsConfigured`); borrar/desactivar con credenciales → 409. |
+| L4 | BAJA | Un 4xx de Paylands con mensaje propio cuenta como fallo técnico en el breaker. | **No cambiado** (con un solo PSP no tiene efecto; conservador: lo desconocido cuenta). |
+| L5 | BAJA | El token de tarjeta guardada podía quedarse `pending` si el webhook no cambiaba el estado. | Activación idempotente aunque el estado no cambie, y al aprobarse sin 3DS. |
+| L6 | BAJA | Pagos con token en `pending_3ds`/`processing` sin barrido. | **No cambiado** (apagado; igual que el `pending_3ds` del checkout). Anotado. |
+| L7 | BAJA | Refund/cancel usaban la cuenta ACTUAL del merchant, no la del cobro. | Se usa `tx.connectorAccountId`; si esa cuenta ya no tiene credenciales, no se usa otra. |
+| L8 | BAJA | `reset-2fa` depende solo de `ADMIN_TOKEN`. | **No cambiado**: DECISIÓN PENDIENTE (abajo). |
+
+Lo que el revisor comprobó y está bien: autenticación por clave (modo tomado de la base de
+datos), aislamiento v1 por modo, tokens `pm_` por merchant y modo, sin inyección NoSQL,
+TOTP correcto, rutas nuevas de backoffice con superadmin, sin XSS (textContent y
+`jsonForScript`), sin failover tras pedir la tarjeta, `dummyCard` fuera de producción.
+Tests de regresión: `tests/security/review2026nov.test.js`,
+`tests/security/portalCredentialsHidden.test.js` y ampliados `v1Livemode`, `savedCards`,
+`backofficeTotp`.
+
+#### F1 — Rotación de `CREDENTIALS_ENCRYPTION_KEY` (`22ac29b`)
+
+Versión de clave DENTRO del texto cifrado (`v2:<kid>:…`), llavero con varias claves a la vez
+(`CREDENTIALS_KEYS="kid:64hex,…"` + `CREDENTIALS_KEY_ACTIVE`), y `GET
+/backoffice/security/encryption-status` + `POST /backoffice/security/reencrypt` (simulación
+por defecto; escritura optimista; lo que no se puede abrir no se toca y se informa). **Sin
+llavero todo se cifra EXACTAMENTE como antes (`v1`)** y lo cifrado con la clave actual de
+Render se sigue abriendo siempre (invariante 7; test con textos cifrados como en `main`).
+Runbook: `docs/produccion.md` §5.
+
+Verificación F1: **551/551** en el árbol commiteado, arranque real limpio, Chromium real
+(/admin: el alta de 2FA pide contraseña, la sesión sigue tras activarla, login con código;
+checkout: `saveCard` viaja con su nonce y sin oferta no hay casilla). Golden del cable
+idéntico.
+
 ---
 
 ## 7. Elementos de seguridad

@@ -125,6 +125,16 @@ describe('Pagos live: credenciales del PSP por modo y aislamiento', () => {
     expect((await request(app()).get(`/v1/payments/${test.body.id}`).set(bearer(LIVE))).status).toBe(404);
   });
 
+  test('M1 (revisión 5 nov): una clave test no puede usar el espacio "live:" para leer sesiones live', async () => {
+    await MerchantRules.create({ merchantId: 'M', policy: { merchantId: 'M', version: 'v1', defaultConnector: 'pspB', rules: [] } });
+    await accounts.saveCredentials({ merchantId: 'M', acquirerCode: 'pspB', mode: 'live', credentials: { apiKey: 'live-k', webhookSecret: 'live-w' } });
+    const l = await request(app()).post('/v1/checkout-sessions').set({ ...bearer(LIVE), 'Idempotency-Key': 'pedido-777777' }).send({ amount: 1000, currency: 'EUR' });
+    expect(l.status).toBe(201);
+    const t = await request(app()).post('/v1/checkout-sessions').set({ ...bearer(LEGACY), 'Idempotency-Key': 'live:pedido-777777' }).send({ amount: 1000, currency: 'EUR' });
+    expect(t.status).toBe(400);
+    expect(t.body.error).toBe('invalid_idempotency_key');
+  });
+
   test('la misma Idempotency-Key en test y en live no choca', async () => {
     await MerchantRules.create({ merchantId: 'M', policy: { merchantId: 'M', version: 'v1', defaultConnector: 'payNoPain', rules: [], fallback: { order: ['pspB'], on: ['network_error'] } } });
     await accounts.saveCredentials({ merchantId: 'M', acquirerCode: 'pspB', mode: 'live', credentials: { apiKey: 'live-k', webhookSecret: 'live-w' } });

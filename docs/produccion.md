@@ -41,6 +41,16 @@ Para generar valores aleatorios de 64 hex (en el ordenador de Marcos, terminal):
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+### Importante: en producción solo se cobra en modo LIVE (desde el 5 nov 2026)
+
+Con `PAYNOPAIN_ENV=production`, Monetiser **solo** manda a Paylands pagos de modo live:
+hace falta `FEATURE_LIVEMODE=true` y que cada comercio use una clave **`ms_live_…`**
+(/admin → Merchants → API Keys, casilla live / `{"livemode": true}`) con la **API v1**.
+Las claves de pruebas (`ms_test_…` y las `ms_…` antiguas) y la API antigua
+(`/{merchantId}/payments/...`) **no cobran** en ese despliegue (responden
+`no_connector_available` / `mode_mismatch`): así un pago de pruebas nunca toca dinero
+real. Es la consecuencia del hallazgo H1 de la revisión del 5 nov (DEV-LOG).
+
 ## 2. Recomendadas
 
 | Variable | Valor | Por qué |

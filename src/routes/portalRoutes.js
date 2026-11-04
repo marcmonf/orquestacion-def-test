@@ -469,6 +469,23 @@ router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, 
 // solo lo nuestro). Multi-adquirente preparado para N; hoy Paylands en vivo.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// La ficha lleva también la CUENTA del merchant en el PSP (credenciales
+// cifradas, multi-PSP nov 2026). El portal NUNCA las ve ni las toca: se quitan
+// de las respuestas y no se puede borrar/desactivar una ficha que las tenga
+// (eso lo gestiona Monetiser en /admin). Hallazgo de la revisión del 5 nov.
+function stripCredentials(doc) {
+  if (!doc) return doc;
+  const o = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  const has = Boolean(o.credentialsEnc && (o.credentialsEnc.test || o.credentialsEnc.live));
+  delete o.credentialsEnc;
+  delete o.credentialsMeta;
+  o.pspCredentialsConfigured = has;
+  return o;
+}
+function hasCredentials(doc) {
+  return Boolean(doc && doc.credentialsEnc && (doc.credentialsEnc.test || doc.credentialsEnc.live));
+}
+
 // GET /portal/acquirers — catálogo disponible + fichas del merchant
 router.get('/acquirers', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
@@ -476,7 +493,7 @@ router.get('/acquirers', requirePortalRole('merchant_admin'), async (req, res) =
       acquirerService.getCatalog(),
       acquirerService.getMerchantAcquirers(req.portalUser.merchantId),
     ]);
-    return res.json({ success: true, catalog: catalog.map(c => ({ code: c.code, name: c.name, active: c.active !== false })), acquirers: mine });
+    return res.json({ success: true, catalog: catalog.map(c => ({ code: c.code, name: c.name, active: c.active !== false })), acquirers: mine.map(stripCredentials) });
   } catch (err) { console.error('❌ [portal/acquirers]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
@@ -493,6 +510,10 @@ router.put('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, 
       set[k] = Math.round(n);
     }
     if (req.body.active !== undefined) set.active = !!req.body.active;
+    if (set.active === false) {
+      const cur = await MerchantAcquirer.findOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code }).lean();
+      if (hasCredentials(cur)) return res.status(409).json({ success: false, error: 'has_psp_credentials', message: 'Esta cuenta tiene credenciales de pago configuradas por Monetiser: pide a Monetiser que la desactive.' });
+    }
     if (req.body.isDefault === true) {
       set.isDefault = true;
       const others = await acquirerService.getMerchantAcquirers(req.portalUser.merchantId);
@@ -508,13 +529,15 @@ router.put('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, 
       { $set: set, $setOnInsert: { merchantId: req.portalUser.merchantId, acquirerCode: req.params.code } },
       { new: true, upsert: true }
     );
-    return res.json({ success: true, acquirer: doc });
+    return res.json({ success: true, acquirer: stripCredentials(doc) });
   } catch (err) { console.error('❌ [portal/acquirers PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
 // DELETE /portal/acquirers/:code
 router.delete('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
+    const cur = await MerchantAcquirer.findOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code }).lean();
+    if (hasCredentials(cur)) return res.status(409).json({ success: false, error: 'has_psp_credentials', message: 'Esta cuenta tiene credenciales de pago configuradas por Monetiser: pide a Monetiser que la retire.' });
     await MerchantAcquirer.deleteOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code });
     return res.json({ success: true });
   } catch (err) { console.error('❌ [portal/acquirers DELETE]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }

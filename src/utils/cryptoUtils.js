@@ -128,7 +128,12 @@ function gcmEncrypt(key, aad, plain) {
 }
 
 function gcmDecrypt(key, aad, ivHex, encHex, tagHex) {
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+  // Etiqueta COMPLETA de 16 bytes (revisión 5 nov, L1): Node aceptaba etiquetas
+  // truncadas (4 bytes), que debilitan la autenticación.
+  if (!/^[0-9a-fA-F]{32}$/.test(String(tagHex)) || !/^[0-9a-fA-F]{24}$/.test(String(ivHex))) {
+    throw new Error('credencial cifrada con formato desconocido');
+  }
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'), { authTagLength: 16 });
   decipher.setAAD(Buffer.from(aad));
   decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
   return Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]).toString('utf8');

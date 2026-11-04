@@ -37,6 +37,7 @@ const { getSupportedCurrencies } = require('../utils/currencyConfig');
 const paymentMethods = require('../services/paymentMethodService');
 const paymentTokens = require('../services/paymentTokenService');
 const registry = require('../services/connectorRegistry');
+const accounts = require('../services/connectorAccountService');
 const Transaction = require('../models/Transaction');
 const { v4: uuidv4 } = require('uuid');
 const { PAYMENT_METHODS } = require('../connectors/contract');
@@ -55,7 +56,9 @@ function idempotencyKeyOf(req, res) {
   const raw = req.header('Idempotency-Key');
   if (raw === undefined) return { key: null };
   const key = String(raw).trim();
-  if (!/^[A-Za-z0-9_.:-]{8,64}$/.test(key)) {
+  // "live:" es el espacio de nombres interno de las claves de modo live
+  // (revisión 5 nov, M1): un cliente no puede usarlo.
+  if (!/^[A-Za-z0-9_.:-]{8,64}$/.test(key) || /^live:/i.test(key)) {
     fail(res, 400, 'invalid_idempotency_key', 'Idempotency-Key: de 8 a 64 caracteres (letras, números, - _ . :).');
     return { error: true };
   }
@@ -227,9 +230,25 @@ router.post('/payments', savedCardsGate, async (req, res) => {
   if (idem.error) return undefined;
 
   try {
-    if (idem.key) {
-      const prior = await Transaction.findOne({ merchantId: req.merchantId, idempotencyKey: req.livemode ? `live:${idem.key}` : idem.key }).lean();
-      if (prior) return res.status(200).json(await sessions.toPayment(prior));
+    const storedKey = idem.key ? (req.livemode ? `live:${idem.key}` : idem.key) : null;
+    // Idempotencia (revisión 5 nov, M3): misma clave = MISMO cobro con token y
+    // mismos datos. Clave usada para otra cosa o con otros datos → 409.
+    const replay = async () => {
+      const prior = await Transaction.findOne({ merchantId: req.merchantId, idempotencyKey: storedKey }).lean();
+      if (!prior) return null;
+      const same = Boolean(prior.livemode) === Boolean(req.livemode)
+        && prior.storedCredential && prior.storedCredential.usage === 'subsequent'
+        && prior.storedCredential.tokenId === value.paymentToken
+        && prior.amount === value.amount && prior.currency === value.currency
+        && prior.initiator === value.initiator
+        && (prior.merchantReference || null) === (value.reference || null);
+      if (!same) return { conflict: true };
+      return { payment: await sessions.toPayment(prior) };
+    };
+    if (storedKey) {
+      const r = await replay();
+      if (r && r.conflict) return fail(res, 409, 'idempotency_key_reused', 'Esa Idempotency-Key ya se usó para otra operación o con datos distintos.');
+      if (r) return res.status(200).json(r.payment);
     }
     const resolved = await paymentTokens.resolveForCharge(req.merchantId, req.livemode, value.paymentToken);
     if (!resolved) return fail(res, 404, 'payment_token_not_found');
@@ -239,7 +258,12 @@ router.post('/payments', savedCardsGate, async (req, res) => {
       return fail(res, 422, 'merchant_initiated_not_supported',
         `${provider.displayName} no tiene verificados los cobros sin el cliente delante (pendiente de verificar con el PSP).`);
     }
-    const tx = await Transaction.create({
+    // Modo del pago ↔ entorno del PSP (revisión 5 nov, H1).
+    const modeOk = await accounts.resolveContext({ merchantId: req.merchantId, connector: resolved.doc.connector, livemode: Boolean(req.livemode) }).catch(() => null);
+    if (!modeOk) return fail(res, 422, 'no_connector_available', 'El adquirente de esta tarjeta no está disponible en este modo.');
+    let tx;
+    try {
+      tx = await Transaction.create({
       paymentId: uuidv4(), merchantId: req.merchantId, merchantReference: value.reference || null,
       amount: value.amount, currency: value.currency, method: 'card', status: 'processing',
       processor: resolved.doc.connector, connectorAccountId: resolved.doc.connectorAccountId || null,
@@ -248,9 +272,19 @@ router.post('/payments', savedCardsGate, async (req, res) => {
       cardBrand: resolved.doc.card?.brand, cardLast4: resolved.doc.card?.last4, bin: resolved.doc.card?.bin,
       issuerCountry: resolved.doc.card?.country,
       ...(req.livemode ? { livemode: true } : {}),
-      ...(idem.key ? { idempotencyKey: req.livemode ? `live:${idem.key}` : idem.key } : {}),
+      ...(storedKey ? { idempotencyKey: storedKey } : {}),
       createdAt: new Date(),
-    });
+      });
+    } catch (e) {
+      // Dos peticiones simultáneas con la misma clave: gana una; la otra
+      // devuelve el mismo pago (o 409 si los datos no coinciden). Nunca 2 cobros.
+      if (storedKey && (e.code === 11000 || /E11000/.test(String(e.message)))) {
+        const r = await replay();
+        if (r && r.payment) return res.status(200).json(r.payment);
+        return fail(res, 409, 'idempotency_key_reused', 'Esa Idempotency-Key ya se usó para otra operación o con datos distintos.');
+      }
+      throw e;
+    }
     // Un solo intento, en el PSP que emitió el token (nunca en otro: invariante 5).
     let r;
     try {
@@ -327,7 +361,7 @@ function operation(type) {
       if (!(await sessions.findPayment(req.merchantId, paymentId, req.livemode))) {
         return fail(res, 404, 'not_found');
       }
-      const common = { paymentId, merchantId: req.merchantId, idempotencyKey, actor: 'merchant_api_v1' };
+      const common = { paymentId, merchantId: req.merchantId, idempotencyKey, actor: 'merchant_api_v1', livemode: Boolean(req.livemode) };
       const out =
         type === 'capture' ? await lifecycle.capture({ ...common, amount: value.amount })
         : type === 'refund' ? await lifecycle.refund({ ...common, amount: value.amount, reason: value.reason || undefined })
