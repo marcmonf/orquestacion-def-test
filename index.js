@@ -325,6 +325,11 @@ function configWarnings() {
   if (!process.env.PAYNOPAIN_SIGNATURE) w.push('PAYNOPAIN_SIGNATURE no definido → los webhooks de Paylands responden 500');
   if (!process.env.HPP_SIGNING_SECRET) w.push('HPP_SIGNING_SECRET no definido → secreto aleatorio por proceso: tras un reinicio dejan de valer los enlaces del iFrame y de la vuelta del comprador');
   for (const msg of w) console.warn(`⚠️ [CONFIG] ${msg}`);
+  // Con Paylands en producción, el checklist completo de dinero real (F7).
+  if (process.env.PAYNOPAIN_ENV === 'production') {
+    const r = require('./src/utils/productionReadiness').evaluate();
+    for (const i of r.items) if (!i.ok && i.severity !== 'info') console.warn(`⚠️ [PRODUCCIÓN] ${i.var}: ${i.fix}`);
+  }
 }
 
 /* ===== Conexión a MongoDB + arranque ===== */

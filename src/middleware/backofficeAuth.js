@@ -44,7 +44,7 @@ async function loadSessionUser(claims) {
   if (!claims || !claims.userId) return null;
   try {
     return await BackofficeUser.findOne({ _id: claims.userId })
-      .select('email name role merchantScope active tokenVersion')
+      .select('email name role merchantScope active tokenVersion totp.enabled')
       .lean();
   } catch (err) {
     if (err && err.name === 'CastError') return null;
@@ -96,7 +96,15 @@ function backofficeAuth(req, res, next) {
       name:          user.name,
       role:          user.role,
       merchantScope: Array.isArray(user.merchantScope) ? user.merchantScope : [],
+      twoFactorEnabled: Boolean(user.totp && user.totp.enabled),
     };
+    // 2FA obligatoria para superadmin (F7, BACKOFFICE_2FA_REQUIRED, apagada por
+    // defecto): sin 2FA activa solo puede usar /backoffice/2fa/* para activarla.
+    const flag = String(process.env.BACKOFFICE_2FA_REQUIRED || '').trim().toLowerCase();
+    if ((flag === 'true' || flag === '1') && user.role === 'superadmin' && !(user.totp && user.totp.enabled)
+        && !String((req.baseUrl || '') + (req.path || '')).includes('/2fa')) {
+      return res.status(403).json({ success: false, error: 'two_factor_setup_required' });
+    }
     return next();
   }).catch((err) => {
     console.error('❌ [backofficeAuth] comprobación de sesión:', err && err.message);

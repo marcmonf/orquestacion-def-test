@@ -1161,6 +1161,38 @@ router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2FA TOTP del usuario de sesión (F7, nov 2026) — cualquier rol puede activarla
+//   GET  /backoffice/2fa            estado
+//   POST /backoffice/2fa/setup      → { secret, otpauthUrl } (se enseña UNA vez)
+//   POST /backoffice/2fa/enable     { code }
+//   POST /backoffice/2fa/disable    { code }
+// ─────────────────────────────────────────────────────────────────────────────
+const totpService = require('../services/backofficeTotpService');
+
+// Checklist de variables para pasar a real (F7). Solo dice si cada una está
+// bien, nunca su valor. Guía: docs/produccion.md.
+router.get('/production-readiness', requireRole('superadmin'), (req, res) => {
+  return res.json({ success: true, ...require('../utils/productionReadiness').evaluate() });
+});
+function totpError(res, err) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, message: err.message !== err.code ? err.message : undefined });
+  console.error('❌ [backoffice/2fa]', err && err.message);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+router.get('/2fa', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.status(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/setup', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/enable', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+});
+router.post('/2fa/disable', async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FRAMEWORK MULTI-PSP (nov 2026) — solo superadmin
 //   GET    /backoffice/connectors                                        conectores registrados + capacidades + salud
 //   GET    /backoffice/merchants/:merchantId/connector-accounts          cuentas del merchant (credenciales ENMASCARADAS)

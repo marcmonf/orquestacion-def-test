@@ -187,6 +187,10 @@ main{padding:24px;max-width:1600px;margin:0 auto}
         <button class="eye-btn" id="toggleLoginPass" type="button">👁</button>
       </div>
     </div>
+    <div class="login-field" id="loginTotpField" style="display:none">
+      <label>Código de la app de autenticación (2FA)</label>
+      <input id="loginTotp" type="text" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code"/>
+    </div>
     <button class="login-btn" id="loginBtn">Entrar</button>
     <div class="login-err" id="loginErr"></div>
     <div class="login-version">Monetiser POP · v2.0</div>
@@ -208,6 +212,7 @@ main{padding:24px;max-width:1600px;margin:0 auto}
       <span id="statusDot"></span>
       <span id="statusMsg">–</span>
       <span class="nav-merchant" id="merchantBadge">–</span>
+      <button class="nav-logout" id="twoFactorBtn" title="Verificación en dos pasos">2FA</button>
       <button class="nav-logout" id="logoutBtn">Salir</button>
     </div>
   </nav>
@@ -400,6 +405,28 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <div class="modal-actions">
       <button class="btn btn-primary" id="refundBtn">Confirmar reembolso</button>
       <button class="btn btn-ghost" id="refundModalClose2">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- 2FA MODAL (F7) -->
+<div class="modal-overlay" id="twoFactorModal">
+  <div class="modal modal-sm">
+    <button class="modal-close" id="twoFactorModalClose">×</button>
+    <h3>Verificación en dos pasos (2FA)</h3>
+    <div id="twoFactorStatus" style="font-size:13px;margin-bottom:14px">–</div>
+    <div id="twoFactorSetupBox" style="display:none">
+      <div style="font-size:13px;margin-bottom:8px">1. En tu app de autenticación (Google Authenticator, Microsoft Authenticator, 1Password…) añade una cuenta con esta <b>clave</b>:</div>
+      <div class="form-field"><input type="text" id="twoFactorSecret" readonly/></div>
+      <div style="font-size:11px;color:var(--text3);word-break:break-all;margin-bottom:12px" id="twoFactorUrl"></div>
+      <div style="font-size:13px;margin-bottom:8px">2. Escribe el código de 6 cifras que te enseña la app:</div>
+    </div>
+    <div class="form-field" id="twoFactorCodeField" style="display:none"><label>Código</label><input type="text" id="twoFactorCode" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code"/></div>
+    <div class="modal-err" id="twoFactorErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="twoFactorSetupBtn" style="display:none">Activar 2FA</button>
+      <button class="btn btn-primary" id="twoFactorEnableBtn" style="display:none">Confirmar código</button>
+      <button class="btn" id="twoFactorDisableBtn" style="display:none">Desactivar 2FA</button>
     </div>
   </div>
 </div>

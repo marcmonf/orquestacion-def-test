@@ -1596,6 +1596,30 @@ sin oferta la casilla no existe y el cobro envía solo `{"paymentId"}`; con ofer
 aparece desmarcada, marcada envía `{"paymentId","saveCard":true}` y el token queda
 `pending` sin el token del PSP en claro. Sin errores de consola, 375 px sin scroll.
 
+
+#### F7 — Producción: 2FA TOTP del backoffice + checklist de variables
+
+1. **2FA TOTP** (RFC 6238, sin dependencias: `src/utils/totp.js`, probado con los
+   vectores oficiales de la RFC): /admin → botón **2FA** → "Activar 2FA" enseña la clave
+   (y la URL `otpauth://`) para la app de autenticación → se confirma con un código. Desde
+   entonces el login pide el código (`totp_required` / `invalid_totp`); un código no se
+   puede reutilizar (anti-replay atómico). Secreto cifrado
+   (`CREDENTIALS_ENCRYPTION_KEY`). Desactivar exige un código. Recuperación si se pierde
+   el móvil: `POST /backoffice/auth/reset-2fa` con `X-Admin-Token` (quita la 2FA y cierra
+   sus sesiones). Disponible para cualquier usuario del backoffice.
+2. **Obligatoria para superadmin** con `BACKOFFICE_2FA_REQUIRED=true` (APAGADO): un
+   superadmin sin 2FA solo puede usar `/backoffice/2fa/*` (`403
+   two_factor_setup_required`) y /admin le abre el modal al entrar.
+3. **Checklist de producción**: `docs/produccion.md` + `GET
+   /backoffice/production-readiness` (superadmin; dice qué variable falta, nunca su valor)
+   + avisos `⚠️ [PRODUCCIÓN]` al arrancar con `PAYNOPAIN_ENV=production`. Incluye
+   `API_KEY_SIMPLE_FALLBACK=false`.
+
+Verificación F7: **530/530** (+7 `tests/security/backofficeTotp.test.js`). En Chromium
+real (/admin con el router real y usuarios en memoria): activar 2FA desde el modal, salir,
+login → pide el código, código malo → "Código incorrecto o ya usado", código bueno →
+dentro. Sin errores de JavaScript.
+
 ---
 
 ## 7. Elementos de seguridad
@@ -1699,6 +1723,14 @@ aparece desmarcada, marcada envía `{"paymentId","saveCard":true}` y el token qu
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | **(M7 Bloque 1)** SMTP de Google Workspace para enviar facturas (`smtp.gmail.com` / `587` / `false`). Sin configurar, el email hace no-op. |
 | `SMTP_USER` / `SMTP_PASS` | **(M7 Bloque 1)** Cuenta de Workspace + contraseña de aplicación. |
 | `SMTP_FROM` | **(M7 Bloque 1)** Remitente de los emails (por defecto `SMTP_USER`). |
+| `CREDENTIALS_ENCRYPTION_KEY` | **(4 nov 2026, multi-PSP)** 64 hex. Cifra credenciales de PSP por merchant, secretos 2FA y tokens de tarjeta guardada. Si falta se usa `ENCRYPTION_KEY`; sin ninguna, guardar credenciales/2FA responde 503. **No cambiarla una vez usada.** |
+| `CB_FAILURE_THRESHOLD` / `CB_WINDOW_MS` / `CB_COOLDOWN_MS` | **(4 nov 2026)** Circuit breaker por conector: fallos técnicos seguidos (5) en la ventana (60000) para abrirlo y enfriamiento (30000). |
+| `FEATURE_LIVEMODE` | **(4 nov 2026) APAGADO.** Claves `ms_live_` y pagos live por `/v1`. |
+| `FEATURE_SAVED_CARDS` | **(4 nov 2026) APAGADO.** Tarjeta guardada (token `pm_`) y `POST /v1/payments`. Pendiente de verificar con PayNoPain. |
+| `FEATURE_PAYLANDS_BIZUM` / `FEATURE_PAYLANDS_APPLE_PAY` / `FEATURE_PAYLANDS_GOOGLE_PAY` | **(4 nov 2026) APAGADOS.** Solo hacen que Paylands DECLARE el método; no hay flujo de cobro hasta verificarlo con PayNoPain. |
+| `BACKOFFICE_2FA_REQUIRED` | **(4 nov 2026) APAGADO.** `true` obliga a los superadmin a tener 2FA. Encender DESPUÉS de activarla cada uno. |
+
+Checklist para pasar a real: **`docs/produccion.md`** y `GET /backoffice/production-readiness`.
 
 ### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
 

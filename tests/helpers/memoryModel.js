@@ -19,8 +19,32 @@
 //
 let _seq = 1;
 
+// Rutas con punto ('totp.lastUsedStep'), como Mongo: lectura y escritura anidadas.
+function getPath(doc, k) {
+  if (!k.includes('.')) return doc[k];
+  return k.split('.').reduce((o, p) => (o == null ? undefined : o[p]), doc);
+}
+function applySet(doc, set) {
+  for (const [k, v] of Object.entries(set || {})) {
+    if (!k.includes('.')) { doc[k] = v; continue; }
+    const parts = k.split('.');
+    let o = doc;
+    for (const p of parts.slice(0, -1)) { if (o[p] == null || typeof o[p] !== 'object') o[p] = {}; o = o[p]; }
+    o[parts[parts.length - 1]] = v;
+  }
+}
+
 function matches(doc, query) {
-  return Object.entries(query || {}).every(([k, v]) => {
+  return Object.entries(query || {}).every(([k, v0]) => {
+    const docV = getPath(doc, k);
+    const d = k.includes('.') ? { [k]: docV } : doc;
+    const v = v0;
+    return matchOne(d, k, v);
+  });
+}
+
+function matchOne(doc, k, v) {
+  return (() => {
     // Objeto de operadores ({ $gte, $lt, $in, ... }) — pero NO una Date (también es objeto).
     if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
       return Object.entries(v).every(([op, operand]) => {
@@ -39,7 +63,7 @@ function matches(doc, query) {
       });
     }
     return doc[k] === v;
-  });
+  })();
 }
 
 function attachSave(doc, store) {
@@ -154,7 +178,7 @@ module.exports = function makeMemoryModel(opts = {}) {
       }
       const hasOps = Object.keys(update).some(k => k.startsWith('$'));
       const set = update.$set || (hasOps ? {} : update);
-      Object.assign(doc, set);
+      applySet(doc, set);
       if (update.$inc) Object.entries(update.$inc).forEach(([k, n]) => { doc[k] = (Number(doc[k]) || 0) + n; });
       doc.updatedAt = new Date();
       return { ...doc };
@@ -166,7 +190,7 @@ module.exports = function makeMemoryModel(opts = {}) {
       const doc = store.find(d => matches(d, query));
       if (!doc) return { matchedCount: 0, modifiedCount: 0 };
       const hasOps = Object.keys(update).some(k => k.startsWith('$'));
-      Object.assign(doc, update.$set || (hasOps ? {} : update));
+      applySet(doc, update.$set || (hasOps ? {} : update));
       if (update.$inc) Object.entries(update.$inc).forEach(([k, n]) => { doc[k] = (Number(doc[k]) || 0) + n; });
       doc.updatedAt = new Date();
       return { matchedCount: 1, modifiedCount: 1 };
