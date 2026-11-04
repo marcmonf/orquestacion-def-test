@@ -10,7 +10,7 @@ import java.net.URL
 /**
  * Cliente fino de la API de Monetiser para el terminal:
  *   POST /portal/auth/login  → JWT del portal (usuario ligado a su tienda)
- *   /pos/*                   → cobros con QR (ver src/routes/pos.js)
+ *   /pos/...                 → cobros con QR (ver src/routes/pos.js)
  *
  * NUNCA lleva la clave ms_ del comercio: solo el token de sesión del usuario,
  * que caduca y se revoca desde el portal.

@@ -40,12 +40,14 @@ class LoginActivity : Activity() {
             val e = email.text.toString().trim(); val p = pass.text.toString()
             if (e.isEmpty() || p.isEmpty()) { status.text = "Escribe email y contraseña."; return@setOnClickListener }
             login.isEnabled = false; status.setTextColor(Ui.BRAND); status.text = "Entrando…"
-            Ui.background(this, {
+            Ui.background<Pair<Api.Response, Api.Response?>>(this, {
                 val r = Api(url, null).request("POST", "/portal/auth/login", JSONObject().put("email", e).put("password", p))
-                if (!r.ok) return@background Pair(r, null)
-                val token = r.body.optString("token")
-                val me = Api(url, token).request("GET", "/pos/me")
-                Pair(r, me)
+                if (!r.ok) {
+                    Pair(r, null)
+                } else {
+                    val me = Api(url, r.body.optString("token")).request("GET", "/pos/me")
+                    Pair(r, me)
+                }
             }) { res ->
                 login.isEnabled = true; status.setTextColor(Ui.BAD)
                 val (r, me) = res.getOrElse { status.text = Ui.networkMessage(it); return@background }

@@ -42,17 +42,17 @@ object Ui {
         text = label
         textSize = 18f
         setTextColor(Color.WHITE)
-        isAllCaps = false
-        background = GradientDrawable().apply { cornerRadius = dp(a, 10).toFloat(); setColor(color) }
+        setAllCaps(false)
+        background = GradientDrawable().apply { setCornerRadius(dp(a, 10).toFloat()); setColor(color) }
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(a, 56)).apply { topMargin = dp(a, 10) }
     }
 
     fun ghostButton(a: Activity, label: String, onClick: () -> Unit): Button = Button(a).apply {
         text = label
-        isAllCaps = false
+        setAllCaps(false)
         setTextColor(BRAND)
-        background = GradientDrawable().apply { cornerRadius = dp(a, 10).toFloat(); setStroke(dp(a, 1), BRAND); setColor(Color.WHITE) }
+        background = GradientDrawable().apply { setCornerRadius(dp(a, 10).toFloat()); setStroke(dp(a, 1), BRAND); setColor(Color.WHITE) }
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(a, 48)).apply { topMargin = dp(a, 8) }
     }

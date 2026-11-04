@@ -38,7 +38,7 @@ class ChargeActivity : Activity() {
         val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
         for (k in keys) {
             grid.addView(Button(this).apply {
-                text = k; textSize = 24f; isAllCaps = false
+                text = k; textSize = 24f; setAllCaps(false)
                 setOnClickListener { press(k) }
                 layoutParams = GridLayout.LayoutParams().apply {
                     width = 0; height = Ui.dp(this@ChargeActivity, 64)
@@ -65,7 +65,7 @@ class ChargeActivity : Activity() {
         }
         col.addView(charge); col.addView(status)
 
-        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setGravity(Gravity.CENTER) }
         col.addView(Ui.ghostButton(this, "Cobros de hoy") { startActivity(Intent(this, HistoryActivity::class.java)) })
         col.addView(Ui.ghostButton(this, "Salir") {
             session.clear()
