@@ -211,6 +211,28 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    .method-selector {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .method-selector[hidden] { display: none; }
+    .method-btn {
+      flex: 1;
+      min-width: 90px;
+      padding: 10px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      background: white;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .method-btn[aria-pressed="true"] {
+      border-color: var(--brand-color, #5046e4);
+      color: var(--brand-color, #5046e4);
+      font-weight: 600;
+    }
     .secure-footer {
       text-align: center;
       font-size: 11px;
@@ -234,7 +256,10 @@
       </div>
     </div>
 
-    <!-- MODO PROXY PCI: sub-iFrames de Paylands para PAN y CVV -->
+    <!-- Selección de método de pago (solo si hay más de uno) -->
+    <div id="method-selector" class="method-selector" role="group" aria-label="Método de pago" hidden></div>
+
+    <!-- Proveedor 'paylands_proxyfields': sub-iFrames de Paylands para PAN y CVV -->
     <div id="proxy-pci-form">
       <div class="form-group">
         <label>Número de tarjeta</label>
@@ -269,18 +294,24 @@
   </div>
 
   <script>
+    // ═══════════════════════════════════════════════════════════════════════
+    // NÚCLEO DEL CHECKOUT (framework multi-PSP, nov 2026).
+    //
+    // Monetiser no pinta NUNCA un campo de tarjeta propio (PCI SAQ A). Este
+    // núcleo pinta la marca, el importe y, si hay más de un método de pago, la
+    // pantalla de selección; y delega los campos en el PROVEEDOR DE CAMPOS del
+    // PSP al que se enrutó el pago (módulo /checkout/providers/<id>.js, ruta
+    // ABSOLUTA: este iFrame se sirve en /:merchantId/iframe sin barra final).
+    // Hoy el único proveedor es 'paylands_proxyfields' (ProxyFields de Paylands).
+    // ═══════════════════════════════════════════════════════════════════════
     const RUNTIME = window.__MONETISER_RUNTIME__ || {};
-    const paymentId  = RUNTIME.paymentId  || '';
-    const merchantId = RUNTIME.merchantId || '';
     const amount     = RUNTIME.amount     || '';
     const currency   = RUNTIME.currency   || '';
     const branding   = RUNTIME.branding   || {};
-
-    const SERVER_BASE = '';
-    // URL de la librería ProxyFields de Paylands. La decide el SERVIDOR según
-    // PAYNOPAIN_ENV (sandbox/production): antes estaba fija a /sandbox/ aquí,
-    // lo que impedía pasar a producción sin tocar este fichero.
-    const PCI_CLIENT_URL = RUNTIME.pciClientUrl || 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
+    const FIELDS_PROVIDER = RUNTIME.fieldsProvider || 'paylands_proxyfields';
+    const PROVIDER_SCRIPT = RUNTIME.providerScript || '/checkout/providers/paylands_proxyfields.js';
+    const METHODS = Array.isArray(RUNTIME.paymentMethods) && RUNTIME.paymentMethods.length ? RUNTIME.paymentMethods : ['card'];
+    const METHOD_LABELS = { card: 'Tarjeta', bizum: 'Bizum', apple_pay: 'Apple Pay', google_pay: 'Google Pay', paypal: 'PayPal' };
 
     // Aplicar branding
     if (branding.brandColor) {
@@ -294,6 +325,7 @@
     if (branding.merchantName) {
       document.getElementById('brand-name').textContent = branding.merchantName;
     }
+
     document.getElementById('amount-value').textContent    = amount;
     document.getElementById('amount-currency').textContent = currency;
 
@@ -312,144 +344,66 @@
         : 'Pagar ahora';
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // PROXY PCI (único modo). Los campos de PAN y CVV son sub-iFrames de
-    // Paylands: el PAN nunca pasa por el DOM ni por los servidores de Monetiser
-    // (PCI SAQ A). El antiguo "modo legacy" (?mode=...) pintaba un formulario
-    // PROPIO con PAN y CVV y lo enviaba a POST /iframe-process — retirado el
-    // 26 sep 2026: rompía SAQ A y, sin autenticación, permitía marcar un pago
-    // como autorizado sin pagar. Ver DEV-LOG §4.
-    // ═══════════════════════════════════════════════════════════════════════
-    {
-      document.getElementById('proxy-pci-form').style.display = 'block';
+    // ── Selección de método de pago ─────────────────────────────────────────
+    // Con un solo método (hoy: tarjeta) no se enseña nada: el checkout es el de
+    // siempre. Con varios, botones; el elegido muestra su bloque de campos.
+    let activeMethod = METHODS[0];
+    const selector = document.getElementById('method-selector');
+    function selectMethod(m) {
+      activeMethod = m;
+      selector.querySelectorAll('button').forEach((b) => {
+        b.setAttribute('aria-pressed', b.dataset.method === m ? 'true' : 'false');
+      });
+      document.getElementById('proxy-pci-form').style.display = m === 'card' ? 'block' : 'none';
+      statusMsg.className = 'status-message';
+    }
+    if (METHODS.length > 1) {
+      METHODS.forEach((m) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'method-btn';
+        b.dataset.method = m;
+        b.textContent = METHOD_LABELS[m] || m;
+        b.addEventListener('click', () => selectMethod(m));
+        selector.appendChild(b);
+      });
+      selector.hidden = false;
+    }
 
-      const script = document.createElement('script');
-      script.src   = PCI_CLIENT_URL;
+    // Métodos sin flujo propio todavía (solo se ofrecerían con un flag de F5):
+    // nunca se cobra nada; se avisa.
+    payBtn.addEventListener('click', function() {
+      if (activeMethod !== 'card') showStatus('error', 'Este método de pago aún no está disponible.');
+    });
 
-      script.onerror = function() {
+    const core = {
+      runtime: RUNTIME,
+      payBtn, statusMsg, showStatus, setLoading,
+      isActive: (m) => activeMethod === m,
+      navigate: (url) => { window.location.href = url; },
+    };
+
+    // ── Carga del proveedor de campos ───────────────────────────────────────
+    function startProvider() {
+      const providers = window.MonetiserCheckoutProviders || {};
+      const provider = providers[FIELDS_PROVIDER];
+      if (!provider) {
+        showStatus('error', 'Método de pago no disponible. Recarga la página.');
+        return;
+      }
+      selectMethod(activeMethod);
+      provider.mount(core);
+    }
+    if (!/^\/checkout\/providers\/[a-z0-9_]+\.js$/.test(PROVIDER_SCRIPT)) {
+      showStatus('error', 'Método de pago no disponible. Recarga la página.');
+    } else {
+      const ps = document.createElement('script');
+      ps.src = PROVIDER_SCRIPT;
+      ps.onload = startProvider;
+      ps.onerror = function() {
         showStatus('error', 'Error al cargar el módulo de seguridad. Recarga la página.');
       };
-
-      script.onload = function() { initProxyPCI(); };
-      document.head.appendChild(script);
-
-      let proxyFields  = null;
-      let sessionToken = null;
-
-      async function initProxyPCI() {
-        try {
-          const sessionRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentId }),
-          });
-
-          if (!sessionRes.ok) {
-            throw new Error(`Error al obtener sesión PCI (${sessionRes.status})`);
-          }
-
-          const sessionData = await sessionRes.json();
-          sessionToken = sessionData.sessionToken;
-
-          proxyFields = new ProxyFields();
-          proxyFields.init(sessionToken, {
-            cardNumber: 'pan-container',
-            cvv:        'cvv-container'
-          });
-
-          const fieldStyle = 'width: 100%; height: 44px; border: none; outline: none; font-size: 15px; color: #111; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 0 14px;';
-
-          proxyFields.on('ready', () => {
-            proxyFields.setStyle('cardNumber', fieldStyle);
-            proxyFields.setStyle('cardNumber::placeholder', 'color: #aaa');
-            proxyFields.setPlaceholder('cardNumber', '4111 1111 1111 1111');
-
-            proxyFields.setStyle('cvv', fieldStyle);
-            proxyFields.setStyle('cvv::placeholder', 'color: #aaa');
-            proxyFields.setPlaceholder('cvv', '123');
-
-            document.getElementById('pan-container').classList.add('ready');
-            document.getElementById('cvv-container').classList.add('ready');
-            payBtn.disabled    = false;
-            payBtn.textContent = 'Pagar ahora';
-          });
-
-          proxyFields.on('validate', (data) => {
-            if (data && data.hasErrors) {
-              if (data.fields?.cardNumber) document.getElementById('pan-container').classList.add('error');
-              if (data.fields?.cvv)        document.getElementById('cvv-container').classList.add('error');
-              showStatus('error', 'Revisa los datos de la tarjeta.');
-            } else {
-              document.getElementById('pan-container').classList.remove('error');
-              document.getElementById('cvv-container').classList.remove('error');
-              statusMsg.className = 'status-message';
-            }
-          });
-
-          proxyFields.on('success', async () => {
-            try {
-              const chargeRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/charge`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paymentId }),
-              });
-
-              const chargeData = await chargeRes.json();
-
-              if (chargeData.success && chargeData.requires3DS && chargeData.threeDsUrl) {
-                // Banco requiere 3DS — cargar el challenge en este mismo iframe.
-                // Al terminar, Paylands trae al comprador a la página de
-                // resultado (url_ok / url_ko).
-                window.location.href = chargeData.threeDsUrl;
-              } else if (typeof chargeData.resultUrl === 'string' && chargeData.resultUrl.startsWith('/checkout/result/')) {
-                // Resultado sin 3DS (o pago ya cerrado por un error): la misma
-                // página de resultado que tras el 3DS — avisa a la web del
-                // comercio y ofrece volver a la tienda.
-                window.location.href = chargeData.resultUrl;
-              } else {
-                // Error ANTES de cobrar: el pago sigue abierto y se puede reintentar.
-                showStatus('error', chargeData.message || 'No se pudo iniciar el pago.');
-                setLoading(false);
-              }
-            } catch (chargeErr) {
-              showStatus('error', 'Error al procesar el pago. Inténtalo de nuevo.');
-              setLoading(false);
-            }
-          });
-
-          proxyFields.on('error', () => {
-            showStatus('error', 'Error al procesar la tarjeta.');
-            setLoading(false);
-          });
-
-        } catch (initErr) {
-          showStatus('error', 'Error al inicializar el pago seguro. Recarga la página.');
-          console.error('[Monetiser] initProxyPCI error:', initErr);
-        }
-      }
-
-      payBtn.addEventListener('click', function() {
-        if (!proxyFields) return;
-
-        const expiryMonth = document.getElementById('expiry-month').value.trim();
-        const expiryYear  = document.getElementById('expiry-year').value.trim();
-        const cardHolder  = document.getElementById('card-holder').value.trim();
-
-        if (!expiryMonth || !expiryYear || !cardHolder) {
-          showStatus('error', 'Completa todos los campos.');
-          return;
-        }
-
-        setLoading(true);
-        statusMsg.className = 'status-message';
-
-        proxyFields.submit({
-          expiryMonth,
-          expiryYear: expiryYear.length === 2 ? '20' + expiryYear : expiryYear,
-          cardHolder,
-        });
-      });
-
+      document.head.appendChild(ps);
     }
   </script>
 </body>

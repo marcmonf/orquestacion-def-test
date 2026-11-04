@@ -1480,6 +1480,36 @@ Verificación F2: **499/499** (+21: `tests/unit/multiPspRouting.test.js`,
 `tests/integration/multiPspBackoffice.test.js`), golden del cable idéntico, arranque real
 limpio. Sin cambios en `public/` en esta fase.
 
+
+#### F3 — Checkout multi-PSP
+
+1. **Proveedores de campos** (`src/utils/checkoutProviders.js`): cada PSP declara su
+   módulo de navegador, los dominios que añade a la CSP y sus datos de runtime. Hoy uno:
+   `paylands_proxyfields`. La CSP del iFrame se construye con el proveedor del pago y,
+   para Paylands, es **idéntica carácter a carácter** a la de antes (test).
+2. `/:merchantId/iframe` elige el proveedor según `Transaction.routing.fieldsProvider`
+   (pagos anteriores sin routing → Paylands) y añade al runtime (aditivo)
+   `fieldsProvider`, `providerScript`, `providerConfig` y `paymentMethods`.
+3. `public/iframe.html` es ahora un **núcleo** (marca, importe, pantalla de selección de
+   método, errores) que carga el módulo del proveedor por ruta ABSOLUTA. El código de
+   ProxyFields se movió **sin cambios de comportamiento** a
+   `public/checkout/providers/paylands_proxyfields.js`.
+4. **Selección de método de pago**: solo aparece con 2 o más métodos. Los métodos
+   ofrecidos = los del conector enrutado ∩ los que el checkout sabe presentar (hoy solo
+   `card`), así que hoy NO aparece y el checkout es el de siempre.
+
+**Verificación en navegador real (Chromium, 375 px)** con las rutas reales del iFrame y de
+`/proxy-pci` (modelos en memoria; ProxyFields y Paylands simulados con `page.route`, sin
+red): pago con routing y pago antiguo sin routing → misma CSP, carga de ProxyFields,
+`/proxy-pci/session` → `ProxyFields.init('pan-container','cvv-container')` → `/charge` con
+solo el `paymentId` → navegación al 3DS de Paylands; tx en `pending_3ds` con BIN/últimos
+4. Con 2 métodos inyectados: botones "Tarjeta | Bizum", Bizum oculta los campos y "Pagar"
+no envía nada. Cero errores de consola o de CSP, sin scroll horizontal. Suite **505/505**
+(+6 `tests/unit/checkoutProviders.test.js`), arranque real limpio.
+**Pendiente (Marcos):** repetir en sandbox real un pago completo con el checkout tras
+desplegar (runbook del cierre, prueba R1) — el cambio de `public/` solo se ha probado con
+Paylands simulado.
+
 ---
 
 ## 7. Elementos de seguridad

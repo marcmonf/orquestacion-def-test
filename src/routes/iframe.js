@@ -25,31 +25,32 @@ const {
 
 const ALLOWED_INITIAL_STATUSES = ['initialized', 'hosted_pending'];
 
-// CSP del iFrame:
+// CSP del iFrame y proveedor de campos (framework multi-PSP, nov 2026): la CSP
+// se construye con los dominios del proveedor de campos del PSP al que se
+// enrutó el pago (src/utils/checkoutProviders.js). Para Paylands es
+// EXACTAMENTE la CSP de antes (lo comprueba tests/unit/checkoutProviders.test.js).
 // - 'unsafe-inline' en script-src: necesario para el bloque <script> del iframe.html
-// - pci-proxy-api.paynopain.com en script-src: librería ProxyFields de Paylands
-// - pci-proxy-api.paynopain.com en connect-src: llamadas fetch() al Proxy PCI
-// - pci-proxy-sandbox.paynopain.com en frame-src: sub-iFrame del campo PAN
-const CSP_HEADER =
-  "default-src 'self'; " +
-  "img-src 'self' data: https:; " +
-  "style-src 'self' 'unsafe-inline'; " +
-  "script-src 'self' 'unsafe-inline' https://pci-proxy-api.paynopain.com; " +
-  "connect-src 'self' https://pci-proxy-api.paynopain.com; " +
-  "frame-src 'self' https://pci-proxy-api.paynopain.com https://pci-proxy-sandbox.paynopain.com https://api.paylands.com; " +
-  "form-action 'self' https://api.paylands.com; " +
-  "base-uri 'none'; object-src 'none'; " +
-  "frame-ancestors *;";
+const checkoutProviders = require('../utils/checkoutProviders');
+const registry = require('../services/connectorRegistry');
+const CSP_HEADER = checkoutProviders.buildCsp(checkoutProviders.PROVIDERS[checkoutProviders.DEFAULT_FIELDS_PROVIDER]);
+const { pciClientUrl } = checkoutProviders;
 
-// URL de la librería cliente ProxyFields según el entorno de Paylands.
-// PAYNOPAIN_PCI_CLIENT_URL permite fijarla a mano. El valor por defecto de
-// producción replica la ruta /prod que usa el servidor (pciProxyService.js) y
-// DEBE confirmarse con Paylands antes de salir a producción.
-function pciClientUrl() {
-  if (process.env.PAYNOPAIN_PCI_CLIENT_URL) return process.env.PAYNOPAIN_PCI_CLIENT_URL;
-  return process.env.PAYNOPAIN_ENV === 'production'
-    ? 'https://pci-proxy-api.paynopain.com/prod/client.js'
-    : 'https://pci-proxy-api.paynopain.com/sandbox/client.js';
+// Proveedor de campos del pago: el que decidió el routing al crear la sesión.
+// Pagos anteriores al framework (sin routing) → Paylands, como siempre.
+function fieldsProviderFor(tx) {
+  const id = (tx && tx.routing && tx.routing.fieldsProvider) || checkoutProviders.DEFAULT_FIELDS_PROVIDER;
+  return checkoutProviders.getFieldsProvider(id);
+}
+
+// Métodos que el checkout ofrece: los del conector enrutado que además tienen
+// flujo de navegador (hoy solo tarjeta). Con uno solo, no hay pantalla de
+// selección y el checkout es idéntico al de antes.
+function paymentMethodsFor(tx) {
+  const connector = (tx && tx.routing && tx.routing.connector) || registry.DEFAULT_CONNECTOR;
+  let declared = ['card'];
+  try { declared = registry.getProvider(connector).capabilities.paymentMethods; } catch (_) { /* conector ya no registrado */ }
+  const methods = declared.filter((m) => checkoutProviders.CHECKOUT_METHOD_UI.includes(m));
+  return methods.length ? methods : ['card'];
 }
 
 /**
@@ -61,12 +62,19 @@ function injectRuntime(html, branding, runtime) {
   const b  = branding || {};
   const rt = runtime  || {};
 
+  const provider = rt.fieldsProvider || checkoutProviders.PROVIDERS[checkoutProviders.DEFAULT_FIELDS_PROVIDER];
   const payload = {
     paymentId:    rt.paymentId  || '',
     merchantId:   rt.merchantId || '',
     amount:       rt.amount !== undefined && rt.amount !== null ? String(rt.amount) : '',
     currency:     rt.currency   || '',
     pciClientUrl: pciClientUrl(),
+    // Multi-PSP (aditivo): proveedor de campos y su módulo de navegador, y los
+    // métodos de pago que el checkout ofrece.
+    fieldsProvider: provider.id,
+    providerScript: provider.script,
+    providerConfig: provider.runtime(),
+    paymentMethods: Array.isArray(rt.paymentMethods) && rt.paymentMethods.length ? rt.paymentMethods : ['card'],
     branding: {
       logoUrl:      safeLogoUrl(b.logoUrl),
       brandColor:   safeColor(b.brandColor, '#0070f3'),
@@ -128,6 +136,10 @@ router.get('/', async (req, res) => {
       return brandedError(res, 409);
     }
 
+    const provider = fieldsProviderFor(tx);
+    if (!provider) return brandedError(res, 409);
+    res.setHeader('Content-Security-Policy', checkoutProviders.buildCsp(provider));
+
     const merchant = await Merchant.findOne(
       { merchantId: tx.merchantId },
       { name: 1, logoUrl: 1, brandColor: 1, accentColor: 1, branding: 1, _id: 0 }
@@ -154,7 +166,9 @@ router.get('/', async (req, res) => {
       amount:     majorAmount.toFixed(cfg.minorUnits),
       currency:   tx.currency,
       merchantId: tx.merchantId,
-      paymentId:  tx.paymentId
+      paymentId:  tx.paymentId,
+      fieldsProvider: provider,
+      paymentMethods: paymentMethodsFor(tx),
     };
 
     const baseHtml = readHtml(publicFile('iframe.html'));
@@ -168,4 +182,4 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
-module.exports._test = { injectRuntime, safeColor, safeLogoUrl, jsonForScript };
+module.exports._test = { injectRuntime, safeColor, safeLogoUrl, jsonForScript, fieldsProviderFor, paymentMethodsFor, CSP_HEADER };
