@@ -35,6 +35,10 @@ const sessions  = require('../services/checkoutSessionService');
 const { MAX_PAYMENT_AMOUNT, RedirectUrl, WebhookUrl } = require('../dtos/paymentNodeDTOs');
 const { getSupportedCurrencies } = require('../utils/currencyConfig');
 const paymentMethods = require('../services/paymentMethodService');
+const paymentTokens = require('../services/paymentTokenService');
+const registry = require('../services/connectorRegistry');
+const Transaction = require('../models/Transaction');
+const { v4: uuidv4 } = require('uuid');
 const { PAYMENT_METHODS } = require('../connectors/contract');
 const logger = require('../utils/logger');
 
@@ -75,6 +79,8 @@ const createSchema = Joi.object({
   // Métodos que el comercio permite en esta sesión (F5, opcional). Por defecto,
   // todos los disponibles. Hoy solo 'card' está disponible.
   paymentMethods: Joi.array().items(Joi.string().valid(...PAYMENT_METHODS)).min(1).max(PAYMENT_METHODS.length).unique(),
+  // F6 (FEATURE_SAVED_CARDS): ofrecer al comprador guardar la tarjeta para este cliente.
+  saveCard:   Joi.object({ customerRef: Joi.string().trim().pattern(/^[A-Za-z0-9_.:@-]{1,128}$/).required() }),
 }).options({ stripUnknown: false, abortEarly: false });
 
 const amountSchema = Joi.object({
@@ -103,6 +109,10 @@ router.post('/checkout-sessions', async (req, res) => {
   const idem = idempotencyKeyOf(req, res);
   if (idem.error) return undefined;
 
+  if (value.saveCard && !paymentTokens.enabled()) {
+    return fail(res, 400, 'saved_cards_not_enabled', 'Guardar tarjeta no está activado en Monetiser.');
+  }
+
   // Métodos: los pedidos ∩ los disponibles. Ninguno → 422 con el motivo de cada uno.
   let allowedMethods = null;
   if (value.paymentMethods) {
@@ -128,6 +138,7 @@ router.post('/checkout-sessions', async (req, res) => {
       country:    value.country || null,
       livemode:   Boolean(req.livemode),
       paymentMethods: allowedMethods,
+      saveCard:   value.saveCard || null,
       idempotencyKey: idem.key,
     });
     if (created) {
@@ -163,6 +174,109 @@ router.get('/checkout-sessions/:id', async (req, res) => {
 // Catálogo con disponibilidad real: hoy solo 'card'; el resto con su motivo.
 router.get('/payment-methods', (req, res) => {
   return res.json({ object: 'list', data: paymentMethods.catalog() });
+});
+
+// ── Tarjetas guardadas (F6, FEATURE_SAVED_CARDS) ─────────────────────────────
+// El comercio solo ve pm_... y el resumen de la tarjeta; nunca el token del PSP.
+function savedCardsGate(req, res, next) {
+  if (!paymentTokens.enabled()) return fail(res, 404, 'saved_cards_not_enabled', 'Guardar tarjeta no está activado en Monetiser.');
+  return next();
+}
+
+router.get('/payment-tokens', savedCardsGate, async (req, res) => {
+  const customerRef = typeof req.query.customerRef === 'string' ? req.query.customerRef.slice(0, 128) : null;
+  try {
+    return res.json({ object: 'list', data: await paymentTokens.list(req.merchantId, req.livemode, customerRef) });
+  } catch (err) {
+    logger.error('V1_TOKENS_LIST_ERROR', { component: 'v1', data: { error: err.message } });
+    return fail(res, 500, 'internal_error');
+  }
+});
+
+router.get('/payment-tokens/:id', savedCardsGate, async (req, res) => {
+  const doc = await paymentTokens.get(req.merchantId, req.livemode, req.params.id).catch(() => null);
+  if (!doc) return fail(res, 404, 'not_found');
+  return res.json(paymentTokens.publicToken(doc));
+});
+
+router.delete('/payment-tokens/:id', savedCardsGate, async (req, res) => {
+  const out = await paymentTokens.revoke(req.merchantId, req.livemode, req.params.id).catch(() => null);
+  if (!out) return fail(res, 404, 'not_found');
+  return res.json(out);
+});
+
+// POST /v1/payments — cobro con una tarjeta guardada (token pm_ de Monetiser).
+const tokenPaymentSchema = Joi.object({
+  amount:       Amount().required(),
+  currency:     Joi.string().length(3).uppercase().valid(...getSupportedCurrencies()).required(),
+  paymentToken: Joi.string().pattern(/^pm_[0-9a-f]{32}$/).required(),
+  initiator:    Joi.string().valid('customer', 'merchant').required(),
+  reason:       Joi.string().valid('recurring', 'unscheduled', 'installment').when('initiator', { is: 'merchant', then: Joi.required() }),
+  reference:    Joi.string().trim().max(128).allow(null, ''),
+  webhookUrl:   WebhookUrl().allow(null, ''),
+}).options({ abortEarly: false });
+
+router.post('/payments', savedCardsGate, async (req, res) => {
+  const body = req.body || {};
+  if (['card', 'cardNumber', 'pan', 'cvv', 'cvc', 'source_uuid'].some(k => body[k] !== undefined)) {
+    return fail(res, 400, 'card_data_not_accepted', 'Solo se admite un paymentToken (pm_...) de Monetiser.');
+  }
+  const { error, value } = tokenPaymentSchema.validate(body);
+  if (error) return validation(res, error);
+  const idem = idempotencyKeyOf(req, res);
+  if (idem.error) return undefined;
+
+  try {
+    if (idem.key) {
+      const prior = await Transaction.findOne({ merchantId: req.merchantId, idempotencyKey: req.livemode ? `live:${idem.key}` : idem.key }).lean();
+      if (prior) return res.status(200).json(await sessions.toPayment(prior));
+    }
+    const resolved = await paymentTokens.resolveForCharge(req.merchantId, req.livemode, value.paymentToken);
+    if (!resolved) return fail(res, 404, 'payment_token_not_found');
+    const provider = registry.getProvider(resolved.doc.connector);
+    // MIT (sin el cliente delante): solo si el PSP declara que los soporta con sus indicadores.
+    if (value.initiator === 'merchant' && !provider.capabilities.merchantInitiated) {
+      return fail(res, 422, 'merchant_initiated_not_supported',
+        `${provider.displayName} no tiene verificados los cobros sin el cliente delante (pendiente de verificar con el PSP).`);
+    }
+    const tx = await Transaction.create({
+      paymentId: uuidv4(), merchantId: req.merchantId, merchantReference: value.reference || null,
+      amount: value.amount, currency: value.currency, method: 'card', status: 'processing',
+      processor: resolved.doc.connector, connectorAccountId: resolved.doc.connectorAccountId || null,
+      callbackUrl: value.webhookUrl || null, initiator: value.initiator,
+      storedCredential: { usage: 'subsequent', reason: value.reason || null, tokenId: resolved.doc.tokenId },
+      cardBrand: resolved.doc.card?.brand, cardLast4: resolved.doc.card?.last4, bin: resolved.doc.card?.bin,
+      issuerCountry: resolved.doc.card?.country,
+      ...(req.livemode ? { livemode: true } : {}),
+      ...(idem.key ? { idempotencyKey: req.livemode ? `live:${idem.key}` : idem.key } : {}),
+      createdAt: new Date(),
+    });
+    // Un solo intento, en el PSP que emitió el token (nunca en otro: invariante 5).
+    let r;
+    try {
+      r = await provider.createPayment({
+        paymentId: tx.paymentId, merchantId: req.merchantId, amount: value.amount, currency: value.currency,
+        method: 'card', sourceToken: resolved.pspToken,
+      });
+    } catch (e) {
+      // La llamada pudo llegar al PSP: 'error' (el webhook lo corrige si notifica).
+      r = { status: 'error', processorReference: null, error: { code: 'processor_unavailable', message: 'Error al llamar al PSP' } };
+    }
+    const status = r.status === 'requires_action' ? 'pending_3ds'
+      : r.status === 'authorized' ? 'authorized'
+      : r.status === 'captured' ? 'captured'
+      : r.status === 'declined' ? 'declined' : 'error';
+    await Transaction.updateOne({ paymentId: tx.paymentId, merchantId: req.merchantId },
+      { $set: { status, processorReference: r.processorReference || null, updatedAt: new Date() } });
+    const saved = await sessions.findPayment(req.merchantId, tx.paymentId, req.livemode);
+    const out = await sessions.toPayment(saved);
+    if (r.status === 'requires_action') out.nextAction = { type: 'redirect', url: r.action.url };
+    if (r.error) out.error = { code: r.error.code, message: r.error.message };
+    return res.status(201).json(out);
+  } catch (err) {
+    logger.error('V1_TOKEN_PAYMENT_ERROR', { component: 'v1', data: { merchantId: req.merchantId, error: err.message } });
+    return fail(res, 500, 'internal_error');
+  }
 });
 
 // ── Pagos ────────────────────────────────────────────────────────────────────

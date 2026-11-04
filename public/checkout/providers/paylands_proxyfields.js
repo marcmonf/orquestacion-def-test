@@ -98,7 +98,9 @@
               const chargeRes = await fetch(`${SERVER_BASE}/${merchantId}/proxy-pci/charge`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paymentId }),
+                // Solo el paymentId (y, si el titular marcó la casilla, su
+                // consentimiento para guardar la tarjeta). Nunca datos de tarjeta.
+                body: JSON.stringify(core.saveCardConsent && core.saveCardConsent() ? { paymentId, saveCard: true } : { paymentId }),
               });
               const chargeData = await chargeRes.json();
 

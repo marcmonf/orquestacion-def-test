@@ -211,6 +211,16 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    .save-card-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #444;
+      margin-bottom: 12px;
+      font-weight: 400;
+    }
+    .save-card-row[hidden] { display: none; }
     .method-selector {
       display: flex;
       gap: 8px;
@@ -284,6 +294,11 @@
         <label for="card-holder">Titular</label>
         <input type="text" id="card-holder" placeholder="Nombre en la tarjeta" autocomplete="cc-name">
       </div>
+      <!-- F6: consentimiento para guardar la tarjeta (solo si el comercio lo ofrece y está activado) -->
+      <label id="save-card-row" class="save-card-row" hidden>
+        <input type="checkbox" id="save-card">
+        <span id="save-card-text"></span>
+      </label>
     </div>
 
     <button class="submit-btn" id="pay-btn" disabled>Cargando...</button>
@@ -376,8 +391,16 @@
       if (activeMethod !== 'card') showStatus('error', 'Este método de pago aún no está disponible.');
     });
 
+    // F6: casilla "guardar tarjeta" (desmarcada por defecto: el consentimiento
+    // tiene que ser un acto del titular).
+    if (RUNTIME.saveCardOffered === true) {
+      document.getElementById('save-card-text').textContent = RUNTIME.saveCardText || 'Guardar esta tarjeta para próximos pagos';
+      document.getElementById('save-card-row').hidden = false;
+    }
+
     const core = {
       runtime: RUNTIME,
+      saveCardConsent: () => RUNTIME.saveCardOffered === true && document.getElementById('save-card').checked === true,
       payBtn, statusMsg, showStatus, setLoading,
       isActive: (m) => activeMethod === m,
       navigate: (url) => { window.location.href = url; },

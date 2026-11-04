@@ -59,6 +59,19 @@ const transactionSchema = new mongoose.Schema({
   // Métodos que el comercio permitió en la sesión (F5, API v1). Sin el campo:
   // los disponibles (hoy solo tarjeta). `method` sigue siendo el método usado.
   paymentMethods:     { type: [String], default: undefined },
+
+  // ── Tarjeta guardada / recurrentes (F6, detrás de FEATURE_SAVED_CARDS) ────
+  // Oferta de guardar la tarjeta en esta sesión (cliente del comercio).
+  saveCardOffer:      { customerRef: { type: String } },
+  // Quién inicia el pago: 'customer' (CIT, cliente delante) o 'merchant' (MIT).
+  initiator:          { type: String, default: undefined },
+  // Credencial guardada: 'first' (pago que la guarda) o 'subsequent' (pago con
+  // el token pm_), su motivo y el token Monetiser usado.
+  storedCredential:   {
+    usage:   { type: String },
+    reason:  { type: String },
+    tokenId: { type: String },
+  },
   fallbackUsed:       { type: Boolean, default: false },
   returnUrl:          String,
   callbackUrl:        String,

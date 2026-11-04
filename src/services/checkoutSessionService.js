@@ -87,6 +87,7 @@ function toCheckoutSession(tx, baseUrl, now = new Date()) {
     url:           baseUrl ? `${baseUrl}${path}` : path,
     returnUrl:     tx.returnUrl || null,
     webhookUrl:    tx.callbackUrl || null,
+    ...(tx.saveCardOffer && tx.saveCardOffer.customerRef ? { saveCard: { customerRef: tx.saveCardOffer.customerRef } } : {}),
     expiresAt:     iso(tx.sessionExpiresAt),
     createdAt:     iso(tx.createdAt),
   };
@@ -185,6 +186,7 @@ async function createCheckoutSession(merchantId, input) {
     connectorAccountId: routing.accountId,
     ...(livemode ? { livemode: true } : {}),
     ...(Array.isArray(input.paymentMethods) && input.paymentMethods.length ? { paymentMethods: input.paymentMethods } : {}),
+    ...(input.saveCard && input.saveCard.customerRef ? { saveCardOffer: { customerRef: input.saveCard.customerRef }, initiator: 'customer' } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 

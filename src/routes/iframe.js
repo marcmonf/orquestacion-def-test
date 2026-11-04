@@ -32,6 +32,7 @@ const ALLOWED_INITIAL_STATUSES = ['initialized', 'hosted_pending'];
 // - 'unsafe-inline' en script-src: necesario para el bloque <script> del iframe.html
 const checkoutProviders = require('../utils/checkoutProviders');
 const registry = require('../services/connectorRegistry');
+const paymentTokens = require('../services/paymentTokenService');
 const CSP_HEADER = checkoutProviders.buildCsp(checkoutProviders.PROVIDERS[checkoutProviders.DEFAULT_FIELDS_PROVIDER]);
 const { pciClientUrl } = checkoutProviders;
 
@@ -76,6 +77,9 @@ function injectRuntime(html, branding, runtime) {
     providerScript: provider.script,
     providerConfig: provider.runtime(),
     paymentMethods: Array.isArray(rt.paymentMethods) && rt.paymentMethods.length ? rt.paymentMethods : ['card'],
+    // F6 (FEATURE_SAVED_CARDS): casilla de consentimiento para guardar la tarjeta.
+    saveCardOffered: rt.saveCardOffered === true,
+    saveCardText: rt.saveCardOffered === true ? paymentTokens.CONSENT_TEXT : undefined,
     branding: {
       logoUrl:      safeLogoUrl(b.logoUrl),
       brandColor:   safeColor(b.brandColor, '#0070f3'),
@@ -170,6 +174,7 @@ router.get('/', async (req, res) => {
       paymentId:  tx.paymentId,
       fieldsProvider: provider,
       paymentMethods: paymentMethodsFor(tx),
+      saveCardOffered: paymentTokens.enabled() && Boolean(tx.saveCardOffer && tx.saveCardOffer.customerRef),
     };
 
     const baseHtml = readHtml(publicFile('iframe.html'));

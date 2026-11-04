@@ -1557,6 +1557,45 @@ datos live: el flag está apagado).
 
 Verificación F5: **517/517** (+5 `tests/unit/paymentMethods.test.js`).
 
+
+#### F6 — Tarjeta guardada / recurrentes (APAGADO: `FEATURE_SAVED_CARDS`)
+
+Cierra en código los puntos 1–3 de "Por qué ningún comercio puede usarlo todavía" del
+S2S (sesión del 26 sep), detrás de un flag apagado:
+
+1. **Token PROPIO de Monetiser** (`src/models/PaymentToken.js`,
+   `src/services/paymentTokenService.js`): `pm_<hex>` ligado al `merchantId` y al modo.
+   El token de Paylands (source_uuid de ProxyFields) se guarda **cifrado** y nunca sale:
+   la API devuelve `pm_…` + marca, últimos 4, caducidad y país. Otro comercio u otro modo
+   → 404.
+2. **Consentimiento "guardar tarjeta"**: la sesión v1 lleva `saveCard: { customerRef }`;
+   el checkout enseña una casilla **desmarcada** con el texto versionado
+   (`v1-2026-11`); solo si el titular la marca, `/proxy-pci/charge` recibe
+   `saveCard:true` y se crea el token en `pending` con fecha, IP y navegador. El webhook
+   lo activa cuando Paylands confirma el pago (`authorized`) y lo descarta si no.
+   **El cable del primer pago no cambia** (sigue `save_card:false`): no se ha tocado
+   ningún parámetro de Paylands.
+3. **Indicadores CIT/MIT**: `Transaction.initiator` (`customer`/`merchant`) y
+   `storedCredential` (`first`/`subsequent`, motivo, token).
+4. **Cobro con el token**: `POST /v1/payments { amount, currency, paymentToken,
+   initiator, reason? }` (+ `GET /v1/payment-tokens`, `GET|DELETE
+   /v1/payment-tokens/:id`). Cliente delante (CIT) → el MISMO cobro tokenizado con 3DS
+   que el checkout (`nextAction.redirect`). Sin el cliente (MIT) → `422
+   merchant_initiated_not_supported`: Paylands no declara `merchantInitiated` porque sus
+   indicadores (extra_data.cof…) **no están verificados**. Un solo intento, en el PSP
+   que emitió el token.
+
+**Pendiente de verificar con PayNoPain** antes de encender el flag: (a) si el
+`source_uuid` del Proxy PCI es reutilizable para cobros posteriores (o hace falta
+`save_card:true` u otro mecanismo); (b) indicadores de credencial guardada y de MIT;
+(c) adónde vuelve el comprador tras el 3DS de un cobro con token (hoy a la página de
+resultado sin `returnUrl`). Y el "Test D" de S2S contra sandbox.
+
+Verificación F6: **523/523** (+6 `tests/integration/savedCards.test.js`). En Chromium real:
+sin oferta la casilla no existe y el cobro envía solo `{"paymentId"}`; con oferta
+aparece desmarcada, marcada envía `{"paymentId","saveCard":true}` y el token queda
+`pending` sin el token del PSP en claro. Sin errores de consola, 375 px sin scroll.
+
 ---
 
 ## 7. Elementos de seguridad

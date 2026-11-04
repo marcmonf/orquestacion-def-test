@@ -45,6 +45,7 @@ const { getProvider } = require('../services/connectorRegistry');
 const PAYLANDS = 'payNoPain';
 const FIELDS_PROVIDER = 'paylands_proxyfields';
 const health = require('../services/connectorHealth');
+const paymentTokens = require('../services/paymentTokenService');
 
 // ¿Este pago se enrutó a los campos de Paylands? Los pagos anteriores al
 // framework multi-PSP no tienen `routing` → Paylands (como siempre).
@@ -137,6 +138,7 @@ router.post('/session', rateLimiter, async (req, res) => {
 router.post('/charge', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
   const { paymentId, expiryMonth, expiryYear, cardHolder } = req.body || {};
+  const saveCardConsent = (req.body || {}).saveCard === true;
 
   if (!paymentId || typeof paymentId !== 'string') {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
@@ -244,6 +246,26 @@ router.post('/charge', rateLimiter, async (req, res) => {
     };
 
     const meta = cardMetadata(tokenResult);
+
+    // F6 (FEATURE_SAVED_CARDS): el titular marcó "guardar tarjeta" y el comercio
+    // lo ofreció → token Monetiser 'pending' con el token del PSP CIFRADO. Se
+    // activa cuando el webhook confirme el pago. Un fallo aquí nunca afecta al cobro.
+    if (saveCardConsent && paymentTokens.enabled() && tx.saveCardOffer && tx.saveCardOffer.customerRef
+        && (payment.status === 'requires_action' || payment.status === 'authorized')) {
+      try {
+        await paymentTokens.createPending({
+          tx: { ...(typeof tx.toObject === 'function' ? tx.toObject() : tx), processor: PAYLANDS },
+          pspToken: tokenResult.token,
+          card: { brand: meta.cardBrand, last4: meta.cardLast4, bin: meta.bin, country: meta.issuerCountry,
+            expMonth: tokenResult.expiryMonth ? String(tokenResult.expiryMonth) : undefined,
+            expYear: tokenResult.expiryYear ? String(tokenResult.expiryYear) : undefined },
+          consent: { ip: req.ip, userAgent: req.headers['user-agent'] },
+        });
+        await Transaction.updateOne({ paymentId, merchantId }, { $set: { storedCredential: { usage: 'first' } } });
+      } catch (e) {
+        logger.warn('SAVED_CARD_CREATE_FAILED', { component: 'proxyPciRoutes', data: { paymentId, error: e.message } });
+      }
+    }
 
     // Paso 3: Determinar status correcto y guardar UNA sola vez
     // Primero verificamos si hay 3DS pendiente para no guardar 'declined' prematuramente

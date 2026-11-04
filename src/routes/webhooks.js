@@ -26,6 +26,7 @@ const dispatcher   = require('../services/webhookDispatcher');
 const logger       = require('../utils/logger');
 const adminAuth    = require('../middleware/adminAuth');
 const { ACQUIRER_TRANSITIONS } = require('../utils/paymentStatus');
+const paymentTokens = require('../services/paymentTokenService');
 
 // Verificación del validation_hash y mapa de estados de Paylands: viven en el
 // conector (src/connectors/paylands/webhook.js) desde el framework multi-PSP
@@ -223,6 +224,17 @@ router.post('/paynopain', async (req, res) => {
       component: 'webhooks',
       data: { error: auditErr.message }
     });
+  }
+
+  // ── 5b. Tarjeta guardada (F6, FEATURE_SAVED_CARDS): el token se activa solo
+  //        cuando el PSP confirma el pago que lo creó; si no se aprueba, se descarta.
+  if (changed && paymentTokens.enabled()) {
+    try {
+      if (tx.status === 'authorized') await paymentTokens.activateForPayment(tx.paymentId);
+      else if (['declined', 'cancelled'].includes(tx.status)) await paymentTokens.discardForPayment(tx.paymentId);
+    } catch (e) {
+      logger.warn('WEBHOOK_SAVED_CARD_UPDATE_FAIL', { component: 'webhooks', data: { error: e.message } });
+    }
   }
 
   // ── 6. Webhook saliente hacia el merchant (solo si el estado cambió) ────────
