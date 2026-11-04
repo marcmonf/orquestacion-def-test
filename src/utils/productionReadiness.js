@@ -14,7 +14,6 @@
 
 function env(k) { return process.env[k]; }
 function isTrue(k) { return ['true', '1'].includes(String(env(k) || '').trim().toLowerCase()); }
-function hex64(k) { return /^[0-9a-fA-F]{64}$/.test(String(env(k) || '')); }
 
 const CHECKS = [
   { var: 'PAYNOPAIN_ENV', severity: 'blocker', ok: () => env('PAYNOPAIN_ENV') === 'production', fix: "Poner 'production' SOLO cuando PayNoPain entregue las credenciales reales." },
@@ -26,7 +25,7 @@ const CHECKS = [
   { var: 'ADMIN_TOKEN', severity: 'blocker', ok: () => String(env('ADMIN_TOKEN') || '').length >= 32, fix: '≥ 32 caracteres aleatorios.' },
   { var: 'BACKOFFICE_JWT_SECRET / PORTAL_JWT_SECRET', severity: 'blocker', ok: () => Boolean(env('BACKOFFICE_JWT_SECRET') && env('PORTAL_JWT_SECRET') && env('BACKOFFICE_JWT_SECRET') !== env('PORTAL_JWT_SECRET')), fix: 'Los dos definidos y DISTINTOS.' },
   { var: 'HPP_SIGNING_SECRET', severity: 'blocker', ok: () => String(env('HPP_SIGNING_SECRET') || '').length >= 32, fix: '64 hex aleatorios (firma la URL del iFrame y la vuelta del comprador).' },
-  { var: 'CREDENTIALS_ENCRYPTION_KEY', severity: 'blocker', ok: () => hex64('CREDENTIALS_ENCRYPTION_KEY') || hex64('ENCRYPTION_KEY'), fix: '64 hex aleatorios. Cifra credenciales de PSP, secretos 2FA y tokens de tarjeta guardada. NO cambiarla después: lo cifrado con la anterior deja de abrirse.' },
+  { var: 'CREDENTIALS_ENCRYPTION_KEY', severity: 'blocker', ok: () => require('./cryptoUtils').credentialsEncryptionConfigured(), fix: '64 hex aleatorios. Cifra credenciales de PSP, secretos 2FA y tokens de tarjeta guardada. NO cambiarla después: lo cifrado con la anterior deja de abrirse.' },
   { var: 'SERVER_URL', severity: 'blocker', ok: () => /^https:\/\//.test(String(env('SERVER_URL') || '')), fix: 'URL pública https del servidor de producción (Paylands notifica a SERVER_URL/webhooks/paynopain).' },
   { var: 'BACKOFFICE_2FA_REQUIRED', severity: 'blocker', ok: () => isTrue('BACKOFFICE_2FA_REQUIRED'), fix: "'true' DESPUÉS de que cada superadmin haya activado su 2FA en /admin → botón 2FA." },
   { var: 'WEBHOOK_SECRET', severity: 'recommended', ok: () => String(env('WEBHOOK_SECRET') || '').length >= 32, fix: 'Secreto de respaldo para firmar webhooks de merchants sin secreto propio.' },

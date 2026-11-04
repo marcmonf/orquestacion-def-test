@@ -1169,6 +1169,29 @@ router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), 
 // ─────────────────────────────────────────────────────────────────────────────
 const totpService = require('../services/backofficeTotpService');
 
+// Rotación de la clave de cifrado de credenciales (nov 2026). Solo superadmin.
+//   GET  /backoffice/security/encryption-status  → cuántos valores hay con cada clave
+//   POST /backoffice/security/reencrypt { dryRun } → recifra con la clave ACTIVA
+// Nunca devuelve valores. Runbook: docs/produccion.md §5.
+const encryptionService = require('../services/encryptionService');
+router.get('/security/encryption-status', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, ...(await encryptionService.status()) }); }
+  catch (err) {
+    if (err && err.code === 'encryption_not_configured') return res.status(503).json({ success: false, error: err.code, message: err.message });
+    console.error('❌ [backoffice/security/status]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+router.post('/security/reencrypt', requireRole('superadmin'), async (req, res) => {
+  const dryRun = (req.body || {}).dryRun !== false;   // por defecto, simulación
+  try { return res.json({ success: true, ...(await encryptionService.reencrypt({ dryRun })) }); }
+  catch (err) {
+    if (err && err.code === 'encryption_not_configured') return res.status(503).json({ success: false, error: err.code, message: err.message });
+    console.error('❌ [backoffice/security/reencrypt]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // Checklist de variables para pasar a real (F7). Solo dice si cada una está
 // bien, nunca su valor. Guía: docs/produccion.md.
 router.get('/production-readiness', requireRole('superadmin'), (req, res) => {

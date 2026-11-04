@@ -36,6 +36,7 @@ function applySet(doc, set) {
 
 function matches(doc, query) {
   return Object.entries(query || {}).every(([k, v0]) => {
+    if (k === '$or') return Array.isArray(v0) && v0.some((q) => matches(doc, q));
     const docV = getPath(doc, k);
     const d = k.includes('.') ? { [k]: docV } : doc;
     const v = v0;
@@ -52,6 +53,7 @@ function matchOne(doc, k, v) {
           case '$regex': return new RegExp(operand, v.$options || '').test(String(doc[k] == null ? '' : doc[k]));
           case '$options': return true;   // lo consume $regex
           case '$ne':  return doc[k] !== operand;
+          case '$type': return operand === 'string' ? typeof doc[k] === 'string' : false;
           case '$in':  return Array.isArray(operand) && operand.includes(doc[k]);
           case '$nin': return Array.isArray(operand) && !operand.includes(doc[k]);
           case '$gte': return doc[k] >= operand;
