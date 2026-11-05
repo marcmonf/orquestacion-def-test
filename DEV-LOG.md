@@ -1880,6 +1880,40 @@ sin restricciones del proveedor.
 
 Commits: `314ca2e` (app + workflow), `d3bd38e` (arreglo de compilación).
 
+
+#### F4 — Plugins de tienda: WooCommerce, PrestaShop, Magento (y Shopify NO)
+
+1. **`plugins/`**, todos sobre la **API v1** + verificación de la firma del webhook +
+   devolución desde el admin de la tienda; el comprador paga siempre en el checkout de
+   Monetiser (SAQ A). Núcleo común `plugins/_core/MonetiserClient.php` (copia idéntica en
+   cada plugin, comprobada por los tests): rechaza datos de tarjeta, solo https, nunca la
+   `mk_`, Idempotency-Key, firma con tolerancia de 5 min y comparación en tiempo constante.
+   Al recibir el webhook el plugin **vuelve a consultar el pago** y, si está autorizado,
+   **lo captura** (DEFERRED: un pago autorizado no está cobrado) antes de dar el pedido por
+   pagado.
+   - **WooCommerce** (`WC_Payment_Gateway`, `refunds`, webhook en la REST API de WordPress,
+     modo redirección o embebido con `monetiser.js`).
+   - **PrestaShop 8** (`PaymentModule`, hook `paymentOptions`, `validateOrder` idempotente
+     desde webhook y vuelta, devolución con el hook `actionOrderSlipAdd`).
+   - **Magento 2** (estructura de `Magento_OfflinePayments`: método con
+     `AbstractMethod` —obsoleto según Adobe—, pedido en "pending payment", redirección tras
+     "Realizar pedido", webhook sin CSRF verificado por firma, nota de crédito online,
+     secretos con backend `Encrypted`).
+2. **Verificación**: `php -l` de todo + `php plugins/tests/run.php` (**31 OK**: núcleo,
+   copias idénticas y la pasarela de WooCommerce con stubs mínimos: redirección, céntimos,
+   idempotencia, webhook falso → 401 sin marcar pagado, webhook bueno → consulta + UNA
+   captura + `payment_complete`, devolución). XML y JS de Magento validados. Workflow
+   `.github/workflows/plugins.yml` (lint + tests en cada push a `plugins/`).
+3. **NO probados en una instalación real**: WordPress/WooCommerce, PrestaShop, Magento y
+   Docker Hub no eran descargables desde el contenedor, y su documentación web estaba
+   bloqueada. Se usó el **código fuente oficial** de cada plataforma en GitHub
+   (`raw.githubusercontent.com`, URLs en la cabecera de cada plugin). Runbook de
+   instalación en `plugins/README.md`. Pendiente: checkout por **bloques** de WooCommerce.
+4. **Shopify: no se ha escrito plugin.** `shopify.dev` bloqueado: no se pudo comprobar qué
+   exige. Lo conocido (sin verificar) es que las pasarelas externas son "payments apps"
+   que requieren ser socio de pagos aprobado: por la instrucción, no se escribe nada.
+   Camino y DECISIÓN PENDIENTE en `plugins/README.md`.
+
 ---
 
 ## 7. Elementos de seguridad
