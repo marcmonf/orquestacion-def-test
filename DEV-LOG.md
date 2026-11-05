@@ -2118,6 +2118,58 @@ particular los **dominios de la CSP** (`js.stripe.com`, `api.stripe.com`,
   el importe calculado en servidor, enlace + QR cargado, secreto ausente del HTML),
   /developers (escritorio y móvil), pestañas Orquestación de /admin y del portal.
 
+#### F3 — Robustez: carga, caos e índices
+
+**Carga** (`scripts/load/loadTest.js`, reejecutable: `node scripts/load/loadTest.js 5 1,10,50`).
+Rutas REALES (v1, checkout Paylands, checkout Stripe) en un proceso Node 22, contenedor de 4
+CPU; **base de datos en memoria** (no había MongoDB: `fastdl.mongodb.org` bloqueado) y PSPs
+simulados con **150 ms** de latencia; logger silenciado; limitadores subidos para medir la
+instancia. 5 s por escenario. Milisegundos:
+
+| Escenario | Concurrencia | Petición | rps | p50 | p95 | p99 |
+|---|---|---|---|---|---|---|
+| v1 crear sesión | 1 | POST /v1/checkout-sessions | 639 | 1.4 | 2.2 | 2.6 |
+| v1 crear sesión | 10 | POST /v1/checkout-sessions | 662 | 15.3 | 22.4 | 23.9 |
+| v1 crear sesión | 50 | POST /v1/checkout-sessions | 652 | 77.1 | 116.7 | 123.2 |
+| v1 consultar pago | 10 | GET /v1/payments/:id | 4346 | 2.1 | 3.8 | 4.7 |
+| v1 consultar pago | 50 | GET /v1/payments/:id | 3689 | 12.8 | 17.7 | 22.8 |
+| Checkout Paylands (ES) | 50 | POST /proxy-pci/charge | 304 | 155 | 163.7 | 170.1 |
+| Checkout Stripe (FR) | 50 | POST /stripe/session | 152 | 153.4 | 157.6 | 160.3 |
+| Checkout Stripe (FR) | 50 | POST /stripe/complete | 152 | 154 | 160.3 | 162.5 |
+
+Lectura: (1) **techo de CPU por instancia ≈ 650 sesiones/s** (≈1,5 ms de CPU por sesión:
+validación, auth, routing, creación); por encima solo crece la latencia. (2) Los pasos que
+llaman al PSP están dominados por el PSP (150 ms simulados + 2-10 ms propios) y escalan con la
+concurrencia (no bloquean el proceso): 50 checkouts en paralelo sin errores. (3) **En Render
+hay que sumar Mongo Atlas**: una sesión v1 hace ~6 consultas (clave API, idempotencia, política,
+cuenta del PSP, merchant, insert); con 2-5 ms cada una, p50 esperado ~15-30 ms a baja carga, y el
+techo lo pondrá el plan de Render/Atlas, no Node. Hay que repetir la prueba contra el servicio
+real (DECISIÓN PENDIENTE: cuándo y con qué plan). (4) El límite por comercio por defecto
+(`RL_PAYMENTS_MERCHANT_MAX=600`/min = 10/s) es hoy el techo real por comercio en la API v1.
+
+**Caos** (`tests/chaos/`): PSP con 5xx, timeout y red caída al iniciar el pago (Stripe) y al
+cobrar (Paylands) → el pago nunca se reintenta en el otro PSP; el circuito se abre a los 5
+fallos y los pagos NUEVOS van al otro PSP antes de pedir la tarjeta; doble clic en "Pagar" con
+Paylands lento → un solo cobro; sesiones Stripe simultáneas → un PaymentIntent; 20 órdenes
+aleatorias de webhooks duplicados/desordenados → el pago nunca retrocede y cada cambio sale una
+vez; webhook ×3 a la vez que `/complete` → un solo webhook saliente; refund antes que la
+autorización → no salta estados; capture+cancel concurrentes → uno gana (409 al otro) y Monetiser
+y Stripe coinciden; refunds parciales concurrentes → nunca más de lo capturado; misma
+Idempotency-Key en paralelo → un solo movimiento en Stripe; Mongo lento (300 ms) → se procesa;
+Mongo caído en el webhook → 500 (el PSP reintenta) y el reintento entra; Mongo caído leyendo la
+política → pago de pruebas con Paylands por defecto. **No rompió nada** del código nuevo.
+Comportamiento a tener en cuenta (no cambiado, es la regla de `ACQUIRER_TRANSITIONS`): si un
+"rechazado" llega ANTES que la autorización del mismo pago, el comercio recibe primero
+`declined` y después `authorized`.
+
+**Índices y consultas**: las consultas nuevas usan índices existentes (webhook de Stripe por
+`processorReference`; insights por `{merchantId, createdAt}` / `{createdAt}`; coste por
+`{merchantId, status, createdAt}`; clave API por `secretHash`). Arreglado: el informe por canal
+del portal (`GET /portal/reports/channels`) traía hasta 50.000 transacciones COMPLETAS y
+filtraba el estado en memoria → ahora filtra el estado en la consulta (índice
+`{merchantId, status, createdAt}`) y trae solo 4 campos. Sin explain contra Atlas real (no hay
+Mongo aquí): pendiente comprobar con `explain()` en Atlas.
+
 
 ## 7. Elementos de seguridad
 
