@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 5 noviembre 2026 (framework multi-PSP fusionado y desplegado; R1 OK en sandbox)
+> Última actualización: 5 noviembre 2026 (sesión del 5 nov en rama, sin fusionar: revisión, operación, enlaces de pago, POS Android, plugins, card present)
 
 ---
 
@@ -1940,6 +1940,78 @@ Pendiente para encenderlo: elegir PSP con pago presencial (y su certificación c
 el SDK de PAX en la app (`apps/android-pos/.../hardware/CardReader.kt`) y la UI en el
 portal. Tests: `tests/integration/cardPresent.test.js` (+5).
 
+
+#### Cierre de la sesión del 5 nov 2026
+
+**Commits** (rama `claude/monetiser-multi-psp-framework-3dlfch` reconstruida sobre `main`
+`6f06e54`; PR a `main`):
+
+| Fase | SHA | Qué |
+|---|---|---|
+| F1 | `4eb24d1` | Dependencias: 0 vulnerabilidades en producción (nodemailer 10.3.1) |
+| F1 | `22ac29b` | Rotación de `CREDENTIALS_ENCRYPTION_KEY` (llavero, recifrado) |
+| Dato | `19bbf39` | R1 del runbook multi-PSP OK contra Paylands sandbox |
+| F1 | `d4a84bc` | Hallazgos de la revisión independiente (H1, H2, M1–M5, L1–L3, L5, L7) |
+| F2 | `90c8600` | Dos entornos, `/health/ready`, `/status`, alertas por email, runbook Render/Atlas/copias |
+| F3 | `cc0fb9a` | Enlaces de pago + QR (v1, portal, /admin) y API `/pos` |
+| F3b | `314ca2e`, `d3bd38e`, `456d273` | App Android "Monetiser POS" + workflow (APK en verde) + runbook |
+| F4 | `2418991` | Plugins WooCommerce, PrestaShop, Magento (+ Shopify documentado, sin plugin) |
+| F5 | `173f557` | Card present (armazón apagado) |
+| Cierre | (ver `git log`) | openapi v2.15.0, `docs/integracion.md`, Postman 10–13, este resumen |
+
+**Tests:** 530 → **582/582** (Jest) + **31/31** de los plugins (`php plugins/tests/run.php`).
+Arranque real limpio en cada fase. Chromium real en todos los cambios de `public/`
+(checkout, /admin, portal, `/status`, página del enlace). CI de Android en verde
+(artefacto `monetiser-pos-debug-apk`). **Nada desplegado.**
+
+**Qué queda APAGADO y por qué**
+
+| Flag / estado | Por qué |
+|---|---|
+| `FEATURE_CARD_PRESENT` | Sin PSP con pago presencial ni SDK de PAX. |
+| `FEATURE_LIVEMODE`, `FEATURE_SAVED_CARDS`, `FEATURE_PAYLANDS_*` | Igual que el 4 nov (pendientes de PayNoPain). En producción hará falta `FEATURE_LIVEMODE=true` (H1). |
+| `BACKOFFICE_2FA_REQUIRED` | Encender cuando cada superadmin tenga su 2FA. |
+| Impresora y lector de tarjeta en la app POS | Sin SDK de PAX. |
+| Checkout por bloques de WooCommerce | Sin documentación accesible para hacerlo sin inventar. |
+| Plugin de Shopify | No escrito: requisitos de shopify.dev sin verificar (probable aprobación como socio de pagos). |
+
+**Dominios bloqueados por la red de esta sesión:** `docs.paylands.com`, `shopify.dev`,
+`developer.woocommerce.com`, `woocommerce.com`, `wordpress.org` (y descargas),
+`devdocs.prestashop-project.org`, `developer.adobe.com`, `repo.magento.com`,
+`getcomposer.org`, `dl.google.com` (SDK de Android), Docker Hub y las descargas zip de
+GitHub (`api.github.com/.../zipball` → 403). Accesibles y usados: `raw.githubusercontent.com`
+(código fuente oficial), `repo.maven.apache.org`, `maven.google.com`, `registry.npmjs.org`,
+`packagist.org`.
+
+**Runbook para Marcos:** `docs/runbook-sesion-5nov.md` (A seguridad, B operación, C enlaces de
+pago en sandbox, D app en los PAX por USB, E plugins) + `docs/entornos.md` +
+`docs/produccion.md` §5 (rotación de clave) + `plugins/README.md`.
+
+**DECISIONES PENDIENTES DE MARCOS**
+
+1. **Rama**: el entorno solo permite subir a `claude/monetiser-multi-psp-framework-3dlfch`;
+   se reconstruyó sobre `main` (el PR #4 ya estaba fusionado). Renombrar si se quiere.
+2. **Red de las sesiones de Claude**: añadir a "Allowed domains" `docs.paylands.com`,
+   `shopify.dev`, `developer.woocommerce.com`, `devdocs.prestashop-project.org`,
+   `developer.adobe.com` para poder verificar contra la documentación.
+3. **Producción = solo `ms_live_`** (H1): en el despliegue de producción las claves de
+   pruebas y la API antigua dejan de cobrar. ¿Algún comercio necesita la API antigua en
+   real? (Recomendación: no; migrar a v1.)
+4. **`reset-2fa` solo con `ADMIN_TOKEN`** (L8): ¿pedir además un segundo superadmin?
+5. **Segundo entorno** (producción en Render + proyecto Atlas con copias): seguir
+   `docs/entornos.md`; plan de Atlas con Cloud Backup para producción.
+6. **`minSdk 21` de la app POS**: subirlo cuando sepamos la versión de Android de los PAX.
+7. **SDK de PAX** (impresora y lector) y **PSP card present**: pedirlos si se quiere F5 de
+   verdad.
+8. **Plugins**: probarlos en tiendas de pruebas reales (WooCommerce, PrestaShop, Magento)
+   antes de dárselos a comercios; checkout por bloques de WooCommerce; migrar Magento al
+   "payment gateway framework".
+9. **Shopify**: confirmar requisitos de payments partner y decidir si se solicita.
+10. **Dependencia de desarrollo**: `deepmerge` (jest) sin versión corregida; revisar más
+    adelante.
+11. Siguen abiertas las del 4 nov (credenciales Paylands por merchant, Bizum/Apple Pay/
+    Google Pay, tarjeta guardada/MIT, revocar la key de demo-merchant…).
+
 ---
 
 ## 7. Elementos de seguridad
@@ -2052,6 +2124,17 @@ portal. Tests: `tests/integration/cardPresent.test.js` (+5).
 
 Checklist para pasar a real: **`docs/produccion.md`** y `GET /backoffice/production-readiness`.
 
+**Nuevas el 5 nov 2026** (todas opcionales):
+
+| Variable | Descripción |
+|---|---|
+| `MONETISER_ENV` | `sandbox` (por defecto) o `production`. Debe casar con `PAYNOPAIN_ENV` y con una `MONGO_URI` propia (`docs/entornos.md`). |
+| `CREDENTIALS_KEYS` / `CREDENTIALS_KEY_ACTIVE` | Rotación de la clave de cifrado: `kid:64hex,…` y la activa (`docs/produccion.md` §5). Sin ellas, todo como antes. |
+| `ALERT_EMAILS` | Destinatarios de alertas (con los `SMTP_*`). Ajustes: `ALERT_INTERVAL_MS`, `ALERT_REPEAT_MS`, `ALERT_WEBHOOK_STUCK_MS`, `ALERT_WEBHOOK_FAILED_HOUR`, `ALERT_ACQUIRER_ERRORS_15M`. |
+| `RL_2FA_MAX` | Intentos de 2FA por usuario cada 15 min (10). |
+| `POS_LINK_TTL_MIN` / `RL_POS_USER_MAX` | Caducidad del QR del terminal (15 min) y límite de peticiones por usuario del terminal (120/min). |
+| `FEATURE_CARD_PRESENT` | **APAGADO.** Armazón card present. |
+
 ### Flags de la pestaña Reglas (`FEATURE_RULE_*`)
 
 Estos tres flags gatean los botones de la pestaña **Reglas** del dashboard (`/admin`).
@@ -2142,6 +2225,21 @@ GET /diag/transactions             → /backoffice/transactions?q=<paymentId>   
 Siguen con `X-Admin-Token`: `GET /webhooks`, `POST /orchestration/decide` y la
 recuperación de cuentas (`POST /backoffice/auth/setup`, de un solo uso,
 `/backoffice/auth/reset-password` y, desde el 4 nov, `/backoffice/auth/reset-2fa`).
+
+Sesión 5 nov 2026:
+
+```
+GET  /backoffice/security/encryption-status · POST /backoffice/security/reencrypt   (superadmin; rotación de clave)
+GET  /backoffice/payment-links · POST /backoffice/merchants/:id/payment-links · POST /backoffice/payment-links/:id/cancel
+POST /backoffice/auth/reset-2fa                                                    (X-Admin-Token)
+GET|POST /portal/payment-links · POST /portal/payment-links/:id/cancel
+GET|POST /portal/terminals · POST /portal/terminals/:id/disable · GET /portal/reports/channels   (FEATURE_CARD_PRESENT)
+GET  /pos/me · POST|GET /pos/payments · GET /pos/payments/:id · POST /pos/payments/:id/cancel   (JWT de portal + tienda)
+POST /pos/card-present/payments                                                    (FEATURE_CARD_PRESENT → 501)
+POST|GET /v1/payment-links · GET /v1/payment-links/:id · POST /v1/payment-links/:id/cancel
+GET  /pay/:id · POST /pay/:id/checkout · GET /pay/:id/qr.svg|qr.png                (públicas)
+GET  /health/ready · /status · /status.json                                        (públicas)
+```
 
 Framework multi-PSP (4 nov 2026, superadmin salvo 2FA):
 

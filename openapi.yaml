@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.14.0
+  version: 2.15.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -16,6 +16,19 @@ info:
     campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
     a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
     abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.15.0 (5 nov 2026)** — solo cambios ADITIVOS:
+    - **Enlaces de pago + QR**: `POST|GET /v1/payment-links`, `GET /v1/payment-links/{id}`,
+      `POST /v1/payment-links/{id}/cancel`; página pública `/pay/{id}` (+ `qr.svg`/`qr.png`)
+      que lleva al checkout de siempre. Webhooks: `data.paymentLinkId` en los pagos que
+      vienen de un enlace.
+    - **Terminal en tienda** (`/pos/*`, app Android "Monetiser POS"): JWT del PORTAL de un
+      usuario ligado a su tienda; nunca la clave `ms_`.
+    - `/health/ready`, `/status` y `/status.json`.
+    - Seguridad (revisión del PR #4): una Idempotency-Key no puede empezar por `live:`
+      (reservado); en un despliegue con Paylands en producción solo cobran claves
+      `ms_live_` por la API v1 (las de pruebas y la API antigua responden
+      `no_connector_available` / `mode_mismatch`); la 2FA de /admin pide contraseña.
 
     **v2.14.0 (4 nov 2026)** — **framework multi-PSP**. Solo cambios ADITIVOS; nada
     de lo existente cambia de forma ni de significado:
@@ -274,6 +287,11 @@ tags:
       end-to-end contra Paylands real. Ver `x-madurez` y la nota de scope PCI arriba.
   - name: Reglas de routing
     description: Motor de reglas que decide a qué conector va cada transacción.
+  - name: Terminal en tienda
+    description: |
+      API de la app Android "Monetiser POS" (`/pos/*`): cobro con QR en tienda.
+      Autenticación con el JWT del PORTAL de un usuario ligado a su tienda; nunca la
+      clave `ms_` del comercio.
   - name: Observabilidad
     description: Consulta de transacciones y eventos.
   - name: Interno
@@ -514,6 +532,185 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/V1Error' }
+
+  /v1/payment-links:
+    post:
+      tags: [API v1]
+      summary: Crear un enlace de pago (URL + QR)
+      operationId: v1CreatePaymentLink
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      description: |
+        Crea un enlace de pago compartible. El comprador abre `url` (o escanea el QR de
+        `qrUrl`), ve una página con la marca del comercio y paga en el checkout de
+        siempre (PCI DSS SAQ A). Cada pago es un pago normal con su webhook de siempre
+        (`data.paymentLinkId`). **Uso único** por defecto: nunca dos cobros del mismo
+        enlace; `reusable: true` admite varios pagos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V1PaymentLinkCreate' }
+            example: { amount: 2500, currency: EUR, concept: 'Clase de yoga del martes', reference: YOGA-1 }
+      responses:
+        '201':
+          description: Enlace creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1PaymentLink' }
+        '400': { $ref: '#/components/responses/V1BadRequest' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+    get:
+      tags: [API v1]
+      summary: Listar enlaces de pago
+      operationId: v1ListPaymentLinks
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      responses:
+        '200':
+          description: Lista (los 100 más recientes del modo de la clave).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/V1PaymentLink' } }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+
+  /v1/payment-links/{id}:
+    get:
+      tags: [API v1]
+      summary: Consultar un enlace de pago
+      operationId: v1GetPaymentLink
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^pl_[0-9a-f]{24}$' } }
+      responses:
+        '200':
+          description: El enlace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1PaymentLink' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+
+  /v1/payment-links/{id}/cancel:
+    post:
+      tags: [API v1]
+      summary: Anular un enlace de pago
+      operationId: v1CancelPaymentLink
+      x-madurez: beta
+      security: [{ BearerApiKey: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^pl_[0-9a-f]{24}$' } }
+      responses:
+        '200':
+          description: Enlace anulado (`status:'cancelled'`); la URL deja de admitir pagos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1PaymentLink' }
+        '401': { $ref: '#/components/responses/V1Unauthorized' }
+        '404': { $ref: '#/components/responses/V1NotFound' }
+        '409':
+          description: '`invalid_status` — ya estaba anulado o pagado.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V1Error' }
+
+  /pos/payments:
+    post:
+      tags: [Terminal en tienda]
+      summary: Cobro con QR desde el terminal
+      operationId: posCreatePayment
+      x-madurez: beta
+      security: [{ PortalBearer: [] }]
+      description: |
+        Para la app Android "Monetiser POS". Usuario del PORTAL (operador o más) ligado
+        a una tienda (`403 pos_user_without_store` si no). Crea un enlace de pago de uso
+        único con caducidad corta (`POS_LINK_TTL_MIN`, 15 min) y devuelve su QR en PNG.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, concept]
+              properties:
+                amount: { type: integer, minimum: 1, description: Céntimos. }
+                concept: { type: string, maxLength: 200 }
+      responses:
+        '201':
+          description: Cobro creado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  payment: { $ref: '#/components/schemas/PosPayment' }
+        '400': { description: '`validation_error` o `card_data_not_accepted`.' }
+        '401': { description: Sin sesión de portal. }
+        '403': { description: '`insufficient_permissions` o `pos_user_without_store`.' }
+    get:
+      tags: [Terminal en tienda]
+      summary: Cobros de HOY de la tienda (con total cobrado)
+      operationId: posListToday
+      x-madurez: beta
+      security: [{ PortalBearer: [] }]
+      responses:
+        '200':
+          description: Historial del día.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  day: { type: string }
+                  totals: { type: object, properties: { count: { type: integer }, amount: { type: integer } } }
+                  payments: { type: array, items: { $ref: '#/components/schemas/PosPayment' } }
+
+  /pos/payments/{id}:
+    get:
+      tags: [Terminal en tienda]
+      summary: Estado de un cobro del terminal
+      operationId: posGetPayment
+      x-madurez: beta
+      security: [{ PortalBearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Estado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment: { $ref: '#/components/schemas/PosPayment' }
+        '404': { description: No existe o es de otra tienda. }
+
+  /health/ready:
+    get:
+      tags: [Observabilidad]
+      summary: Readiness (¿puede servir pagos ahora?)
+      operationId: healthReady
+      x-madurez: beta
+      security: []
+      responses:
+        '200': { description: 'Listo: `{ ready: true, environment, issues: [] }`.' }
+        '503': { description: 'No listo: `issues` dice qué falla (database, webhook_worker, environment_mismatch).' }
+
+  /status.json:
+    get:
+      tags: [Observabilidad]
+      summary: Estado público agregado (página /status)
+      operationId: publicStatus
+      x-madurez: beta
+      security: []
+      responses:
+        '200': { description: 'API, base de datos, webhooks y adquirentes. Sin datos de comercios ni pagos.' }
 
   /v1/checkout-sessions/{id}:
     get:
@@ -2756,6 +2953,54 @@ components:
         reference: { type: [string, 'null'], maxLength: 128 }
         webhookUrl: { type: [string, 'null'], format: uri, pattern: '^https://' }
 
+    V1PaymentLinkCreate:
+      type: object
+      required: [amount, currency, concept]
+      additionalProperties: false
+      properties:
+        amount: { type: integer, minimum: 1, description: Céntimos. }
+        currency: { type: string, enum: [EUR] }
+        concept: { type: string, minLength: 1, maxLength: 200, description: Lo que ve el comprador. }
+        reference: { type: [string, 'null'], maxLength: 128 }
+        reusable: { type: boolean, default: false, description: 'false = un solo pago.' }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'Futuro, como mucho 366 días.' }
+        returnUrl: { type: [string, 'null'], format: uri }
+        webhookUrl: { type: [string, 'null'], format: uri, pattern: '^https://' }
+
+    V1PaymentLink:
+      type: object
+      properties:
+        id: { type: string, description: 'pl_…' }
+        object: { type: string, const: payment_link }
+        livemode: { type: boolean }
+        status: { type: string, enum: [active, completed, cancelled, expired] }
+        amount: { type: integer }
+        currency: { type: string }
+        concept: { type: string }
+        reference: { type: [string, 'null'] }
+        reusable: { type: boolean }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        paidCount: { type: integer, description: Pagos aprobados con este enlace. }
+        url: { type: string, format: uri, description: 'Página pública /pay/{id}.' }
+        qrUrl: { type: string, format: uri, description: 'QR en SVG (también /qr.png).' }
+        returnUrl: { type: [string, 'null'] }
+        webhookUrl: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+
+    PosPayment:
+      type: object
+      properties:
+        id: { type: string }
+        amount: { type: integer }
+        currency: { type: string }
+        concept: { type: string }
+        url: { type: string, format: uri }
+        qrPngUrl: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+        state: { type: string, enum: [paid, pending, failed, expired, cancelled] }
+        paymentId: { type: [string, 'null'] }
+        livemode: { type: boolean }
+
     V1CheckoutSession:
       type: object
       properties:
@@ -3322,6 +3567,9 @@ components:
             livemode:
               type: boolean
               description: '(v2.14.0) false = modo test (sandbox). Aditivo.'
+            paymentLinkId:
+              type: string
+              description: '(v2.15.0) Solo si el pago viene de un enlace de pago (pl_…). Aditivo.'
             reasonCode: { type: string, nullable: true }
             timestamp: { type: string, format: date-time }
             cardInfo:

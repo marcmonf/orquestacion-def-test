@@ -2,7 +2,7 @@
   "info": {
     "name": "Monetiser — API v1",
     "_postman_id": "b7e1c2d4-5f60-4a71-8b92-c3d4e5f60718",
-    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).\n\nv2.14.0 (nov 2026): peticiones 7-9 (métodos de pago, sesión con país, comprobación de tarjeta guardada desactivada). Las claves nuevas son ms_test_... (las ms_... antiguas siguen valiendo).",
+    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).\n\nv2.14.0 (nov 2026): peticiones 7-9 (métodos de pago, sesión con país, comprobación de tarjeta guardada desactivada). Las claves nuevas son ms_test_... (las ms_... antiguas siguen valiendo).\n\nv2.15.0 (5 nov 2026): peticiones 10-13 (enlaces de pago con QR). Ver docs/runbook-sesion-5nov.md §C.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -26,6 +26,10 @@
     },
     {
       "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "linkId",
       "value": ""
     }
   ],
@@ -312,6 +316,123 @@
           }
         }
       ]
+    },
+    {
+      "name": "10. Crear enlace de pago (QR)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/payment-links",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-links"
+          ]
+        },
+        "description": "Esperado 201: id pl_…, url y qrUrl. Abre la url en el navegador (o escanea qrUrl) y paga con 4018810000100036 · 12/34 · 123.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1250,\n  \"currency\": \"EUR\",\n  \"concept\": \"Prueba enlace de pago\",\n  \"reference\": \"ENLACE-1\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('201', () => pm.expect(pm.response.code).to.eql(201));",
+              "if (b && b.id) { pm.collectionVariables.set('linkId', b.id); console.log('Abre para pagar:', b.url, ' QR:', b.qrUrl); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Consultar el enlace",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/payment-links/{{linkId}}",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-links",
+            "{{linkId}}"
+          ]
+        },
+        "description": "Tras pagar: status completed y paidCount 1."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.expect(pm.response.code).to.eql(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Listar enlaces",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{host}}/v1/payment-links",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-links"
+          ]
+        },
+        "description": "Los 100 más recientes."
+      }
+    },
+    {
+      "name": "13. Anular el enlace",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{host}}/v1/payment-links/{{linkId}}/cancel",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "v1",
+            "payment-links",
+            "{{linkId}}",
+            "cancel"
+          ]
+        },
+        "description": "Esperado 200 con status cancelled (o 409 invalid_status si ya estaba pagado).",
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        }
+      }
     }
   ]
 }
