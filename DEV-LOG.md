@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 5 noviembre 2026 (sesión del 5 nov en rama, sin fusionar: revisión, operación, enlaces de pago, POS Android, plugins, card present)
+> Última actualización: 5 noviembre 2026, bloque 2 (en rama, sin fusionar: Stripe como segundo PSP, /demo, /developers, insights, carga y caos)
 
 ---
 
@@ -2026,6 +2026,54 @@ oficial `stripe-node` 23.0.1 de npm (tipos `.d.ts` y código), `@stripe/stripe-j
 npm (tipos y cargador) y el ejemplo oficial `stripe-samples/accept-a-payment`
 (raw.githubusercontent.com). **Nada de Stripe se ha probado contra Stripe real.**
 
+**Resumen y SHAs** (rama `claude/monetiser-multi-psp-framework-3dlfch`):
+
+| Fase | Commit | Tests |
+|---|---|---|
+| F1 Stripe como segundo PSP | `c7c949c` | 632 |
+| F2 Escaparate (/demo, /developers, insights) | `eb1743a` | 650 |
+| F3 Robustez (carga, caos, consultas) | `a17b655` | 664 |
+| Cierre (openapi 2.16.0, docs, Postman, runbook) | ver PR | 664 |
+
+Línea base 582 → **664/664** (+82) y 31/31 de plugins. `tests/golden/paylandsWire.test.js`
+(peticiones a Paylands y al Proxy PCI) **idéntico y verde**. Arranque real con el comando de
+CLAUDE.md sin `no montado`, con y sin `FEATURE_STRIPE`. Chromium: checkout Stripe y Paylands,
+/admin (Adquirentes y Orquestación), portal (Orquestación), /demo (móvil y escritorio) y
+/developers.
+
+**Qué queda APAGADO y por qué:**
+- `FEATURE_STRIPE` (apagado): nada de Stripe se ha probado contra Stripe real (docs, API y
+  Stripe.js bloqueados desde el contenedor). Se enciende para la prueba del runbook.
+- Stripe en **modo live**: rechazado en código (claves `sk_live_`/`pk_live_` y modo live).
+- `/demo`: solo con `MONETISER_ENV=sandbox` explícito y `DEMO_STORE_SECRET` puesto.
+
+**DECISIONES PENDIENTES DE MARCOS** (lo dudoso se hizo de la forma más conservadora):
+1. **Stripe live**: cuándo y con qué cuenta (hoy prohibido en código).
+2. **Divisas de Stripe**: declaradas EUR, USD y GBP (2 decimales). Para cobrar USD/GBP hay que
+   añadirlas a `SUPPORTED_CURRENCIES` en Render. ¿Más divisas?
+3. **Comisión de Monetiser en el coste real de los insights**: no se incluye (solo
+   interchange + scheme fees + margen del adquirente). ¿Incluirla?
+4. **Scheme fees de Stripe**: no hay ficha de Stripe en el catálogo de adquirentes
+   (`acquirerDefaults.js`), así que su coste real sale solo con interchange. ¿Qué tarifas pactar/poner?
+5. **Orden "rechazado → autorizado"** de webhooks desordenados (regla existente de
+   `ACQUIRER_TRANSITIONS`): el comercio puede recibir `declined` y luego `authorized`. ¿Se
+   mantiene (el banco autorizó) o se congela el primer resultado?
+6. **Insights en el portal para usuarios limitados a una tienda**: hoy 403 (ven datos del
+   comercio entero). ¿Filtrar por su tienda?
+7. **Prueba de carga contra Render + Atlas reales**: cuándo y con qué plan (aquí sin Mongo).
+8. **Refund tras un timeout**: si Stripe no responde a una devolución, Monetiser la da por
+   fallida; antes de repetirla hay que mirar el panel de Stripe (igual que con Paylands).
+
+**Dominios bloqueados por la red en esta sesión:** `docs.stripe.com`, `api.stripe.com`,
+`js.stripe.com`, `fastdl.mongodb.org` (binarios de MongoDB). Accesibles y usados:
+`registry.npmjs.org` (stripe 23.0.1, @stripe/stripe-js 10.1.0) y
+`raw.githubusercontent.com` (stripe-samples/accept-a-payment). Los de sesiones anteriores
+siguen igual (docs.paylands.com, shopify.dev, …).
+
+Runbooks: `docs/stripe.md` (Stripe paso a paso) y `docs/runbook-sesion-5nov-b2.md` (todo lo
+de esta sesión, solo Postman web y navegador). openapi **2.16.0**, `docs/integracion.md`
+(v2.16.0), `/developers` regenerado, Postman carpeta 14.
+
 #### F1 — Stripe como segundo PSP real (`FEATURE_STRIPE`, apagado por defecto)
 
 Qué hay (todo detrás de `FEATURE_STRIPE=true`; con el flag apagado ni se registra):
@@ -2499,6 +2547,14 @@ GET /webhooks?paymentId=<id>           → Filtrar por pago
 
 ```
 POST /webhooks/paynopain               → Recibe notificación de Paylands (sin auth)
+POST /webhooks/stripe/:merchantId      → (5 nov b2, FEATURE_STRIPE) Webhook de Stripe del comercio (firma Stripe-Signature)
+POST /:merchantId/stripe/session       → (5 nov b2) Backend del checkout con Stripe: PaymentIntent + clientSecret
+POST /:merchantId/stripe/complete      → (5 nov b2) Consulta Stripe y aplica el estado
+GET  /backoffice/insights              → (5 nov b2) Insights de orquestación (alcance del usuario)
+POST /backoffice/routing/:merchantId/demo-preset → (5 nov b2) Routing de demo EUR+ES → Paylands; resto → Stripe
+GET  /portal/insights                  → (5 nov b2) Insights del propio comercio
+GET  /demo  ·  /demo/api/*             → (5 nov b2) Tienda demo, solo MONETISER_ENV=sandbox
+GET  /developers                       → (5 nov b2) Documentación para desarrolladores (generada)
 ```
 
 ### Testing

@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.15.0
+  version: 2.16.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -16,6 +16,20 @@ info:
     campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
     a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
     abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.16.0 (5 nov 2026, bloque 2)** — solo cambios ADITIVOS; la integración del
+    comercio no cambia:
+    - **Stripe como segundo adquirente** (apagado: `FEATURE_STRIPE`; cuenta Stripe de
+      pruebas del propio comercio). El checkout pinta los campos de Stripe si el pago se
+      enruta a Stripe. Webhooks salientes iguales, con `connectorUsed: "stripe"`.
+      Webhook entrante `POST /webhooks/stripe/{merchantId}` y backend del checkout
+      `POST /{merchantId}/stripe/session|complete` (los usa el checkout, no el comercio).
+    - `POST /v1/payments`: `nextAction.type` puede ser `client_confirm` (la librería del
+      PSP confirma en el navegador; sin URL).
+    - `GET /portal/insights`: insights de orquestación (aprobación, rechazos, 3DS, coste
+      real y routing por PSP).
+    - Páginas `/developers` (documentación para desarrolladores, generada de esta spec y
+      de `docs/integracion.md`) y `/demo` (tienda de demostración, solo en sandbox).
 
     **v2.15.0 (5 nov 2026)** — solo cambios ADITIVOS:
     - **Enlaces de pago + QR**: `POST|GET /v1/payment-links`, `GET /v1/payment-links/{id}`,
@@ -1307,6 +1321,29 @@ paths:
   # WEBHOOK ENTRANTE
   # ──────────────────────────────────────────────────────────────────────
 
+  /webhooks/stripe/{merchantId}:
+    post:
+      tags: [Webhooks]
+      summary: (v2.16.0) Webhook entrante de Stripe, por comercio (PSP → Monetiser)
+      operationId: stripeWebhook
+      x-madurez: beta
+      security: []
+      description: |
+        Solo con `FEATURE_STRIPE=true`. Lo configura el comercio en SU cuenta Stripe
+        (modo pruebas). Firma `Stripe-Signature` verificada con el SDK oficial sobre el
+        cuerpo crudo y el secreto `whsec_…` guardado en /admin. Eventos usados:
+        `payment_intent.amount_capturable_updated`, `payment_intent.payment_failed`,
+        `payment_intent.canceled`, `payment_intent.requires_action`,
+        `payment_intent.succeeded`, `charge.refunded`. Misma máquina de estados y mismo
+        webhook saliente que Paylands.
+      parameters: [{ name: merchantId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Recibido (procesado, sin cambios o ignorado). }
+        '401': { description: Firma no válida. }
+        '404': { description: Stripe no activado. }
+        '409': { description: El comercio no tiene cuenta Stripe configurada. }
+        '500': { description: Error nuestro (Stripe reintenta). }
+
   /webhooks/paynopain:
     post:
       tags: [Webhooks]
@@ -1626,6 +1663,52 @@ paths:
             Error. Si ocurrió antes de llamar a Paylands, el pago vuelve a
             `hosted_pending`; si fue después, queda en `error` y la respuesta lleva
             `resultUrl`.
+
+  /{merchantId}/stripe/session:
+    post:
+      tags: [Hosted Checkout]
+      summary: (v2.16.0) Backend del checkout con Stripe — iniciar (lo llama el checkout)
+      operationId: stripeCheckoutSession
+      x-madurez: beta
+      security: []
+      description: |
+        Solo para pagos enrutados a Stripe (`FEATURE_STRIPE`). Crea (o recupera, por
+        idempotencia) el PaymentIntent del pago con captura manual en la cuenta Stripe del
+        comercio y devuelve `publishableKey` y `clientSecret` para Stripe.js. Sin datos de
+        tarjeta: el navegador solo manda `paymentId`.
+      parameters: [{ name: merchantId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [paymentId], properties: { paymentId: { type: string } } }
+      responses:
+        '200': { description: '`{ success, paymentId, publishableKey, clientSecret }`' }
+        '404': { description: Pago no encontrado. }
+        '409': { description: 'Estado no válido, pago no enrutado a Stripe (`wrong_fields_provider`) o comercio sin cuenta Stripe.' }
+        '502': { description: Stripe no respondió bien (el pago sigue abierto). }
+
+  /{merchantId}/stripe/complete:
+    post:
+      tags: [Hosted Checkout]
+      summary: (v2.16.0) Backend del checkout con Stripe — terminar (lo llama el checkout)
+      operationId: stripeCheckoutComplete
+      x-madurez: beta
+      security: []
+      description: |
+        El navegador avisa de que Stripe.js terminó. Monetiser CONSULTA el PaymentIntent en
+        Stripe (no se fía del navegador) y aplica el estado con la misma máquina de estados
+        que los webhooks. Devuelve `resultUrl` (página de resultado).
+      parameters: [{ name: merchantId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [paymentId], properties: { paymentId: { type: string } } }
+      responses:
+        '200': { description: '`{ success, status, resultUrl }`; `retry: true` si no se llegó a confirmar; `pending: true` si Stripe no respondió.' }
+        '404': { description: Pago no encontrado. }
+        '409': { description: Pago no enrutado a Stripe o comercio sin cuenta Stripe. }
 
   /checkout/result/{paymentId}:
     get:
@@ -2306,6 +2389,25 @@ paths:
       responses:
         '200': { description: '`{ acquirerCode, matchedRuleId, reason, context }`.' }
         '401': { description: Sin token o token inválido. }
+
+  /portal/insights:
+    get:
+      tags: [Portal]
+      summary: (v2.16.0) Insights de orquestación del PROPIO merchant
+      operationId: portalInsights
+      x-madurez: beta
+      security: [{ PortalBearer: [] }]
+      description: |
+        Solo lectura. Tasa de aprobación (global y por PSP), motivos de rechazo
+        normalizados, tasa de 3DS, coste real por transacción (Interchange++, APROXIMADO,
+        muestra de pagos aprobados) y por qué se enrutó cada pago. Usuarios limitados a un
+        nodo de la jerarquía → 403.
+      parameters: [{ name: days, in: query, schema: { type: integer, minimum: 1, maximum: 366, default: 30 } }]
+      responses:
+        '200':
+          description: '`insights` con `totals`, `byPsp`, `declineReasons`, `routingReasons`, `costs`.'
+        '401': { description: Sin token o token inválido. }
+        '403': { description: Usuario limitado a un nodo o password sin cambiar. }
 
   /portal/costs:
     get:
@@ -3046,9 +3148,9 @@ components:
         paymentMethod: { type: string, description: '(v2.14.0) Método usado (hoy `card`).' }
         nextAction:
           type: object
-          description: (v2.14.0) Solo en `POST /v1/payments` con 3DS pendiente.
+          description: (v2.14.0) Solo en `POST /v1/payments` con 3DS pendiente. (v2.16.0) `client_confirm` = lo confirma la librería del PSP en el navegador (sin `url`).
           properties:
-            type: { type: string, const: redirect }
+            type: { type: string, enum: [redirect, client_confirm] }
             url: { type: string, format: uri }
         status: { $ref: '#/components/schemas/TransactionStatus' }
         result: { type: string, enum: [pending, succeeded, failed] }
@@ -3563,7 +3665,7 @@ components:
             connectorUsed:
               type: string
               nullable: true
-              description: 'Conector que procesó el pago. `unknown` si no consta.'
+              description: 'Conector que procesó el pago (`payNoPain`, `stripe` desde v2.16.0). `unknown` si no consta.'
             livemode:
               type: boolean
               description: '(v2.14.0) false = modo test (sandbox). Aditivo.'

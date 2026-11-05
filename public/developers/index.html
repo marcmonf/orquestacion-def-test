@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monetiser para desarrolladores</title>
-<!-- GENERADO por scripts/build-developers.js desde docs/integracion.md y openapi.yaml (versión 2.15.0). No editar a mano. -->
+<!-- GENERADO por scripts/build-developers.js desde docs/integracion.md y openapi.yaml (versión 2.16.0). No editar a mano. -->
 <style>
 :root{--ink:#14161f;--muted:#5e6475;--line:#e6e8ef;--bg:#fff;--side:#f7f8fb;--accent:#4b3fd1;--code:#0f1222}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55}
@@ -32,7 +32,7 @@ details{margin:6px 0}summary{cursor:pointer;font-size:14px;color:var(--accent)}
 <nav><a href="#empezar">Empezar</a><a href="#guia">Guía</a><a href="#api">Endpoints</a><a href="/docs">Referencia de la API</a><a href="/demo">Tienda demo</a></nav></header>
 <div class="wrap">
 <aside>
-<h4>Empezar</h4><ul><li><a href="#empezar">Guía rápida</a></li><li><a href="#api">Endpoints y ejemplos</a></li><li><a href="/docs">Referencia completa (OpenAPI 2.15.0)</a></li></ul>
+<h4>Empezar</h4><ul><li><a href="#empezar">Guía rápida</a></li><li><a href="#api">Endpoints y ejemplos</a></li><li><a href="/docs">Referencia completa (OpenAPI 2.16.0)</a></li></ul>
 <h4>Guía de integración</h4><ul><li><a href="#guia-integrar-monetiser-en-tu-tienda-api-v1">Integrar Monetiser en tu tienda — API v1</a></li></ul>
 </aside>
 <main>
@@ -207,10 +207,23 @@ curl -X POST &quot;$MONETISER/v1/payments/&lt;id&gt;/cancel&quot; -H &quot;Autho
 <p>Respuesta: <code>url</code> (la página que abre tu cliente) y <code>qrUrl</code> (el QR de esa página, en SVG; <code>…/qr.png</code> en PNG). El cliente paga en el checkout de siempre y tú recibes el <strong>webhook de siempre</strong>, con <code>data.paymentLinkId</code>. Por defecto es de <strong>un solo pago</strong> (nunca se cobra dos veces); <code>&quot;reusable&quot;: true</code> admite varios. Opcional: <code>expiresAt</code>. Anular: <code>POST /v1/payment-links/{id}/cancel</code>. También desde el portal (pestaña &quot;Enlaces de pago&quot;).</p>
 <h4 id="guia-produccion-solo-claves-ms-live">Producción: solo claves <code>ms_live_</code></h4>
 <p>En el servidor de producción solo cobran claves <strong><code>ms_live_…</code></strong> con la API v1. Las claves de pruebas (<code>ms_test_…</code> y las <code>ms_…</code> antiguas) y la API antigua (<code>/{merchantId}/payments/…</code>) no cobran allí (<code>no_connector_available</code>). Así un pago de pruebas nunca toca dinero real.</p>
+<h3 id="guia-novedades-de-noviembre-2026-v2-16-0">Novedades de noviembre 2026 (v2.16.0)</h3>
+<p>Nada cambia en tu integración: misma sesión, mismo <code>monetiser.js</code>, mismo webhook.</p>
+<h4 id="guia-segundo-adquirente-stripe-en-pruebas">Segundo adquirente: Stripe (en pruebas)</h4>
+<p>Monetiser puede enrutar un pago a <strong>Stripe</strong> (con la cuenta Stripe de tu comercio) además de Paylands, según las reglas de routing (p. ej. por divisa y <code>country</code>). Si un pago va a Stripe, el checkout enseña el campo de tarjeta de Stripe en lugar del de Paylands; la tarjeta sigue sin pasar nunca por tu servidor ni por el nuestro. Lo que cambia para ti:</p>
+<ul><li>el webhook <code>payment.updated</code> puede traer <code>&quot;connectorUsed&quot;: &quot;stripe&quot;</code>;</li><li>capturar, devolver y anular funcionan igual. Con Stripe hay <strong>una sola captura</strong> por pago: tras una captura parcial, el resto de la autorización se libera.</li></ul>
+<p>Hoy Stripe está <strong>apagado</strong> salvo que Monetiser lo active para tu comercio.</p>
+<h4 id="guia-tarjetas-de-prueba">Tarjetas de prueba</h4>
+<table><thead><tr><th>Adquirente</th><th>Tarjeta</th><th>Resultado</th></tr></thead><tbody><tr><td>Paylands (sandbox)</td><td>la de &quot;Probar en sandbox&quot; de esta guía</td><td>autorizado tras el 3DS de pruebas</td></tr><tr><td>Stripe (modo pruebas)</td><td><code>4242 4242 4242 4242</code></td><td>autorizado</td></tr><tr><td>Stripe (modo pruebas)</td><td><code>4000 0025 0000 3155</code></td><td>pide 3DS; al completarlo, autorizado</td></tr></tbody></table>
+<p>Con Stripe: cualquier fecha futura y cualquier CVC de 3 cifras. Son las tarjetas que publica el ejemplo oficial de Stripe; la lista completa (incluida una de rechazo) está en su página de tarjetas de prueba.</p>
+<h4 id="guia-insights-de-orquestacion">Insights de orquestación</h4>
+<p>En el portal, pestaña <strong>Orquestación</strong>: tasa de aprobación, motivos de rechazo normalizados, tasa de 3DS, coste real por transacción y por qué se enrutó cada pago, por adquirente. API: <code>GET /portal/insights?days=30</code>.</p>
+<h4 id="guia-documentacion-y-tienda-de-demostracion">Documentación y tienda de demostración</h4>
+<p><code>/developers</code> reúne esta guía y los ejemplos de cada endpoint (curl, Node, PHP). <code>/demo</code> es una tienda inventada que cobra con Monetiser en el entorno de pruebas.</p>
 <h3 id="guia-resumen-de-lo-que-no-hay-que-hacer">Resumen de lo que NO hay que hacer</h3>
 <ul><li>Poner el secreto <code>ms_...</code> en el navegador o en una app.</li><li>Dar un pedido por pagado por <code>onResult</code> o por los parámetros de la <code>returnUrl</code>: se confirma con el webhook firmado o con <code>GET /v1/payments/:id</code>.</li><li>Mandar datos de tarjeta a la API.</li><li>Olvidar capturar: un pago <code>authorized</code> no está cobrado.</li></ul></section>
 <h2 id="api">Endpoints de la API v1 y ejemplos</h2>
-<p>Generado desde <code>openapi.yaml</code> (versión 2.15.0). Detalle de cada campo y respuesta en la <a href="/docs">referencia de la API</a>.</p>
+<p>Generado desde <code>openapi.yaml</code> (versión 2.16.0). Detalle de cada campo y respuesta en la <a href="/docs">referencia de la API</a>.</p>
 <section class="ep" id="ep-post-v1-checkout-sessions"><h3><span class="m m-post">POST</span> <code>/v1/checkout-sessions</code></h3>
       <p>Crear una sesión de pago</p>
       <details><summary>curl</summary><pre><code>curl -X POST https://orquestacion-def-test.onrender.com/v1/checkout-sessions \
