@@ -35,6 +35,9 @@ module.exports = {
   paylandsExtraMethods,
   // F4 — modo live (claves ms_live_ y credenciales PSP de producción).
   livemode: () => on('FEATURE_LIVEMODE'),
+  // Card present (sesión 5 nov 2026, F5): terminales, pago presencial con
+  // tarjeta e informes por canal. Sin PSP card present ni SDK de terminal.
+  cardPresent: () => on('FEATURE_CARD_PRESENT'),
   // F6 — tarjeta guardada / cobros sin el cliente delante.
   savedCards: () => on('FEATURE_SAVED_CARDS'),
 };

@@ -60,6 +60,21 @@ const transactionSchema = new mongoose.Schema({
   // los disponibles (hoy solo tarjeta). `method` sigue siendo el método usado.
   paymentMethods:     { type: [String], default: undefined },
 
+  // Canal (F5 card present, aditivo): 'online' (sin el campo = online),
+  // 'pay_link' (enlace de pago), 'pos_qr' (terminal de tienda con QR) o
+  // 'card_present' (tarjeta física en un terminal: armazón, apagado). Tienda y
+  // terminal para los informes unificados online + tienda.
+  channel:            { type: String, default: undefined },
+  hierarchyNodeId:    { type: String, default: undefined },
+  terminalId:         { type: String, default: undefined },
+  // Datos del pago presencial (NUNCA el PAN): modo de lectura, método de
+  // verificación del titular y referencia del terminal.
+  cardPresent:        {
+    entryMode:    { type: String },   // chip | contactless | magstripe
+    cvm:          { type: String },   // pin | signature | cdcvm | none
+    terminalTxId: { type: String },
+  },
+
   // Enlace de pago del que viene este pago (pl_…), si viene de uno.
   paymentLinkId:      { type: String, default: undefined },
 

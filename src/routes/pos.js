@@ -148,4 +148,25 @@ router.get('/payments', async (req, res) => {
   } catch (err) { return fail(res, 500, 'internal_error'); }
 });
 
+// ── Pago PRESENCIAL con tarjeta (F5 card present) — armazón, APAGADO ─────────
+// Sin SDK del terminal ni PSP card present: con el flag encendido responde 501
+// hasta que exista un conector con capabilities.cardPresent.
+router.post('/card-present/payments', async (req, res) => {
+  const flags = require('../utils/featureFlags');
+  if (!flags.cardPresent()) return fail(res, 404, 'card_present_not_enabled');
+  const b = req.body || {};
+  if (['card', 'cardNumber', 'pan', 'cvv', 'cvc', 'track2', 'emvData'].some((k) => b[k] !== undefined)) {
+    return fail(res, 400, 'card_data_not_accepted', 'Los datos de la tarjeta los procesa el kernel certificado del terminal con el PSP, nunca Monetiser.');
+  }
+  const Terminal = require('../models/Terminal');
+  const t = typeof b.terminalId === 'string'
+    ? await Terminal.findOne({ terminalId: b.terminalId, merchantId: req.portalUser.merchantId, hierarchyNodeId: req.portalUser.hierarchyNodeId, status: 'active' }).lean().catch(() => null)
+    : null;
+  if (!t) return fail(res, 404, 'terminal_not_found');
+  const registry = require('../services/connectorRegistry');
+  const capable = registry.listProviders().filter((p) => p.capabilities.cardPresent && !p.capabilities.simulated);
+  if (!capable.length) return fail(res, 501, 'no_card_present_connector', 'Ningún adquirente con pago presencial está configurado (pendiente de PSP y SDK del terminal).');
+  return fail(res, 501, 'not_implemented', 'Flujo card present pendiente de integrar con el PSP elegido.');
+});
+
 module.exports = router;

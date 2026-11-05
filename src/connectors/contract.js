@@ -69,6 +69,10 @@ const CAPABILITY_DEFAULTS = Object.freeze({
   livemode:         false,     // tiene entorno real separado del de pruebas
   checkout: { fieldsProvider: null }, // id del proveedor de campos del navegador (F3)
   credentialFields: [],        // [{ name, secret:boolean, required:boolean }]
+  // Pago PRESENCIAL con tarjeta en un terminal (F5, nov 2026): el PSP recibe la
+  // lectura cifrada del kernel certificado del terminal (P2PE), nunca el PAN en
+  // claro. Ningún conector lo declara hoy (no hay PSP card present).
+  cardPresent:      false,
   testOnly:         false,     // jamás se registra fuera de development/test
   simulated:        false,     // no mueve dinero (dummyCard): nunca en producción
 });

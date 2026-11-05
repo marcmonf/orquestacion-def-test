@@ -165,6 +165,9 @@ async function startPayment(linkId) {
     webhookUrl: link.webhookUrl || null,
     livemode: Boolean(link.livemode),
     paymentLinkId: link.linkId,
+    // Canal para los informes: cobro en tienda con QR o enlace compartido.
+    channel: link.channel === 'pos' ? 'pos_qr' : 'pay_link',
+    hierarchyNodeId: link.hierarchyNodeId || null,
   });
 
   if (!link.reusable) {

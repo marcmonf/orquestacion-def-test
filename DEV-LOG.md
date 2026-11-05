@@ -1914,6 +1914,32 @@ Commits: `314ca2e` (app + workflow), `d3bd38e` (arreglo de compilación).
    que requieren ser socio de pagos aprobado: por la instrucción, no se escribe nada.
    Camino y DECISIÓN PENDIENTE en `plugins/README.md`.
 
+
+#### F5 — Card present (armazón, APAGADO con `FEATURE_CARD_PRESENT`)
+
+Sin PSP con pago presencial ni SDK del terminal: solo el esqueleto, apagado.
+
+1. **Contrato**: capacidad nueva `cardPresent` (por defecto `false`; ningún conector la
+   declara, Paylands incluido). El PSP recibirá la lectura cifrada del kernel certificado
+   del terminal (P2PE): Monetiser nunca verá el PAN.
+2. **Terminales** (`src/models/Terminal.js`) ligados a la tienda (`HierarchyNode`):
+   `GET/POST /portal/terminals`, `POST /portal/terminals/:id/disable` (alta y baja solo
+   administrador; un usuario limitado a una tienda solo ve la suya).
+3. **Transacciones** (aditivo): `channel` (`online` sin el campo, `pay_link`, `pos_qr`,
+   `card_present`), `hierarchyNodeId`, `terminalId` y `cardPresent { entryMode, cvm,
+   terminalTxId }` (nunca el PAN). Los enlaces de pago y los cobros del terminal QR ya
+   rellenan `channel` y la tienda **aunque el flag esté apagado** (es un dato, no una
+   función).
+4. **Informe unificado online + tienda**: `GET /portal/reports/channels?from=&to=` → cobros
+   aprobados por canal y por tienda (el usuario limitado a una tienda ve solo la suya).
+5. **Pago presencial**: `POST /pos/card-present/payments` → rechaza cualquier dato de
+   tarjeta (`track2`, `emvData`…), exige un terminal activo de la tienda del usuario y
+   responde **`501 no_card_present_connector`**.
+
+Pendiente para encenderlo: elegir PSP con pago presencial (y su certificación con los PAX),
+el SDK de PAX en la app (`apps/android-pos/.../hardware/CardReader.kt`) y la UI en el
+portal. Tests: `tests/integration/cardPresent.test.js` (+5).
+
 ---
 
 ## 7. Elementos de seguridad

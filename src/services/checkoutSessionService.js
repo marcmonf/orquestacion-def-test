@@ -190,6 +190,8 @@ async function createCheckoutSession(merchantId, input) {
     ...(Array.isArray(input.paymentMethods) && input.paymentMethods.length ? { paymentMethods: input.paymentMethods } : {}),
     ...(input.saveCard && input.saveCard.customerRef ? { saveCardOffer: { customerRef: input.saveCard.customerRef }, initiator: 'customer' } : {}),
     ...(input.paymentLinkId ? { paymentLinkId: input.paymentLinkId } : {}),
+    ...(input.channel ? { channel: input.channel } : {}),
+    ...(input.hierarchyNodeId ? { hierarchyNodeId: String(input.hierarchyNodeId) } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 
