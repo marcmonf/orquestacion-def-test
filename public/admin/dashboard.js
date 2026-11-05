@@ -1543,16 +1543,51 @@
     document.getElementById('tabRules').style.display      = tab==='rules'?'block':'none';
     document.getElementById('tabBilling').style.display    = tab==='billing'?'block':'none';
     document.getElementById('tabLinks').style.display      = tab==='links'?'block':'none';
-    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling', links:'tabBtnLinks' };
+    document.getElementById('tabInsights').style.display   = tab==='insights'?'block':'none';
+    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling', links:'tabBtnLinks', insights:'tabBtnInsights' };
     Object.keys(map).forEach(function(k){ var b = document.getElementById(map[k]); if (b) b.classList.toggle('active', k === tab); });
     if(tab==='users') loadUsers();
     if(tab==='merchants') loadMerchants();
     if(tab==='links') loadLinks();
+    if(tab==='insights') loadInsights();
     if(tab==='billing') {
       loadCompany();
       var bp = document.getElementById('billPeriod');
       if (bp && !bp.value) bp.value = lastClosedPeriod();
     }
+  }
+
+  /* ── ORQUESTACIÓN: insights (5 nov 2026) ── */
+  var ROUTING_REASON_LABEL = { rule: 'Regla del comercio', 'default': 'Conector por defecto', failover_pre_card: 'Failover antes de pedir la tarjeta', all_unhealthy_using_first_capable: 'Todos con incidencias: primero capaz', routing_error_platform_default: 'Routing no disponible: por defecto', sin_routing: 'Pago anterior al routing' };
+  function loadInsights() {
+    var out = document.getElementById('insOut');
+    var mid = document.getElementById('insMerchant').value.trim();
+    var days = document.getElementById('insDays').value;
+    out.textContent = 'Calculando…';
+    api('/backoffice/insights?days=' + encodeURIComponent(days) + (mid ? '&merchantId=' + encodeURIComponent(mid) : ''))
+      .then(function (r) { renderInsights(r.insights); })
+      .catch(function (e) { out.textContent = 'Error: ' + e.message; });
+  }
+  function renderInsights(ins) {
+    var out = document.getElementById('insOut');
+    var pct = function (v) { return v === null || v === undefined ? '—' : v + '%'; };
+    var eur = function (c) { return ((Number(c) || 0) / 100).toFixed(2) + ' €'; };
+    var t = ins.totals;
+    var costOf = function (psp) { return (ins.costs.byPsp || []).filter(function (c) { return c.psp === psp; })[0]; };
+    var kpi = function (n, l) { return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:150px"><div style="font-size:22px;font-weight:600">' + esc(n) + '</div><div style="color:var(--text3)">' + esc(l) + '</div></div>'; };
+    var table = function (head, rows, empty) {
+      return '<table class="users-table" style="margin:8px 0 18px"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td colspan="' + head.length + '" style="color:var(--text3)">' + esc(empty) + '</td></tr>') + '</tbody></table>';
+    };
+    out.innerHTML =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">' + kpi(pct(t.approvalRatePct), 'Tasa de aprobación') + kpi(String(t.payments), 'Pagos') + kpi(pct(t.threeDSRatePct), 'Con 3DS') + kpi(eur(t.approvedVolume), 'Volumen aprobado') + '</div>' +
+      '<h3 style="font-size:14px">Comparativa por PSP</h3>' +
+      table(['PSP', 'Pagos', 'Aprobación', 'Rechazos', 'Errores', '3DS', 'Coste real medio', 'Tasa efectiva'], ins.byPsp.map(function (p) { var c = costOf(p.psp); return [p.psp, p.payments, pct(p.approvalRatePct), p.declined, p.errors, pct(p.threeDSRatePct), c ? eur(c.avgCostPerTx) : '—', c ? c.effectiveRatePct + '%' : '—']; }), 'Sin pagos en el período.') +
+      '<h3 style="font-size:14px">Motivos de rechazo (normalizados)</h3>' +
+      table(['Código', 'Qué significa', 'Pagos', '%'], ins.declineReasons.map(function (d) { return [d.code, d.description, d.count, pct(d.sharePct)]; }), 'Sin rechazos.') +
+      '<h3 style="font-size:14px">Por qué se enrutó cada pago</h3>' +
+      table(['Motivo', 'Pagos'], ins.routingReasons.map(function (x) { return [ROUTING_REASON_LABEL[x.reason] || x.reason, x.count]; }), '—') +
+      '<div style="color:var(--amber);font-size:12px">Coste real: muestra de ' + (ins.costs.sampled || 0) + ' pagos aprobados (Interchange++ sin la fee de Monetiser). ' + esc(ins.costs.disclaimer || '') + '</div>';
   }
 
   /* ── ENLACES DE PAGO (nov 2026) ── */
@@ -1739,6 +1774,8 @@
     var tabBil = document.getElementById('tabBtnBilling');
     if(tabBil)  tabBil.addEventListener('click',function(){showTab('billing');});
     document.getElementById('tabBtnLinks').addEventListener('click',function(){showTab('links');});
+    document.getElementById('tabBtnInsights').addEventListener('click',function(){showTab('insights');});
+    document.getElementById('insLoadBtn').addEventListener('click', loadInsights);
     document.getElementById('linksReloadBtn').addEventListener('click', loadLinks);
     document.getElementById('saveCompanyBtn').addEventListener('click', saveCompany);
     document.getElementById('finalizeInvoiceBtn').addEventListener('click', finalizeInvoice);

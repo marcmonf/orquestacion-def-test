@@ -165,6 +165,9 @@ app.use('/:merchantId/iframe', iframeRouter);
 
 // Enlaces de pago (nov 2026): página pública del enlace + QR → checkout de siempre.
 app.use('/pay', ensureRouter(require('./src/routes/payLinks'), 'payLinks'));
+// Tienda de demostración (sesión 5 nov 2026, F2): solo con MONETISER_ENV=sandbox;
+// si no, 404. Su clave de pruebas (DEMO_STORE_SECRET) nunca sale del servidor.
+app.use('/demo', ensureRouter(require('./src/routes/demoStore'), 'demoStore'));
 // Terminal en tienda (app Android "Monetiser POS"): JWT de portal, nunca la clave ms_.
 app.use('/pos', ensureRouter(require('./src/routes/pos'), 'pos'));
 
@@ -282,7 +285,16 @@ if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
     );
     res.sendFile(path.join(__dirname, 'public/docs.html'));
   });
+
+  // Documentación para desarrolladores (sesión 5 nov 2026, F2). HTML estático
+  // GENERADO desde docs/integracion.md y openapi.yaml (scripts/build-developers.js).
+  app.get(['/developers', '/developers/'], (req, res) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+    res.sendFile(path.join(__dirname, 'public/developers/index.html'));
+  });
 }
+// Con DOCS_ENABLED=false, /developers tampoco se sirve por el estático general.
+app.use('/developers', (req, res, next) => (String(process.env.DOCS_ENABLED || 'true').toLowerCase() === 'false' ? res.status(404).send('Not found') : next()));
 
 // Página de pruebas que simula la web de un comercio (embebe el checkout en un
 // iFrame). Necesita su propia CSP: la CSP de una página manda también sobre

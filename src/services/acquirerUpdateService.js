@@ -41,10 +41,11 @@ function allowedOrigins(target) {
  * @param {string} p.rawStatus           estado/evento crudo del PSP
  * @param {string} p.source              'stripe' | 'stripe_complete' …
  * @param {object} [p.rawPayload]        se guarda en WebhookEvent (sin datos de tarjeta)
- * @param {object} [p.extraSet]          campos extra a guardar con el cambio (metadatos de tarjeta)
+ * @param {object} [p.extraSet]          campos extra a guardar SIEMPRE (metadatos de tarjeta)
+ * @param {object} [p.changeSet]         campos extra SOLO si el estado cambia (motivo del rechazo)
  * @returns {Promise<{ tx:(object|null), changed:boolean }>}
  */
-async function applyUpdate({ processor, merchantId, processorReference, paymentIdHint = null, mappedStatus, rawStatus, source, rawPayload, extraSet = {} }) {
+async function applyUpdate({ processor, merchantId, processorReference, paymentIdHint = null, mappedStatus, rawStatus, source, rawPayload, extraSet = {}, changeSet = {} }) {
   const now = new Date();
   const trace = { lastWebhookAt: now, lastWebhookRaw: { source, status: rawStatus, processorReference } };
   const target = mappedStatus && ACQUIRER_TRANSITIONS[mappedStatus] ? mappedStatus : null;
@@ -54,7 +55,7 @@ async function applyUpdate({ processor, merchantId, processorReference, paymentI
   if (target) {
     tx = await Transaction.findOneAndUpdate(
       { merchantId, processor, processorReference, status: { $in: allowedOrigins(target) } },
-      { $set: { status: target, updatedAt: now, ...trace, ...extraSet } },
+      { $set: { status: target, updatedAt: now, ...trace, ...extraSet, ...changeSet } },
       { new: true }
     );
     changed = Boolean(tx);
@@ -75,7 +76,7 @@ async function applyUpdate({ processor, merchantId, processorReference, paymentI
         merchantId, paymentId: paymentIdHint, processorReference: null, 'routing.connector': processor,
         ...(target ? { status: { $in: allowedOrigins(target) } } : {}),
       },
-      { $set: { processorReference, processor, ...(target ? { status: target, updatedAt: now } : {}), ...trace, ...extraSet } },
+      { $set: { processorReference, processor, ...(target ? { status: target, updatedAt: now, ...changeSet } : {}), ...trace, ...extraSet } },
       { new: true }
     );
     changed = Boolean(tx && target);

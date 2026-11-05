@@ -297,6 +297,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
           processorReference: chargeResult.processorReference || null,
           processor:          PAYLANDS,
           updatedAt:          new Date(),
+          threeDS:            true,   // insights de orquestación (5 nov 2026)
           ...meta,
         } }
       );
@@ -329,6 +330,8 @@ router.post('/charge', rateLimiter, async (req, res) => {
         processorReference: chargeResult.processorReference || null,
         processor:          PAYLANDS,
         updatedAt:          new Date(),
+        // Motivo normalizado (insights de orquestación, 5 nov 2026).
+        ...(finalStatus !== 'authorized' && payment.error && payment.error.code ? { declineCode: payment.error.code } : {}),
         ...meta,
       } }
     );

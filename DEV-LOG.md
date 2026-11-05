@@ -2087,6 +2087,37 @@ Pendiente de verificar contra Stripe real (runbook `docs/stripe.md`): todo el fl
 particular los **dominios de la CSP** (`js.stripe.com`, `api.stripe.com`,
 `hooks.stripe.com`), el 3DS dentro del iFrame del checkout y los códigos de error reales.
 
+#### F2 — Escaparate: /demo, /developers e insights de orquestación
+
+- **`/demo`** (`src/routes/demoStore.js`, `public/demo/`): tienda **inventada** "Alfar Brisa"
+  (cerámica; nombre, logo SVG y productos ficticios). Catálogo de 4 piezas, carrito, país de
+  envío (decide el routing), pago con `monetiser.js` (checkout embebido) y enlace de pago con
+  QR. Su backend vive en el servidor y usa `DEMO_STORE_SECRET` (clave `ms_test_` de un
+  comercio; la pone Marcos en Render): el navegador solo manda SKUs y cantidades, el importe
+  lo calcula el servidor, el secreto no sale nunca. Solo con `MONETISER_ENV=sandbox`
+  **explícito** (sin la variable o en producción → 404). Clave live → 503. Límite 20
+  peticiones/min por IP en `/demo/api` (`DEMO_RATE_LIMIT_PER_MIN`). CSP propia con
+  `frame-src 'self' https:` (el 3DS navega dentro del checkout embebido).
+- **`/developers`**: HTML estático GENERADO por `scripts/build-developers.js` desde
+  `docs/integracion.md` (guía rápida, webhooks, estados, errores, pruebas) y `openapi.yaml`
+  (los 16 endpoints v1 con ejemplos curl / Node / PHP a partir del ejemplo de cada
+  operación) + enlace a `/docs`. `tests/unit/developersPage.test.js` falla si el HTML no
+  está regenerado. Sin JavaScript (`script-src 'none'`). Respeta `DOCS_ENABLED=false`.
+- **Insights** (`src/services/insightsService.js`): aprobación, motivos de rechazo
+  normalizados (taxonomía de errores; "motivo_no_informado" si el PSP no lo da), tasa de
+  3DS, coste real Interchange++ por PSP (costService + tarifas existentes, sin la fee de
+  Monetiser, muestra de 2.000 aprobados), comparativa por PSP y motivo de routing. Recuentos
+  agregados en Mongo (`$match` por `createdAt` [+ `merchantId`] + un `$group`, cubierto por
+  los índices existentes). Nuevos campos en Transaction: `threeDS`, `declineCode` (Paylands:
+  `threeDS` al pasar a `pending_3ds`; Stripe: `three_d_secure` del cargo y el código del
+  rechazo). Endpoints `GET /backoffice/insights` (alcance del usuario) y `GET /portal/insights`
+  (merchant de la sesión; usuarios limitados a un nodo → 403). Pestañas **Orquestación** en
+  /admin y en el portal. Pagos anteriores a hoy no tienen `threeDS`/`declineCode`: salen sin 3DS
+  y con motivo "no informado".
+- Chromium: /demo en móvil y escritorio (sin scroll horizontal, carrito, checkout embebido con
+  el importe calculado en servidor, enlace + QR cargado, secreto ausente del HTML),
+  /developers (escritorio y móvil), pestañas Orquestación de /admin y del portal.
+
 
 ## 7. Elementos de seguridad
 
@@ -2171,6 +2202,7 @@ particular los **dominios de la CSP** (`js.stripe.com`, `api.stripe.com`,
 | `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
 | `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
 | `FEATURE_STRIPE` | **(5 nov 2026, bloque 2)** `true` registra Stripe como segundo PSP (cuenta Stripe de pruebas DEL COMERCIO, configurada en /admin → Merchants → Adquirentes). Se lee al arrancar: cambiarla exige Manual Deploy. Apagado por defecto. Runbook: `docs/stripe.md`. |
+| `DEMO_STORE_SECRET` | **(5 nov 2026, bloque 2)** Clave API de PRUEBAS (`ms_test_…`) del comercio de la tienda demo `/demo`. Solo se usa en el servidor. Sin ella, `/demo` se ve pero no cobra. `/demo` solo existe con `MONETISER_ENV=sandbox`. |
 | `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |
 | `PAYNOPAIN_PCI_CLIENT_URL` | **(26 sep 2026)** URL de la librería ProxyFields (por defecto según `PAYNOPAIN_ENV`; la de producción debe confirmarse con Paylands). |
 | `RL_PAYMENTS_IP_MAX` / `RL_PAYMENTS_MERCHANT_MAX` | API de pagos: por IP antes de autenticar (300/min) y por merchant autenticado (600/min). |

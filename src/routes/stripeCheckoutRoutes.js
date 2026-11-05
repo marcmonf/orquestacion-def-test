@@ -112,10 +112,12 @@ router.post('/complete', rateLimiter, async (req, res) => {
       return res.json({ success: false, retry: true, paymentId, message: 'Pago no completado. Revisa los datos de la tarjeta.' });
     }
     const extraSet = r.card ? { ...r.card } : {};
+    // Motivo normalizado del rechazo (taxonomía de Monetiser) para los insights.
+    const changeSet = r.status === 'declined' && r.error && r.error.code ? { declineCode: r.error.code } : {};
     const { tx: updated } = await applyUpdate({
       processor: STRIPE, merchantId, processorReference: tx.processorReference, paymentIdHint: paymentId,
       mappedStatus: r.status, rawStatus: r.rawStatus, source: 'stripe_complete',
-      rawPayload: { processorReference: tx.processorReference, status: r.rawStatus }, extraSet,
+      rawPayload: { processorReference: tx.processorReference, status: r.rawStatus }, extraSet, changeSet,
     });
     const status = (updated && updated.status) || tx.status;
     if (FINAL_OK.includes(status)) return res.json({ success: true, paymentId, status, resultUrl: resultPath(paymentId, 'ok') });

@@ -145,7 +145,8 @@ module.exports = function makeMemoryModel(opts = {}) {
           }
           return thenable;
         },
-        lean()   { return Promise.resolve(doc ? { ...doc } : null); },
+        // lean(false) = documento completo (con save), como en Mongoose.
+        lean(v)  { return Promise.resolve(doc ? (v === false ? doc : { ...doc }) : null); },
         then(resolve, reject) { return Promise.resolve(doc).then(resolve, reject); },
       };
       return thenable;

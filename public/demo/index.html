@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alfar Brisa — tienda de demostración de Monetiser</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="/demo/style.css">
+</head>
+<body>
+  <!-- Tienda INVENTADA para enseñar Monetiser (marca, logo y productos ficticios). -->
+  <div class="demo-banner">Tienda de demostración · entorno de pruebas · no se cobra dinero real</div>
+  <header class="top">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="#1f4e5f"/><path d="M9 25c4-6 8-6 11 0s7 6 11 0" stroke="#f3e3c3" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M12 17c3-4 6-4 8 0" stroke="#c9a46a" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <div><div class="brand-name">Alfar Brisa</div><div class="brand-tag">Cerámica hecha a mano</div></div>
+    </div>
+    <div class="cart-pill" id="cartPill">Carrito · <span id="cartCount">0</span></div>
+  </header>
+
+  <main class="layout">
+    <section>
+      <h1>Piezas de temporada</h1>
+      <div class="grid" id="catalog"></div>
+    </section>
+
+    <aside class="cart" id="cart">
+      <h2>Tu pedido</h2>
+      <div id="cartLines" class="cart-lines"><p class="muted">El carrito está vacío.</p></div>
+      <div class="total"><span>Total</span><strong id="cartTotal">0,00 €</strong></div>
+      <label class="field">País de envío
+        <select id="country"></select>
+      </label>
+      <p class="hint">El país decide por qué adquirente pasa el pago (routing de Monetiser).</p>
+      <button class="btn primary" id="payBtn" disabled>Pagar con tarjeta</button>
+      <button class="btn" id="linkBtn" disabled>Crear enlace de pago y QR</button>
+      <div id="msg" class="msg" role="status"></div>
+    </aside>
+  </main>
+
+  <section class="panel" id="checkoutPanel" hidden>
+    <div class="panel-head"><h2>Pago seguro</h2><button class="btn small" id="closeCheckout">Cerrar</button></div>
+    <p class="hint">Checkout de Monetiser embebido con <code>monetiser.js</code>. La tarjeta solo se escribe en los campos del adquirente.</p>
+    <div id="checkout"></div>
+    <div id="orderInfo" class="order-info"></div>
+  </section>
+
+  <section class="panel" id="linkPanel" hidden>
+    <div class="panel-head"><h2>Enlace de pago</h2><button class="btn small" id="closeLink">Cerrar</button></div>
+    <p>Envía este enlace o enseña el QR: el cliente paga desde su móvil.</p>
+    <p><a id="linkUrl" target="_blank" rel="noopener"></a></p>
+    <img id="linkQr" alt="Código QR del enlace de pago" width="220" height="220">
+  </section>
+
+  <footer class="foot">Alfar Brisa es una tienda ficticia. Pagos procesados por <strong>Monetiser</strong> en modo de pruebas · <a href="/developers">Documentación para desarrolladores</a></footer>
+
+  <script src="/v1/monetiser.js"></script>
+  <script src="/demo/app.js"></script>
+</body>
+</html>

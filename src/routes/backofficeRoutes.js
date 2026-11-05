@@ -58,6 +58,28 @@ try { bcrypt = require('bcryptjs'); } catch {
 router.use(backofficeAuth);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /backoffice/insights?days=30&merchantId=  — insights de orquestación
+// (5 nov 2026, F2): aprobación, motivos de rechazo, 3DS, coste real y routing
+// por PSP. Solo lectura, con el alcance de merchants del usuario.
+// ─────────────────────────────────────────────────────────────────────────────
+const insightsService = require('../services/insightsService');
+router.get('/insights', async (req, res) => {
+  try {
+    const scope = scopeOf(req.backofficeUser);
+    const wanted = typeof req.query.merchantId === 'string' && req.query.merchantId ? req.query.merchantId : null;
+    if (wanted && !scope.includes('all') && !scope.includes(wanted)) return res.status(403).json({ success: false, error: 'forbidden' });
+    const merchantId = wanted || (scope.includes('all') ? null : scope);
+    if (Array.isArray(merchantId) && !merchantId.length) return res.status(403).json({ success: false, error: 'forbidden' });
+    const livemode = req.query.livemode === 'true' ? true : (req.query.livemode === 'false' ? false : undefined);
+    const insights = await insightsService.compute({ merchantId, days: req.query.days, livemode });
+    return res.json({ success: true, insights });
+  } catch (err) {
+    console.error('❌ [backoffice/insights]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /backoffice/dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {

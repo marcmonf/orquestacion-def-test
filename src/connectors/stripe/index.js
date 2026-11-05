@@ -149,6 +149,8 @@ function cardOf(pi) {
   if (/^\d{4}$/.test(String(card.last4 || ''))) out.cardLast4 = String(card.last4);
   if (card.country) out.issuerCountry = String(card.country).toUpperCase().slice(0, 3);
   if (card.funding) out.cardType = String(card.funding).toLowerCase().slice(0, 32);
+  // Charge.payment_method_details.card.three_d_secure: presente si hubo 3DS.
+  if (card.three_d_secure) out.threeDS = true;
   return out;
 }
 

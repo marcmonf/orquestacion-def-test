@@ -289,6 +289,21 @@ router.patch('/users/:userId', requirePortalRole('merchant_admin'), async (req, 
 // por req.portalUser.merchantId; una transacción de otro merchant → 404.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// GET /portal/insights?days=30 — insights de orquestación del PROPIO merchant
+// (5 nov 2026, F2). Solo lectura; el merchant SIEMPRE es el de la sesión.
+router.get('/insights', async (req, res) => {
+  // Un usuario limitado a un nodo de la jerarquía no ve los datos de todo el
+  // comercio (conservador: los insights son de comercio entero).
+  if (req.portalUser.hierarchyNodeId) return res.status(403).json({ success: false, error: 'insufficient_permissions', message: 'Insights solo para usuarios de todo el comercio.' });
+  try {
+    const insights = await require('../services/insightsService').compute({ merchantId: req.portalUser.merchantId, days: req.query.days });
+    return res.json({ success: true, insights });
+  } catch (err) {
+    console.error('❌ [portal/insights]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // GET /portal/transactions — listado paginado del PROPIO merchant
 router.get('/transactions', async (req, res) => {
   try {

@@ -62,6 +62,7 @@ router.post('/:merchantId', async (req, res) => {
       mappedStatus: parsed.status, rawStatus: parsed.rawStatus, source: 'stripe',
       // Auditoría sin el objeto completo de Stripe (lleva datos del titular).
       rawPayload: { id: event.id, type: event.type, processorReference: parsed.processorReference, status: parsed.status },
+      changeSet: parsed.status === 'declined' && parsed.error ? { declineCode: parsed.error.code } : {},
     });
     if (!tx) return res.status(200).json({ received: true, ignored: true });
     return res.status(200).json({ received: true, paymentId: tx.paymentId, status: tx.status, changed });
