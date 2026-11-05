@@ -43,7 +43,8 @@ const { canQuery } = require('../utils/dbReady');
 // recibe checkouts (sí podría recibir S2S).
 // 'stripe_elements' (5 nov 2026): solo recibe pagos si el conector Stripe está
 // registrado (FEATURE_STRIPE) y el comercio tiene su cuenta Stripe configurada.
-const CHECKOUT_FIELDS_PROVIDERS = Object.freeze(['paylands_proxyfields', 'stripe_elements']);
+// 'redsys_redirect' (6 nov 2026): redirección a la página de pago de Redsys.
+const CHECKOUT_FIELDS_PROVIDERS = Object.freeze(['paylands_proxyfields', 'stripe_elements', 'redsys_redirect']);
 // Solo tests: proveedores de campos de conectores de prueba (nunca en producción).
 const testFieldsProviders = new Set();
 function checkoutFieldsProviders() {

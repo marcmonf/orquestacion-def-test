@@ -64,6 +64,23 @@ const PROVIDERS = Object.freeze({
     }),
     runtime: () => ({ stripeJsUrl: 'https://js.stripe.com/endive/stripe.js' }),
   }),
+  // Redsys por REDIRECCIÓN (sesión 6 nov 2026). No hay campos de tarjeta en el
+  // checkout de Monetiser: un botón envía el formulario firmado a realizarPago
+  // de Redsys (en la ventana entera: no está verificado que Redsys admita ir
+  // dentro de un iFrame) y el comprador teclea la tarjeta en Redsys.
+  // URLs de realizarPago: las del manual de redirección de Redsys.
+  redsys_redirect: Object.freeze({
+    id: 'redsys_redirect',
+    connector: 'redsys',
+    script: '/checkout/providers/redsys_redirect.js',
+    csp: Object.freeze({
+      script:  [],
+      connect: [],
+      frame:   [],
+      form:    ['https://sis-t.redsys.es:25443', 'https://sis.redsys.es'],
+    }),
+    runtime: () => ({}),
+  }),
 });
 
 const DEFAULT_FIELDS_PROVIDER = 'paylands_proxyfields';

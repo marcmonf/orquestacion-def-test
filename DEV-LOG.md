@@ -2218,6 +2218,50 @@ filtraba el estado en memoria → ahora filtra el estado en la consulta (índice
 `{merchantId, status, createdAt}`) y trae solo 4 campos. Sin explain contra Atlas real (no hay
 Mongo aquí): pendiente comprobar con `explain()` en Atlas.
 
+### Sesión 6 nov 2026 — Redsys directo como tercer PSP (`FEATURE_REDSYS`, apagado)
+
+Rama `claude/monetiser-multi-psp-framework-3dlfch` sobre main `b37dc07`. Línea base 664/664 +
+31/31. Marcos no estaba disponible: lo dudoso, conservador y en "DECISIONES PENDIENTES".
+
+**Fuente única:** los datos del "Manual integración para conexión por Redirección" de Redsys que
+Marcos verificó y pegó en el prompt de la sesión (URLs de realizarPago, 3 campos, algoritmo de
+firma, campos obligatorios, formato de Ds_Merchant_Order, tipos 0/1/2/3/9, códigos Ds_Response).
+**canales.redsys.es, pagosonline.redsys.es, sis-t.redsys.es y www.redsys.es estaban BLOQUEADOS**
+desde el contenedor: nada se ha probado contra Redsys real. Redsys no publica SDK oficial en npm
+ni GitHub (solo librerías de terceros, que NO se han usado).
+
+#### F1 — Pago por redirección (preautorización)
+
+- `src/connectors/redsys/` (contrato + suite de contrato): cuenta Redsys DEL COMERCIO (FUC 9
+  cifras, terminal, clave SHA-256 en Base64) cifrada con el llavero; solo entorno de pruebas
+  (modo live rechazado). Solo EUR (978 es el único código verificado).
+- `signature.js`: firma HMAC_SHA256_V1 tal cual el manual. **Lo que el resumen del manual no
+  dice y se ha fijado:** 3DES en modo CBC con vector de ceros y relleno con ceros (lo habitual);
+  pedido de la notificación en `Ds_Order`; firma de la notificación aceptada en Base64 estándar o
+  para URL. **Sin vector de prueba del manual** (no se pudo abrir): el test recalcula el
+  algoritmo paso a paso, pero la firma solo queda validada contra Redsys real (si da SIS0042 en la
+  primera prueba del runbook, es aquí).
+- Checkout: proveedor `redsys_redirect` (sin campos de tarjeta; texto "irás a la página segura
+  de tu banco"). `POST /:merchantId/redsys/start` → formulario firmado de **preautorización
+  (tipo 1)** a `realizarPago` de pruebas; el navegador lo envía en la **ventana entera**
+  (`target=_top`; no está verificado que Redsys admita iFrame). CSP del checkout con
+  `form-action` a `sis-t.redsys.es:25443` y `sis.redsys.es`. UrlOK/UrlKO = la página de resultado
+  firmada de siempre; MerchantURL = `SERVER_URL/webhooks/redsys/:merchantId`;
+  `Ds_Merchant_MerchantData` = nuestro paymentId.
+- **Un solo pedido Redsys por pago**: al pulsar Pagar, el pago pasa ATÓMICAMENTE a `pending_3ds`
+  con su `Ds_Merchant_Order` (12 caracteres: 4 dígitos + 8 alfanuméricos, único). Un segundo
+  "Pagar" → 409. Si el comprador abandona en Redsys, el comercio crea otra sesión.
+- Notificación online `POST /webhooks/redsys/:merchantId` (formulario o JSON): **firma
+  verificada antes de usar nada** (401 si no cuadra); FUC distinto → ignorada; importe distinto
+  → no cambia el estado. `Ds_Response` 0000-0099 → `authorized`; **9999 → `pending_3ds` (no es
+  aprobación)**; resto → `declined` (motivo `card_declined`). Misma máquina de estados y mismo
+  webhook saliente (`connectorUsed: "redsys"`).
+- PCI SAQ A: un test comprueba que ninguna petición lleva `Ds_Merchant_Pan`,
+  `Ds_Merchant_ExpiryDate` ni `Ds_Merchant_CVV2`; no hay InSite ni host-to-host con tarjeta.
+- Chromium: checkout a pantalla completa y EMBEBIDO con monetiser.js: el bloque de Redsys
+  visible (Paylands y Stripe ocultos), el POST sale a `realizarPago` (interceptado) con los 3
+  campos y la página entera navega a Redsys; sin errores de consola.
+
 
 ## 7. Elementos de seguridad
 
@@ -2301,6 +2345,8 @@ Mongo aquí): pendiente comprobar con `explain()` en Atlas.
 | `HPP_SIGNING_SECRET` | **(26 sep 2026)** Secreto de plataforma para firmar la URL del iFrame. Sin él, uno aleatorio por proceso (vale con una sola instancia). **Recomendado definirlo.** |
 | `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
 | `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
+| `FEATURE_REDSYS` | **(6 nov 2026)** `true` registra Redsys directo (TPV Virtual del comercio, redirección, solo pruebas). Se lee al arrancar → Manual Deploy. Runbook: `docs/redsys.md`. |
+| `FEATURE_REDSYS_OPERATIONS` + `REDSYS_OPERATIONS_URL_TEST` | **(6 nov 2026)** Confirmar/anular/devolver Redsys desde Monetiser. APAGADO: el canal de operaciones sin titular no está verificado; la URL la pone Marcos solo tras confirmarla en la documentación de Redsys. |
 | `FEATURE_STRIPE` | **(5 nov 2026, bloque 2)** `true` registra Stripe como segundo PSP (cuenta Stripe de pruebas DEL COMERCIO, configurada en /admin → Merchants → Adquirentes). Se lee al arrancar: cambiarla exige Manual Deploy. Apagado por defecto. Runbook: `docs/stripe.md`. |
 | `DEMO_STORE_SECRET` | **(5 nov 2026, bloque 2)** Clave API de PRUEBAS (`ms_test_…`) del comercio de la tienda demo `/demo`. Solo se usa en el servidor. Sin ella, `/demo` se ve pero no cobra. `/demo` solo existe con `MONETISER_ENV=sandbox`. |
 | `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |

@@ -44,4 +44,8 @@ module.exports = {
   // pruebas DEL COMERCIO). Se lee al ARRANCAR (registro de conectores): un
   // cambio en Render necesita Manual Deploy.
   stripe: () => on('FEATURE_STRIPE'),
+  // Sesión 6 nov 2026: Redsys directo (TPV Virtual del comercio, redirección).
+  // Se lee al ARRANCAR. FEATURE_REDSYS_OPERATIONS (confirmar/anular/devolver
+  // desde Monetiser) va aparte y también apagado: canal sin verificar.
+  redsys: () => on('FEATURE_REDSYS'),
 };

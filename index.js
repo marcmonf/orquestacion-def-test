@@ -116,6 +116,10 @@ app.use('/', require('./src/routes/status'));
  * validation_hash de Paylands y el pago se quedaba colgado. Y Paylands notifica
  * desde pocas IPs: el límite global por IP acabaría devolviéndole 429.
  * La ruta verifica la firma antes de usar nada del body. */
+// Notificación online de Redsys (sesión 6 nov 2026): POST de formulario con
+// Ds_SignatureVersion, Ds_MerchantParameters y Ds_Signature; la firma se
+// verifica antes de usar nada. Antes de los sanitizadores (no tocan el cuerpo).
+app.use('/webhooks/redsys', require('./src/routes/redsysRoutes').webhook);
 app.use('/webhooks', require('./src/routes/webhooks'));
 
 if (mongoSanitize) app.use(mongoSanitize());
@@ -241,6 +245,8 @@ app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
 app.use('/:merchantId/proxy-pci', proxyPciRoutes);
 // Backend del proveedor de campos 'stripe_elements' (sesión 5 nov 2026, F1).
 app.use('/:merchantId/stripe', require('./src/routes/stripeCheckoutRoutes'));
+// Redsys por redirección (sesión 6 nov 2026): formulario firmado para realizarPago.
+app.use('/:merchantId/redsys', require('./src/routes/redsysRoutes').checkout);
 
 // Payments (router agregador existente)
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));

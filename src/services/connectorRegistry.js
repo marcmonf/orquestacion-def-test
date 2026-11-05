@@ -10,6 +10,8 @@
  *   - payNoPain:  adquirente real Paylands. Conector por defecto.
  *   - stripe:     Stripe con la cuenta del comercio (FEATURE_STRIPE, apagado
  *                 por defecto; sesión 5 nov 2026).
+ *   - redsys:     TPV Virtual de Redsys del comercio, por redirección
+ *                 (FEATURE_REDSYS, apagado por defecto; sesión 6 nov 2026).
  *   - dummyCard:  conector SIMULADO, aprueba SIEMPRE sin mover dinero. Solo se
  *                 registra en development/test o con ALLOW_DUMMY_CONNECTOR=true.
  *
@@ -138,7 +140,7 @@ function legacyFromProvider(provider) {
       return {
         success:            r.status === 'authorized' || r.status === 'captured',
         requires3DS:        r.status === 'requires_action',
-        threeDsUrl:         r.action && r.action.url ? r.action.url : null,
+        threeDsUrl:         r.action && r.action.type === 'redirect' && r.action.url ? r.action.url : null,
         responseCode:       r.error ? r.error.code : r.status,
         processorReference: r.processorReference || null,
       };
@@ -169,6 +171,13 @@ if (flags.stripe()) {
   const stripeProvider = require('../connectors/stripe');
   providers.stripe = stripeProvider;
   registry.stripe = legacyFromProvider(stripeProvider);
+}
+// Redsys directo (sesión 6 nov 2026): TPV Virtual de Redsys DEL COMERCIO, pago
+// por redirección. Solo con FEATURE_REDSYS=true (apagado por defecto).
+if (flags.redsys()) {
+  const redsysProvider = require('../connectors/redsys');
+  providers.redsys = redsysProvider;
+  registry.redsys = legacyFromProvider(redsysProvider);
 }
 
 /**
