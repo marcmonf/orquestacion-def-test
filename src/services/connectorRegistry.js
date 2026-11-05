@@ -8,6 +8,8 @@
  *
  * CONECTORES:
  *   - payNoPain:  adquirente real Paylands. Conector por defecto.
+ *   - stripe:     Stripe con la cuenta del comercio (FEATURE_STRIPE, apagado
+ *                 por defecto; sesión 5 nov 2026).
  *   - dummyCard:  conector SIMULADO, aprueba SIEMPRE sin mover dinero. Solo se
  *                 registra en development/test o con ALLOW_DUMMY_CONNECTOR=true.
  *
@@ -35,6 +37,7 @@ const payNoPain   = require('../connectors/paynopain/payNoPainConnector');
 const payNoPainProvider = require('../connectors/paylands');
 const dummyProvider     = require('../connectors/dummy');
 const { isDevOrTest } = require('../utils/runtimeSecrets');
+const flags = require('../utils/featureFlags');
 
 const DEFAULT_CONNECTOR = 'payNoPain';
 
@@ -158,6 +161,14 @@ const providers = {
 if (dummyEnabled()) {
   registry.dummyCard = adaptDummy(dummyCard);
   providers.dummyCard = dummyProvider;
+}
+// Stripe (sesión 5 nov 2026, F1): segundo PSP real, con la cuenta Stripe DEL
+// COMERCIO. Solo con FEATURE_STRIPE=true (apagado por defecto). Un conector
+// nuevo usa el adaptador legado generado desde el contrato: el núcleo no cambia.
+if (flags.stripe()) {
+  const stripeProvider = require('../connectors/stripe');
+  providers.stripe = stripeProvider;
+  registry.stripe = legacyFromProvider(stripeProvider);
 }
 
 /**

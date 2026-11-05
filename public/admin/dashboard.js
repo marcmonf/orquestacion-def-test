@@ -900,6 +900,7 @@
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="contract">Tarifa</button>'+
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="keys">API Keys</button>'+
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="whsecret">Secreto webhook</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="psp">Adquirentes</button>'+
         '</td></tr>';
     }).join('');
 
@@ -912,6 +913,7 @@
         if(action==='contract') openContractModal(id);
         if(action==='keys') openApiKeysModal(id);
         if(action==='whsecret') rotateWebhookSecret(id);
+        if(action==='psp') openPspModal(id);
       });
     });
   }
@@ -925,6 +927,117 @@
         window.prompt('Secreto de firma de webhooks de ' + mid + ' (cópialo ahora, no se vuelve a mostrar):', r.webhookSigningSecret || '');
       })
       .catch(function (e) { alert('Error: ' + e.message); });
+  }
+
+  // ── Adquirentes del merchant (sesión 5 nov 2026, F1 Stripe) ───────────────
+  // Credenciales por merchant y modo (solo pruebas en esta fase). Se guardan
+  // cifradas y NUNCA vuelven en claro: la pantalla solo enseña los 4 últimos.
+  var currentPspMerchant = null;
+  function openPspModal(mid) {
+    currentPspMerchant = mid;
+    document.getElementById('pspMerchantId').textContent = mid;
+    document.getElementById('pspDemoPresetMsg').textContent = '';
+    document.getElementById('pspSimOut').textContent = '';
+    document.getElementById('pspModal').classList.add('open');
+    loadPsp(mid);
+  }
+  function loadPsp(mid) {
+    var box = document.getElementById('pspList');
+    box.textContent = 'Cargando…';
+    Promise.all([api('/backoffice/connectors'), api('/backoffice/merchants/' + encodeURIComponent(mid) + '/connector-accounts')])
+      .then(function (rs) { renderPsp(mid, rs[0].connectors || [], rs[1].accounts || []); })
+      .catch(function (e) { box.textContent = 'Error: ' + e.message; });
+  }
+  function renderPsp(mid, connectors, accounts) {
+    var box = document.getElementById('pspList');
+    box.innerHTML = '';
+    connectors.filter(function (c) { return !c.capabilities.simulated && !c.capabilities.testOnly; }).forEach(function (c) {
+      var card = document.createElement('div');
+      card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px';
+      var h = document.createElement('div');
+      h.style.cssText = 'font-weight:600;margin-bottom:6px';
+      h.textContent = c.displayName + ' (' + c.id + ') · circuito ' + ((c.health && c.health.status) || '–') + ' · divisas ' + (c.capabilities.currencies || []).join(', ');
+      card.appendChild(h);
+      if (!c.capabilities.perAccountCredentials) {
+        var p = document.createElement('div');
+        p.style.cssText = 'font-size:12px;color:var(--text3)';
+        p.textContent = 'Cuenta de plataforma (variables de entorno en Render). No se configura por merchant.';
+        card.appendChild(p);
+        box.appendChild(card);
+        return;
+      }
+      var acc = accounts.filter(function (a) { return a.connector === c.id; })[0];
+      var test = acc && acc.credentials && acc.credentials.test;
+      var st = document.createElement('div');
+      st.style.cssText = 'font-size:12px;margin-bottom:6px';
+      st.textContent = test && test.configured
+        ? 'Modo pruebas: CONFIGURADO (' + Object.keys(test.fields || {}).map(function (k) { return k + ' ' + test.fields[k]; }).join(' · ') + ')'
+        : 'Modo pruebas: sin configurar';
+      card.appendChild(st);
+      if (c.id === 'stripe') {
+        var wh = document.createElement('div');
+        wh.style.cssText = 'font-size:12px;margin-bottom:6px';
+        wh.textContent = 'URL del webhook (pégala en Stripe → Webhooks): ' + location.origin + '/webhooks/stripe/' + mid;
+        card.appendChild(wh);
+      }
+      var inputs = {};
+      (c.capabilities.credentialFields || []).forEach(function (f) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
+        var l = document.createElement('label');
+        l.style.cssText = 'width:130px;font-size:12px';
+        l.textContent = f.name + (f.required ? ' *' : '');
+        var i = document.createElement('input');
+        i.type = f.secret ? 'password' : 'text';
+        i.autocomplete = 'off';
+        i.style.cssText = 'flex:1;font-family:monospace;font-size:12px';
+        i.dataset.field = f.name;
+        inputs[f.name] = i;
+        row.appendChild(l); row.appendChild(i);
+        card.appendChild(row);
+      });
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.textContent = 'Guardar credenciales de pruebas';
+      var msg = document.createElement('span');
+      msg.style.cssText = 'margin-left:8px;font-size:12px';
+      btn.addEventListener('click', function () {
+        var creds = {};
+        Object.keys(inputs).forEach(function (k) { var v = inputs[k].value.trim(); if (v) creds[k] = v; });
+        btn.disabled = true; msg.textContent = 'Guardando…';
+        api('/backoffice/merchants/' + encodeURIComponent(mid) + '/connector-accounts/' + encodeURIComponent(c.id) + '/credentials',
+          { method: 'PUT', body: JSON.stringify({ mode: 'test', credentials: creds }) })
+          .then(function () { btn.disabled = false; msg.textContent = 'Guardado ✓'; loadPsp(mid); })
+          .catch(function (e) { btn.disabled = false; msg.textContent = 'Error: ' + ((e.details && e.details.message) || e.message); });
+      });
+      card.appendChild(btn); card.appendChild(msg);
+      box.appendChild(card);
+    });
+  }
+  function applyDemoPreset() {
+    var mid = currentPspMerchant; if (!mid) return;
+    var msg = document.getElementById('pspDemoPresetMsg');
+    msg.textContent = 'Aplicando…';
+    api('/backoffice/routing/' + encodeURIComponent(mid) + '/demo-preset', { method: 'POST', body: JSON.stringify({}) })
+      .then(function () { msg.textContent = 'Aplicado ✓ (ver pestaña Reglas)'; })
+      .catch(function (e) { msg.textContent = 'Error: ' + ((e.details && e.details.message) || e.message); });
+  }
+  function simulatePsp() {
+    var mid = currentPspMerchant; if (!mid) return;
+    var out = document.getElementById('pspSimOut');
+    var body = {
+      amount: parseInt(document.getElementById('pspSimAmount').value, 10),
+      currency: document.getElementById('pspSimCurrency').value.trim().toUpperCase(),
+      country: document.getElementById('pspSimCountry').value.trim().toUpperCase() || undefined,
+    };
+    out.textContent = 'Simulando…';
+    api('/backoffice/routing/' + encodeURIComponent(mid) + '/simulate', { method: 'POST', body: JSON.stringify(body) })
+      .then(function (r) {
+        var d = r.decision || {};
+        out.textContent = 'Conector: ' + (d.connector || 'NINGUNO') + '  ·  motivo: ' + d.reason + '\n' +
+          (d.candidates || []).map(function (c) { return '- ' + c.connector + ': ' + (c.capable ? (c.healthy ? 'capaz y sano' : 'capaz, circuito abierto') : 'descartado') + (c.reasons && c.reasons.length ? ' (' + c.reasons.join('; ') + ')' : ''); }).join('\n');
+      })
+      .catch(function (e) { out.textContent = 'Error: ' + e.message; });
   }
 
   function openCreateMerchant() {
@@ -1604,6 +1717,9 @@
     document.getElementById('saveMerchantBtn').addEventListener('click', saveMerchant);
     document.getElementById('createMerchantBtn').addEventListener('click', openCreateMerchant);
     document.getElementById('apiKeysModalClose').addEventListener('click',function(){document.getElementById('apiKeysModal').classList.remove('open');});
+    document.getElementById('pspModalClose').addEventListener('click',function(){document.getElementById('pspModal').classList.remove('open');});
+    document.getElementById('pspDemoPresetBtn').addEventListener('click', applyDemoPreset);
+    document.getElementById('pspSimBtn').addEventListener('click', simulatePsp);
     document.getElementById('createKeyBtn').addEventListener('click', createApiKeyForCurrentMerchant);
     document.getElementById('rulesLoadBtn').addEventListener('click', rulesLoadPolicy);
     document.getElementById('rulesSaveBtn').addEventListener('click', rulesSavePolicy);

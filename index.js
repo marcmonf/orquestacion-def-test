@@ -93,6 +93,10 @@ app.use((req, res, next) => (
 
 app.use(helmet());
 
+// Webhook entrante de Stripe (sesión 5 nov 2026): necesita el cuerpo CRUDO para
+// verificar la firma → express.raw ANTES de express.json (que ya no lo reparsea).
+app.use('/webhooks/stripe', express.raw({ type: '*/*', limit: '1mb' }), require('./src/routes/stripeWebhook'));
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -232,6 +236,8 @@ app.use('/portal', ensureRouter(require('./src/routes/portalRoutes'), 'portalRou
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
 app.use('/:merchantId/proxy-pci', proxyPciRoutes);
+// Backend del proveedor de campos 'stripe_elements' (sesión 5 nov 2026, F1).
+app.use('/:merchantId/stripe', require('./src/routes/stripeCheckoutRoutes'));
 
 // Payments (router agregador existente)
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));

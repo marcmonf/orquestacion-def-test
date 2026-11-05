@@ -1382,6 +1382,46 @@ function stampRulesActor(req, res, next) {
   next();
 }
 
+// Routing de DEMOSTRACIÓN (sesión 5 nov 2026, F1 Stripe): escribe en la política
+// del merchant (la misma de /admin → Reglas, con su auditoría) una regla
+//   divisa ∈ domesticCurrencies Y país del comprador ∈ domesticCountries → domesticConnector
+//   resto → restConnector
+// con fallback pre-captura al otro (si el circuito del elegido está abierto o
+// no tiene credenciales, el routing del checkout pasa al siguiente ANTES de
+// pedir la tarjeta; nunca después). Por defecto: EUR + ES → Paylands; resto → Stripe.
+const DEMO_PRESET_DEFAULTS = Object.freeze({ domesticCurrencies: ['EUR'], domesticCountries: ['ES'], domesticConnector: 'payNoPain', restConnector: 'stripe' });
+function buildDemoPolicy(merchantId, b = {}) {
+  const list = (v, d, re) => {
+    const arr = Array.isArray(v) && v.length ? v.map((x) => String(x).trim().toUpperCase()) : d;
+    return arr.every((x) => re.test(x)) ? arr : null;
+  };
+  const cur = list(b.domesticCurrencies, DEMO_PRESET_DEFAULTS.domesticCurrencies, /^[A-Z]{3}$/);
+  const ctry = list(b.domesticCountries, DEMO_PRESET_DEFAULTS.domesticCountries, /^[A-Z]{2}$/);
+  if (!cur || !ctry) return { error: 'domesticCurrencies (ISO 4217) y domesticCountries (ISO alfa-2) deben ser listas válidas' };
+  const domestic = String(b.domesticConnector || DEMO_PRESET_DEFAULTS.domesticConnector);
+  const rest = String(b.restConnector || DEMO_PRESET_DEFAULTS.restConnector);
+  for (const id of [domestic, rest]) {
+    if (!connectorRegistry.hasProvider(id)) return { error: `conector ${id} no registrado${id === 'stripe' ? ' (FEATURE_STRIPE apagado)' : ''}`, status: 409 };
+  }
+  return {
+    policy: {
+      merchantId, version: 'v1', defaultConnector: rest,
+      rules: [{ id: 'demo_domestic', priority: 10, when: { currency: { in: cur }, country: { in: ctry } }, action: { route: domestic } }],
+      fallback: { order: domestic === rest ? [rest] : [rest, domestic], on: ['issuer_unavailable'] },
+      explain: true,
+    },
+  };
+}
+router.post('/routing/:merchantId/demo-preset', requireRole('superadmin'), stampRulesActor, async (req, res, next) => {
+  const merchantId = String(req.params.merchantId);
+  const exists = await Merchant.findOne({ merchantId }).lean().catch(() => null);
+  if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+  const built = buildDemoPolicy(merchantId, req.body || {});
+  if (built.error) return res.status(built.status || 400).json({ success: false, error: 'invalid_preset', message: built.error });
+  req.body = built.policy;
+  return next();
+}, rulesUpsertPolicy);
+
 router.get('/rules/export', requireRole('superadmin'), rulesExportPolicy);
 router.post('/rules/import', requireRole('superadmin'), stampRulesActor, rulesImportPolicy);
 router.post('/rules/try', requireRole('superadmin'), rulesTryPolicy);

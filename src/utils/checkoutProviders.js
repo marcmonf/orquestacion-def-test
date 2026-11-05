@@ -12,7 +12,7 @@
 //   - csp:     los dominios que necesita (se añaden a la CSP del iFrame).
 //   - runtime: datos extra que el módulo necesita (p. ej. la URL de su librería).
 //
-// Hoy existe uno: los ProxyFields de Paylands. Añadir otro: docs/conectores.md §6.
+// Hoy: ProxyFields de Paylands y Stripe Elements. Añadir otro: docs/conectores.md §6.
 
 // URL de la librería cliente ProxyFields según el entorno de Paylands.
 // PAYNOPAIN_PCI_CLIENT_URL permite fijarla a mano. El valor por defecto de
@@ -41,6 +41,28 @@ const PROVIDERS = Object.freeze({
       form:    ['https://api.paylands.com'],
     }),
     runtime: () => ({ pciClientUrl: pciClientUrl() }),
+  }),
+  // Stripe Elements (sesión 5 nov 2026, F1). La tarjeta solo se teclea en el
+  // campo alojado de Stripe (iFrame de Stripe): PCI SAQ A.
+  // URL de Stripe.js: la que usa el cargador oficial @stripe/stripe-js 10.1.0
+  // (ORIGIN https://js.stripe.com + release train 'endive', el mismo que la
+  // versión de API del SDK de servidor 2026-09-30.endive).
+  // Dominios de la CSP: PENDIENTES DE VERIFICAR con la documentación de Stripe
+  // (docs.stripe.com bloqueado desde el contenedor). js.stripe.com (script y
+  // campos), api.stripe.com (confirmación desde el navegador) y
+  // hooks.stripe.com (ventana del 3DS). Si la consola del navegador muestra un
+  // bloqueo de CSP con otro dominio de Stripe, añadirlo aquí.
+  stripe_elements: Object.freeze({
+    id: 'stripe_elements',
+    connector: 'stripe',
+    script: '/checkout/providers/stripe_elements.js',
+    csp: Object.freeze({
+      script:  ['https://js.stripe.com'],
+      connect: ['https://api.stripe.com'],
+      frame:   ['https://js.stripe.com', 'https://hooks.stripe.com'],
+      form:    [],
+    }),
+    runtime: () => ({ stripeJsUrl: 'https://js.stripe.com/endive/stripe.js' }),
   }),
 });
 

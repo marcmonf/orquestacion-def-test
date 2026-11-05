@@ -2014,6 +2014,80 @@ pago en sandbox, D app en los PAX por USB, E plugins) + `docs/entornos.md` +
 
 ---
 
+### Sesión 5 nov 2026 (bloque 2) — Stripe como segundo PSP, escaparate y robustez
+
+Rama `claude/monetiser-multi-psp-framework-3dlfch` sobre main `62b0d5e`. Línea base al
+empezar: **582/582** tests + 31/31 de plugins. Marcos no estaba disponible: lo dudoso se
+hizo de la forma más conservadora y está en "DECISIONES PENDIENTES DE MARCOS" al final.
+
+**Red bloqueada desde el contenedor:** `docs.stripe.com`, `api.stripe.com`,
+`js.stripe.com` (además de las de sesiones anteriores). Fuentes usadas para Stripe: el SDK
+oficial `stripe-node` 23.0.1 de npm (tipos `.d.ts` y código), `@stripe/stripe-js` 10.1.0 de
+npm (tipos y cargador) y el ejemplo oficial `stripe-samples/accept-a-payment`
+(raw.githubusercontent.com). **Nada de Stripe se ha probado contra Stripe real.**
+
+#### F1 — Stripe como segundo PSP real (`FEATURE_STRIPE`, apagado por defecto)
+
+Qué hay (todo detrás de `FEATURE_STRIPE=true`; con el flag apagado ni se registra):
+
+- `src/connectors/stripe/index.js`: conector sobre el contrato y con el SDK oficial. Cuenta
+  Stripe **del comercio** (`perAccountCredentials`), credenciales `secretKey`,
+  `publishableKey`, `webhookSecret` cifradas con el llavero existente
+  (`connectorAccountService`). **Solo modo pruebas**: rechaza claves `sk_live_`/`pk_live_`
+  y el modo live (validación propia `extensions.validateCredentials`). PaymentIntent con
+  `capture_method: 'manual'` (equivalente a DEFERRED), `allowed_payment_method_types:
+  ['card']`, metadata con nuestro `paymentId`, claves de idempotencia por operación,
+  `maxNetworkRetries: 0` (un fallo de red = resultado desconocido; el SDK aún reintenta UNA
+  vez una conexión cerrada antes de enviar, ver su código). capture total/parcial
+  (`amount_to_capture`), cancel, refund total/parcial (exige captura previa: si no, `conflict`
+  sin llamar a Stripe), retrieve, webhooks, errores del SDK → taxonomía propia. Divisas
+  declaradas: EUR, USD, GBP (conservador; ver decisiones).
+- Contrato (aditivo): `requires_action` admite `action: { type:'client_confirm',
+  clientSecret }` además de la redirección. `/v1/payments` responde `nextAction:
+  { type:'client_confirm' }` en ese caso (antes habría salido `url: undefined`).
+- Checkout: proveedor de campos `stripe_elements` (`public/checkout/providers/
+  stripe_elements.js`, ruta absoluta) siguiendo el ejemplo oficial: `Stripe(pk)` →
+  `elements().create('card')` → `confirmCardPayment(clientSecret, {payment_method:{card,
+  billing_details}})`. URL de Stripe.js `https://js.stripe.com/endive/stripe.js` (la del
+  cargador oficial 10.1.0). Bloque `#stripe-form` en `public/iframe.html`; el núcleo elige
+  el bloque por `formId` del proveedor (con Paylands es el de siempre).
+- Backend del proveedor (`src/routes/stripeCheckoutRoutes.js`, `/:merchantId/stripe`):
+  `/session` crea/recupera el PaymentIntent sin tarjeta; `/complete` **consulta Stripe** (no
+  se fía del navegador) y aplica el estado. Un PaymentIntent por pago (idempotencia): no
+  puede haber dos cobros de un mismo `paymentId`.
+- Webhook entrante por merchant `POST /webhooks/stripe/:merchantId` (`express.raw` antes de
+  `express.json`), firma con `stripe.webhooks.constructEvent` y el `whsec_` del comercio →
+  `src/services/acquirerUpdateService.js`: **misma** máquina de estados
+  (`ACQUIRER_TRANSITIONS`) y **mismo** webhook saliente `payment.updated` que Paylands
+  (`connectorUsed: 'stripe'`). El webhook de Paylands NO se ha tocado.
+- Routing: `stripe_elements` en `CHECKOUT_FIELDS_PROVIDERS`. Preset de demostración
+  `POST /backoffice/routing/:merchantId/demo-preset` (EUR + ES → Paylands; resto → Stripe;
+  fallback pre-captura al otro) que escribe la política del merchant por el mismo camino que
+  /admin → Reglas. Con el circuito de Paylands abierto, un pago EUR+ES va a Stripe ANTES de
+  pedir la tarjeta (`reason: failover_pre_card`). Sin cuenta Stripe del comercio, todo sigue
+  yendo a Paylands.
+- /admin → Merchants → **Adquirentes**: credenciales por PSP (enmascaradas), URL del webhook
+  de Stripe del comercio, botón del preset y simulador de routing.
+- Runbook: `docs/stripe.md` (cuenta de pruebas, dónde copiar cada clave y el `whsec_`, dónde
+  pegarlos, tarjetas de prueba del ejemplo oficial, capture/cancel/refund con Postman).
+
+Pruebas: `tests/contract/stripe.contract.test.js` (la MISMA suite de contrato que Paylands +
+detalles) con el SDK real y Stripe simulado (`tests/helpers/fakeStripe.js`: cliente HTTP del
+SDK, así se prueba la petición que el SDK construiría de verdad);
+`tests/integration/stripeCheckout.test.js` (admin → preset → routing → session → confirm →
+complete → webhook saliente; webhook firmado/manipulado/duplicado/desordenado/otro merchant);
+`tests/integration/stripeLifecycle.test.js` (capture/cancel/refund con el ciclo de vida
+REAL). `tests/golden/paylandsWire.test.js` idéntico y verde. Chromium (arnés con Stripe.js
+falso servido desde `js.stripe.com` interceptado): CSP real permite script/iframe/fetch de
+los dominios declarados; aprobado → "Pago completado"; rechazo → "Pago no completado";
+checkout de Paylands sin cambios (su bloque visible, el de Stripe oculto). /admin abierto en
+Chromium: guardar clave mala (400 con el motivo), guardar buena, preset y simulación OK.
+
+Pendiente de verificar contra Stripe real (runbook `docs/stripe.md`): todo el flujo; en
+particular los **dominios de la CSP** (`js.stripe.com`, `api.stripe.com`,
+`hooks.stripe.com`), el 3DS dentro del iFrame del checkout y los códigos de error reales.
+
+
 ## 7. Elementos de seguridad
 
 ### Implementados
@@ -2096,6 +2170,7 @@ pago en sandbox, D app en los PAX por USB, E plugins) + `docs/entornos.md` +
 | `HPP_SIGNING_SECRET` | **(26 sep 2026)** Secreto de plataforma para firmar la URL del iFrame. Sin él, uno aleatorio por proceso (vale con una sola instancia). **Recomendado definirlo.** |
 | `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
 | `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
+| `FEATURE_STRIPE` | **(5 nov 2026, bloque 2)** `true` registra Stripe como segundo PSP (cuenta Stripe de pruebas DEL COMERCIO, configurada en /admin → Merchants → Adquirentes). Se lee al arrancar: cambiarla exige Manual Deploy. Apagado por defecto. Runbook: `docs/stripe.md`. |
 | `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |
 | `PAYNOPAIN_PCI_CLIENT_URL` | **(26 sep 2026)** URL de la librería ProxyFields (por defecto según `PAYNOPAIN_ENV`; la de producción debe confirmarse con Paylands). |
 | `RL_PAYMENTS_IP_MAX` / `RL_PAYMENTS_MERCHANT_MAX` | API de pagos: por IP antes de autenticar (300/min) y por merchant autenticado (600/min). |

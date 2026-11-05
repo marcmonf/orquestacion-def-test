@@ -178,7 +178,13 @@ module.exports = function makeMemoryModel(opts = {}) {
 
     // findOneAndUpdate MÍNIMO: soporta $set, $setOnInsert, $inc y upsert (lo que
     // usan la numeración correlativa y markSent). Devuelve el doc (new:true).
-    async findOneAndUpdate(query = {}, update = {}, opts = {}) {
+    // Devuelve una promesa con .lean() encadenable (como Mongoose).
+    findOneAndUpdate(query = {}, update = {}, opts = {}) {
+      const p = this._findOneAndUpdate(query, update, opts);
+      p.lean = () => p;
+      return p;
+    },
+    async _findOneAndUpdate(query = {}, update = {}, opts = {}) {
       let doc = store.find(d => matches(d, query));
       if (!doc) {
         if (!opts.upsert) return null;
