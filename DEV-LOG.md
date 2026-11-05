@@ -1848,6 +1848,38 @@ el pago lleva `paymentLinkId`; en /admin el superadmin lo ve y lo anula → la U
 410. Sin errores de JavaScript. **Prueba real en sandbox posible**: runbook E1–E4 en
 `docs/runbook-sesion-5nov.md`.
 
+
+#### F3b — App Android "Monetiser POS" (petición de Marcos, 5 nov)
+
+Contexto: los dos PAX Android de Marcos (A920Pro y A77) son terminales de DEBUG, suyos,
+sin restricciones del proveedor.
+
+1. **`apps/android-pos/`** — Kotlin, **sin librerías externas** (solo el framework de
+   Android y la librería estándar de Kotlin), cliente fino de la API `/pos` de F3: login con
+   el **usuario del portal** ligado a su tienda; teclado de importe y concepto; **QR
+   grande** (PNG del servidor); consulta del estado cada 3 s; pantallas **Pagado / Fallido /
+   Caducado / Anulado**; **historial de hoy** con total. **Nunca lleva la clave `ms_`.**
+   Sesión en preferencias privadas, `allowBackup=false`, solo HTTPS.
+2. **Sin SDK de PAX**: ni lectura de tarjeta ni impresora. Huecos en
+   `app/src/main/java/com/monetiser/pos/hardware/` (`CardReader`, `ReceiptPrinter`); el
+   botón "Imprimir ticket" sale desactivado. **Pendiente del SDK de PAX.**
+3. **`minSdk 21`** (Android 5.0), `targetSdk 34`. Conservador porque **no se ha podido
+   verificar desde aquí qué versión de Android llevan el A920Pro y el A77** (hay versiones
+   de ambos con Android antiguos). DECISIÓN PENDIENTE: subirlo cuando se sepa.
+4. **Compilación**: `.github/workflows/android-pos.yml` construye el **APK de debug** en
+   cada push que toque `apps/android-pos/` (o el propio workflow) y lo deja como artefacto
+   `monetiser-pos-debug-apk` (30 días). Sin secretos (el APK de debug se firma con la clave
+   de depuración que genera Android en cada ejecución). **Comprobado: la ejecución #2
+   (`d3bd38e`) terminó en VERDE** y publicó el artefacto (≈ 818 KB). La #1 falló por un
+   comentario Kotlin con `/pos/*` (Kotlin anida comentarios) — arreglado.
+   Sin SDK de Android en este contenedor (`dl.google.com` bloqueado): la compilación de
+   verdad es la de GitHub Actions; en local solo se comprobaron tipos con el compilador de
+   Kotlin contra un `android.jar` antiguo de Maven Central.
+5. **Runbook**: `docs/runbook-sesion-5nov.md` §D (descargar el APK de Actions, activar
+   depuración USB, `adb install`, prueba completa).
+
+Commits: `314ca2e` (app + workflow), `d3bd38e` (arreglo de compilación).
+
 ---
 
 ## 7. Elementos de seguridad
