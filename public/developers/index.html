@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monetiser para desarrolladores</title>
-<!-- GENERADO por scripts/build-developers.js desde docs/integracion.md y openapi.yaml (versión 2.16.0). No editar a mano. -->
+<!-- GENERADO por scripts/build-developers.js desde docs/integracion.md y openapi.yaml (versión 2.17.0). No editar a mano. -->
 <style>
 :root{--ink:#14161f;--muted:#5e6475;--line:#e6e8ef;--bg:#fff;--side:#f7f8fb;--accent:#4b3fd1;--code:#0f1222}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55}
@@ -32,7 +32,7 @@ details{margin:6px 0}summary{cursor:pointer;font-size:14px;color:var(--accent)}
 <nav><a href="#empezar">Empezar</a><a href="#guia">Guía</a><a href="#api">Endpoints</a><a href="/docs">Referencia de la API</a><a href="/demo">Tienda demo</a></nav></header>
 <div class="wrap">
 <aside>
-<h4>Empezar</h4><ul><li><a href="#empezar">Guía rápida</a></li><li><a href="#api">Endpoints y ejemplos</a></li><li><a href="/docs">Referencia completa (OpenAPI 2.16.0)</a></li></ul>
+<h4>Empezar</h4><ul><li><a href="#empezar">Guía rápida</a></li><li><a href="#api">Endpoints y ejemplos</a></li><li><a href="/docs">Referencia completa (OpenAPI 2.17.0)</a></li></ul>
 <h4>Guía de integración</h4><ul><li><a href="#guia-integrar-monetiser-en-tu-tienda-api-v1">Integrar Monetiser en tu tienda — API v1</a></li></ul>
 </aside>
 <main>
@@ -220,10 +220,13 @@ curl -X POST &quot;$MONETISER/v1/payments/&lt;id&gt;/cancel&quot; -H &quot;Autho
 <p>En el portal, pestaña <strong>Orquestación</strong>: tasa de aprobación, motivos de rechazo normalizados, tasa de 3DS, coste real por transacción y por qué se enrutó cada pago, por adquirente. API: <code>GET /portal/insights?days=30</code>.</p>
 <h4 id="guia-documentacion-y-tienda-de-demostracion">Documentación y tienda de demostración</h4>
 <p><code>/developers</code> reúne esta guía y los ejemplos de cada endpoint (curl, Node, PHP). <code>/demo</code> es una tienda inventada que cobra con Monetiser en el entorno de pruebas.</p>
-<h3 id="guia-resumen-de-lo-que-no-hay-que-hacer">Resumen de lo que NO hay que hacer</h3>
+<h3 id="guia-novedades-de-noviembre-2026-v2-17-0">Novedades de noviembre 2026 (v2.17.0)</h3>
+<h4 id="guia-tercer-adquirente-redsys-en-pruebas">Tercer adquirente: Redsys (en pruebas)</h4>
+<p>Monetiser puede enrutar un pago al <strong>TPV Virtual de Redsys de tu comercio</strong> (tu banco). Si un pago va a Redsys, el checkout no pide la tarjeta: al pulsar <em>Pagar ahora</em> el comprador va a la <strong>página de pago de Redsys</strong> (la ventana entera, también si usas <code>monetiser.js</code>) y al terminar vuelve a la página de resultado de Monetiser y desde ahí a tu <code>returnUrl</code>. Tu integración no cambia: mismo webhook firmado, con <code>&quot;connectorUsed&quot;: &quot;redsys&quot;</code>.</p>
+<p>Hoy, con Redsys, capturar, anular y devolver se hacen desde el panel de Redsys (la API responde <code>502</code> con <code>detail: not_supported</code>). Redsys está <strong>apagado</strong> salvo que Monetiser lo active para tu comercio.</p>
 <ul><li>Poner el secreto <code>ms_...</code> en el navegador o en una app.</li><li>Dar un pedido por pagado por <code>onResult</code> o por los parámetros de la <code>returnUrl</code>: se confirma con el webhook firmado o con <code>GET /v1/payments/:id</code>.</li><li>Mandar datos de tarjeta a la API.</li><li>Olvidar capturar: un pago <code>authorized</code> no está cobrado.</li></ul></section>
 <h2 id="api">Endpoints de la API v1 y ejemplos</h2>
-<p>Generado desde <code>openapi.yaml</code> (versión 2.16.0). Detalle de cada campo y respuesta en la <a href="/docs">referencia de la API</a>.</p>
+<p>Generado desde <code>openapi.yaml</code> (versión 2.17.0). Detalle de cada campo y respuesta en la <a href="/docs">referencia de la API</a>.</p>
 <section class="ep" id="ep-post-v1-checkout-sessions"><h3><span class="m m-post">POST</span> <code>/v1/checkout-sessions</code></h3>
       <p>Crear una sesión de pago</p>
       <details><summary>curl</summary><pre><code>curl -X POST https://orquestacion-def-test.onrender.com/v1/checkout-sessions \

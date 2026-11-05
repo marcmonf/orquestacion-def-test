@@ -192,10 +192,14 @@ function checkPaymentResult(r) {
     //   { type:'redirect', url }                 el navegador navega a la URL del PSP (Paylands 3DS)
     //   { type:'client_confirm', clientSecret }  la librería del PSP en el navegador
     //                                            confirma el pago (Stripe.js)
+    //   { type:'form_post', url, fields }        formulario POST a la página del PSP (Redsys)
     const a = r.action;
     const okRedirect = a && a.type === 'redirect' && typeof a.url === 'string';
     const okClient = a && a.type === 'client_confirm' && typeof a.clientSecret === 'string' && a.clientSecret.length > 0;
-    if (!okRedirect && !okClient) problems.push('requires_action sin action.redirect.url ni action.client_confirm.clientSecret');
+    // (6 nov 2026, Redsys) { type:'form_post', url, fields }: el navegador envía
+    // un formulario POST con esos campos a la página de pago del PSP.
+    const okForm = a && a.type === 'form_post' && typeof a.url === 'string' && a.fields && typeof a.fields === 'object';
+    if (!okRedirect && !okClient && !okForm) problems.push('requires_action sin action.redirect.url, client_confirm.clientSecret ni form_post.url+fields');
   }
   if (['declined', 'error'].includes(r.status) && !checkError(r.error)) problems.push('rechazo/error sin error normalizado');
   if (['authorized', 'captured', 'requires_action'].includes(r.status) && typeof r.processorReference !== 'string') {

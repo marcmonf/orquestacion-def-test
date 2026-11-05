@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Monetiser — Payment Orchestration Platform API
-  version: 2.16.0
+  version: 2.17.0
   summary: API real de Monetiser, generada leyendo el código (no una API idealizada).
   description: |
     Contrato REAL de la API de Monetiser, extraído de los DTOs, validators y
@@ -16,6 +16,15 @@ info:
     campos de Paylands (el comercio nunca ve la tarjeta → PCI DSS SAQ A). Guía paso
     a paso con ejemplos: `docs/integracion.md` en el repositorio. Las rutas de
     abajo con `{merchantId}` son la API anterior: siguen funcionando igual.
+
+    **v2.17.0 (6 nov 2026)** — solo cambios ADITIVOS; la integración del comercio no cambia:
+    - **Redsys directo** como tercer adquirente (apagado: `FEATURE_REDSYS`; TPV Virtual de
+      pruebas del propio comercio). Pago por REDIRECCIÓN a la página de Redsys
+      (preautorización); webhooks salientes iguales, con `connectorUsed: "redsys"`.
+      Notificación online `POST /webhooks/redsys/{merchantId}` y backend del checkout
+      `POST /{merchantId}/redsys/start` (los usan Redsys y el checkout, no el comercio).
+      Capturar, anular y devolver pagos de Redsys desde Monetiser: APAGADO (responden
+      `502` con `detail: not_supported`; se hacen desde el panel de Redsys).
 
     **v2.16.0 (5 nov 2026, bloque 2)** — solo cambios ADITIVOS; la integración del
     comercio no cambia:
@@ -1321,6 +1330,28 @@ paths:
   # WEBHOOK ENTRANTE
   # ──────────────────────────────────────────────────────────────────────
 
+  /webhooks/redsys/{merchantId}:
+    post:
+      tags: [Webhooks]
+      summary: (v2.17.0) Notificación online de Redsys, por comercio (PSP → Monetiser)
+      operationId: redsysWebhook
+      x-madurez: beta
+      security: []
+      description: |
+        Solo con `FEATURE_REDSYS=true`. La URL va en `Ds_Merchant_MerchantURL` de cada pago.
+        Cuerpo (formulario o JSON): `Ds_SignatureVersion` (HMAC_SHA256_V1),
+        `Ds_MerchantParameters` (JSON en Base64) y `Ds_Signature`; la firma se verifica con la
+        clave del TPV del comercio ANTES de usar nada. `Ds_Response` 0000-0099 → `authorized`;
+        9999 → sigue pendiente (autenticación con el emisor); resto → `declined`. Solo la
+        preautorización (tipo 1) cambia el estado; el resto deja traza.
+      parameters: [{ name: merchantId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Recibida (procesada, sin cambios o ignorada). }
+        '401': { description: Firma no válida. }
+        '404': { description: Redsys no activado. }
+        '409': { description: El comercio no tiene TPV de Redsys configurado. }
+        '500': { description: Error nuestro. }
+
   /webhooks/stripe/{merchantId}:
     post:
       tags: [Webhooks]
@@ -1663,6 +1694,29 @@ paths:
             Error. Si ocurrió antes de llamar a Paylands, el pago vuelve a
             `hosted_pending`; si fue después, queda en `error` y la respuesta lleva
             `resultUrl`.
+
+  /{merchantId}/redsys/start:
+    post:
+      tags: [Hosted Checkout]
+      summary: (v2.17.0) Checkout con Redsys — formulario de redirección (lo llama el checkout)
+      operationId: redsysCheckoutStart
+      x-madurez: beta
+      security: []
+      description: |
+        Solo para pagos enrutados a Redsys (`FEATURE_REDSYS`). Devuelve el formulario
+        firmado (`action.url` = realizarPago de Redsys; `action.fields` = los 3 campos) de una
+        PREAUTORIZACIÓN. El pago pasa a `pending_3ds` con su número de pedido Redsys: un solo
+        intento por pago. La tarjeta se teclea en la página de Redsys (nunca aquí).
+      parameters: [{ name: merchantId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [paymentId], properties: { paymentId: { type: string } } }
+      responses:
+        '200': { description: '`{ success, paymentId, action: { url, fields } }`' }
+        '404': { description: Pago no encontrado. }
+        '409': { description: 'Estado no válido (ya iniciado), pago no enrutado a Redsys o comercio sin TPV.' }
 
   /{merchantId}/stripe/session:
     post:
@@ -3665,7 +3719,7 @@ components:
             connectorUsed:
               type: string
               nullable: true
-              description: 'Conector que procesó el pago (`payNoPain`, `stripe` desde v2.16.0). `unknown` si no consta.'
+              description: 'Conector que procesó el pago (`payNoPain`, `stripe` desde v2.16.0, `redsys` desde v2.17.0). `unknown` si no consta.'
             livemode:
               type: boolean
               description: '(v2.14.0) false = modo test (sandbox). Aditivo.'

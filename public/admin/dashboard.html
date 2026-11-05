@@ -563,7 +563,11 @@ main{padding:24px;max-width:1600px;margin:0 auto}
     <h3>Adquirentes · <span id="pspMerchantId" style="font-family:monospace"></span></h3>
     <div id="pspList" style="font-size:13px">Cargando…</div>
     <h4 style="margin:18px 0 6px">Routing de demostración</h4>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Divisa EUR y país del comprador ES → Paylands; el resto → Stripe. Si el elegido no está disponible (circuito abierto o sin credenciales), el checkout usa el otro ANTES de pedir la tarjeta. Se guarda en la política del merchant (pestaña Reglas).</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Divisa EUR y país del comprador ES → el adquirente "doméstico"; el resto → el otro. Si el elegido no está disponible (circuito abierto o sin credenciales), el checkout usa el otro ANTES de pedir la tarjeta. Se guarda en la política del merchant (pestaña Reglas).</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px">
+      <label>EUR + ES → <select id="pspPresetDomestic"><option value="payNoPain">Paylands</option><option value="redsys">Redsys</option><option value="stripe">Stripe</option></select></label>
+      <label>resto → <select id="pspPresetRest"><option value="stripe">Stripe</option><option value="payNoPain">Paylands</option><option value="redsys">Redsys</option></select></label>
+    </div>
     <button class="btn btn-primary" id="pspDemoPresetBtn">Aplicar routing de demostración</button>
     <span id="pspDemoPresetMsg" style="margin-left:8px;font-size:12px"></span>
     <h4 style="margin:18px 0 6px">Simular routing</h4>

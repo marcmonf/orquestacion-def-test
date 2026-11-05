@@ -141,6 +141,7 @@
       background: #fff;
     }
     #stripe-card-element.error { border-color: #e53e3e; }
+    .redirect-note { font-size: 14px; color: #555; line-height: 1.5; margin: 0 0 16px; }
 
     .pci-badge {
       display: flex;
@@ -325,6 +326,11 @@
       </div>
     </div>
 
+    <!-- Proveedor 'redsys_redirect': sin campos; la tarjeta se teclea en Redsys -->
+    <div id="redsys-form" style="display:none">
+      <p class="redirect-note">Al pulsar <strong>Pagar ahora</strong> irás a la página segura de pago de tu banco (Redsys) para introducir la tarjeta. Después volverás aquí.</p>
+    </div>
+
     <button class="submit-btn" id="pay-btn" disabled>Cargando...</button>
 
     <div id="status-msg" class="status-message"></div>
@@ -390,7 +396,7 @@
     let activeMethod = METHODS[0];
     // Bloque de campos de tarjeta del proveedor (formId de su módulo). Con
     // Paylands es 'proxy-pci-form', como siempre.
-    const CARD_FORMS = ['proxy-pci-form', 'stripe-form'];
+    const CARD_FORMS = ['proxy-pci-form', 'stripe-form', 'redsys-form'];
     let cardFormId = 'proxy-pci-form';
     if (FIELDS_PROVIDER !== 'paylands_proxyfields') document.getElementById('proxy-pci-form').style.display = 'none';
     const selector = document.getElementById('method-selector');
