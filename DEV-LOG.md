@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 5 noviembre 2026, bloque 2 (en rama, sin fusionar: Stripe como segundo PSP, /demo, /developers, insights, carga y caos)
+> Última actualización: 6 noviembre 2026 (en rama, sin fusionar: Redsys directo como tercer PSP, apagado)
 
 ---
 
@@ -2230,6 +2230,43 @@ firma, campos obligatorios, formato de Ds_Merchant_Order, tipos 0/1/2/3/9, códi
 desde el contenedor: nada se ha probado contra Redsys real. Redsys no publica SDK oficial en npm
 ni GitHub (solo librerías de terceros, que NO se han usado).
 
+**Resumen y SHAs**:
+
+| Fase | Commit | Tests |
+|---|---|---|
+| F1 Pago por redirección + notificación | `abad0d3` | 699 |
+| F2 Ciclo de vida (apagado) | `417d5f1` | 702 |
+| F3 Routing de demo + insights | `3ce390d` | 703 |
+| F4 Pago 1-clic | no hecho (sin tiempo) | — |
+| F5 Armazón PUC apagado | `c96e684` | 705 |
+| Cierre (openapi 2.17.0, guía, Postman, `docs/redsys.md`) | ver PR | 705 |
+
+664 → **705/705** + 31/31 plugins. Golden de Paylands y tests de Stripe sin cambios y en verde.
+Arranque real sin `no montado` con y sin `FEATURE_REDSYS`. Chromium: checkout Redsys (pantalla
+completa y embebido) y /admin.
+
+**APAGADO y por qué:** `FEATURE_REDSYS` (nada probado contra Redsys real);
+`FEATURE_REDSYS_OPERATIONS` (canal de operaciones sin titular no verificado); modo real de Redsys
+(rechazado en código); PUC (sin especificación).
+
+**DECISIONES PENDIENTES DE MARCOS:**
+1. Primera prueba real (runbook `docs/redsys.md`): validar la firma (3DES en CBC con vector y
+   relleno de ceros) y el resto contra el entorno de pruebas de Redsys.
+2. Canal de operaciones sin titular (2/9/3): conseguir de la documentación oficial su URL y
+   formato; hasta entonces se opera desde el panel de Redsys.
+3. Notificaciones de confirmación/anulación/devolución hechas en el panel de Redsys: hoy solo
+   traza. ¿Que actualicen el estado del pago?
+4. Redsys DENTRO del iFrame del checkout (hoy ventana entera, conservador): confirmar en la doc
+   si Redsys lo admite.
+5. Divisas de Redsys: solo EUR (978). ¿Otras?
+6. Un solo intento de Redsys por pago (si el comprador abandona, nueva sesión). ¿Permitir
+   reintentos con otro número de pedido? (riesgo de doble cobro).
+7. Tarifas de Redsys/banco para el coste real de los insights.
+8. PUC: pedir la especificación a Redsys con el alta presencial. Pago 1-clic (F4): pendiente.
+
+**Dominios bloqueados:** `canales.redsys.es`, `pagosonline.redsys.es`, `sis-t.redsys.es`,
+`www.redsys.es` (más los de sesiones anteriores).
+
 #### F1 — Pago por redirección (preautorización)
 
 - `src/connectors/redsys/` (contrato + suite de contrato): cuenta Redsys DEL COMERCIO (FUC 9
@@ -2635,6 +2672,8 @@ GET /webhooks?paymentId=<id>           → Filtrar por pago
 ```
 POST /webhooks/paynopain               → Recibe notificación de Paylands (sin auth)
 POST /webhooks/stripe/:merchantId      → (5 nov b2, FEATURE_STRIPE) Webhook de Stripe del comercio (firma Stripe-Signature)
+POST /webhooks/redsys/:merchantId      → (6 nov, FEATURE_REDSYS) Notificación online de Redsys (firma HMAC_SHA256_V1)
+POST /:merchantId/redsys/start         → (6 nov) Formulario firmado de redirección a Redsys (preautorización)
 POST /:merchantId/stripe/session       → (5 nov b2) Backend del checkout con Stripe: PaymentIntent + clientSecret
 POST /:merchantId/stripe/complete      → (5 nov b2) Consulta Stripe y aplica el estado
 GET  /backoffice/insights              → (5 nov b2) Insights de orquestación (alcance del usuario)

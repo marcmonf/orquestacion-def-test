@@ -381,7 +381,21 @@ por adquirente. API: `GET /portal/insights?days=30`.
 `/developers` reúne esta guía y los ejemplos de cada endpoint (curl, Node, PHP).
 `/demo` es una tienda inventada que cobra con Monetiser en el entorno de pruebas.
 
-## Resumen de lo que NO hay que hacer
+## Novedades de noviembre 2026 (v2.17.0)
+
+### Tercer adquirente: Redsys (en pruebas)
+
+Monetiser puede enrutar un pago al **TPV Virtual de Redsys de tu comercio** (tu banco). Si un
+pago va a Redsys, el checkout no pide la tarjeta: al pulsar *Pagar ahora* el comprador va a
+la **página de pago de Redsys** (la ventana entera, también si usas `monetiser.js`) y al
+terminar vuelve a la página de resultado de Monetiser y desde ahí a tu `returnUrl`. Tu
+integración no cambia: mismo webhook firmado, con `"connectorUsed": "redsys"`.
+
+Hoy, con Redsys, capturar, anular y devolver se hacen desde el panel de Redsys (la API
+responde `502` con `detail: not_supported`). Redsys está **apagado** salvo que Monetiser lo
+active para tu comercio.
+
+
 
 - Poner el secreto `ms_...` en el navegador o en una app.
 - Dar un pedido por pagado por `onResult` o por los parámetros de la `returnUrl`: se
