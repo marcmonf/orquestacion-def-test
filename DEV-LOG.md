@@ -2291,6 +2291,18 @@ está en los datos verificados** y su documentación estaba bloqueada → **apag
 - Chromium: /admin guardar TPV de Redsys, preset Redsys/Paylands y simulación
   (`EUR ES → redsys · rule`, `EUR FR → payNoPain · default`).
 
+#### F4 — Pago 1-clic por referencia: NO HECHO (sin tiempo)
+
+Se priorizaron F1-F3. Pendiente: `Ds_Merchant_Identifier`, `Ds_Merchant_Group`,
+`Ds_Merchant_DirectPayment` ligados al token `pm_` propio, detrás de `FEATURE_SAVED_CARDS`.
+
+#### F5 — PUC de Redsys (TPV físico): armazón APAGADO
+
+`src/connectors/redsys/puc.js`: modo de terminal `redsys_puc` con interfaz vacía (pair,
+startSale, cancelSale, status → `not_supported`), `enabled()` siempre `false` aunque
+`FEATURE_CARD_PRESENT` esté encendido. **Ni un mensaje del protocolo**: falta la especificación
+PUC de Redsys (DECISIÓN PENDIENTE: pedirla a Redsys junto con el alta presencial).
+
 
 ## 7. Elementos de seguridad
 
