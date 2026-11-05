@@ -2262,6 +2262,23 @@ ni GitHub (solo librerías de terceros, que NO se han usado).
   visible (Paylands y Stripe ocultos), el POST sale a `realizarPago` (interceptado) con los 3
   campos y la página entera navega a Redsys; sin errores de consola.
 
+#### F2 — Ciclo de vida: confirmación (2), anulación (9), devolución (3) — APAGADO
+
+El canal de operaciones SIN titular de Redsys (endpoint, formato de petición y de respuesta) **no
+está en los datos verificados** y su documentación estaba bloqueada → **apagado**:
+- Por defecto `capture`/`cancel`/`refund` de Redsys responden `not_supported` → la API devuelve
+  `502 *.processor_declined` con `detail: not_supported` y el pago NO cambia. Se confirma,
+  anula o devuelve desde el **panel de Redsys del comercio**. Las notificaciones de esas
+  operaciones solo dejan traza (no cambian el estado: DECISIÓN PENDIENTE).
+- Código preparado (sin URL en el repo): con `FEATURE_REDSYS_OPERATIONS=true` y
+  `REDSYS_OPERATIONS_URL_TEST=<url de la doc oficial>` envía los mismos 3 campos firmados en JSON
+  con tipo 2/9/3, el MISMO `Ds_Merchant_Order` de la preautorización e importe (devolución
+  parcial = importe menor), verifica la firma de la respuesta y aplica 900 (confirmación y
+  devolución) / 400 (anulación). **Esa forma de petición/respuesta es una SUPOSICIÓN pendiente
+  de verificar**; probada solo contra un servidor local que la imita
+  (`tests/integration/redsysLifecycle.test.js`). Captura parcial declarada como NO soportada.
+- Orden DEFERRED respetado: refund sobre autorizado sin capturar no llega a Redsys.
+
 
 ## 7. Elementos de seguridad
 
