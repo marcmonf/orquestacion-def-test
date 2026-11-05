@@ -2252,8 +2252,9 @@ completa y embebido) y /admin.
 **DECISIONES PENDIENTES DE MARCOS:**
 1. Primera prueba real (runbook `docs/redsys.md`): validar la firma (3DES en CBC con vector y
    relleno de ceros) y el resto contra el entorno de pruebas de Redsys.
-2. Canal de operaciones sin titular (2/9/3): conseguir de la documentación oficial su URL y
-   formato; hasta entonces se opera desde el panel de Redsys.
+2. Canal de operaciones sin titular (2/9/3): ya identificado (Web Service XML `trataPeticion`,
+   ver "Datos verificados… 5 nov"). Implementarlo es trabajo de la próxima sesión; hasta
+   entonces se opera desde el panel de Redsys.
 3. Notificaciones de confirmación/anulación/devolución hechas en el panel de Redsys: hoy solo
    traza. ¿Que actualicen el estado del pago?
 4. Redsys DENTRO del iFrame del checkout (hoy ventana entera, conservador): confirmar en la doc
@@ -2274,10 +2275,10 @@ completa y embebido) y /admin.
   (modo live rechazado). Solo EUR (978 es el único código verificado).
 - `signature.js`: firma HMAC_SHA256_V1 tal cual el manual. **Lo que el resumen del manual no
   dice y se ha fijado:** 3DES en modo CBC con vector de ceros y relleno con ceros (lo habitual);
-  pedido de la notificación en `Ds_Order`; firma de la notificación aceptada en Base64 estándar o
-  para URL. **Sin vector de prueba del manual** (no se pudo abrir): el test recalcula el
-  algoritmo paso a paso, pero la firma solo queda validada contra Redsys real (si da SIS0042 en la
-  primera prueba del runbook, es aquí).
+  firma de la notificación aceptada en Base64 estándar o para URL. **Sin vector de prueba**: el
+  test recalcula el algoritmo paso a paso, pero la firma solo queda validada contra Redsys real
+  (si da SIS0042 en la primera prueba del runbook, es aquí). El pedido de la notificación sale
+  de `Ds_Order` (confirmado, ver abajo).
 - Checkout: proveedor `redsys_redirect` (sin campos de tarjeta; texto "irás a la página segura
   de tu banco"). `POST /:merchantId/redsys/start` → formulario firmado de **preautorización
   (tipo 1)** a `realizarPago` de pruebas; el navegador lo envía en la **ventana entera**
@@ -2299,6 +2300,35 @@ completa y embebido) y /admin.
   visible (Paylands y Stripe ocultos), el POST sale a `realizarPago` (interceptado) con los 3
   campos y la página entera navega a Redsys; sin errores de consola.
 
+#### Datos verificados por Marcos en la documentación oficial de Redsys (5 nov, tras la sesión)
+
+1. **Campos de la notificación CONFIRMADOS** (Guía de migración HMAC SHA256 – redirección,
+   §9.2): `Ds_Date`, `Ds_Hour`, `Ds_Amount`, `Ds_Currency`, `Ds_Order`, `Ds_MerchantCode`,
+   `Ds_Terminal`, `Ds_Response`, `Ds_MerchantData`, `Ds_SecurePayment`, `Ds_TransactionType`,
+   `Ds_Card_Country`, `Ds_AuthorisationCode`, `Ds_ConsumerLanguage`, `Ds_Card_Type`. Los que usa
+   el código (`Ds_Order`, `Ds_Amount`, `Ds_TransactionType`, `Ds_MerchantData`,
+   `Ds_MerchantCode`, `Ds_Response`) **ya no son supuestos**: coinciden con la documentación.
+2. **Modo del 3DES: sigue PENDIENTE de la prueba real.** La documentación oficial no lo
+   especifica y no trae un vector de prueba válido (sus ejemplos son incoherentes). El código
+   usa CBC con vector de ceros y relleno de ceros; solo la primera prueba contra el entorno de
+   pruebas de Redsys lo confirma (SIS0042 = la firma no cuadra).
+3. **Canal de operaciones sin titular (Manual Web Service): NO es REST/JSON.** Es un Web
+   Service **XML**, método `trataPeticion`:
+   - pruebas `https://sis-t.redsys.es:25443/sis/services/SerClsWSEntrada` · real
+     `https://sis.redsys.es/sis/services/SerClsWSEntrada`;
+   - firma con `DS_SIGNATUREVERSION=HMAC_SHA256_V1` y `DS_SIGNATURE`;
+   - obligatorios para los tipos 2, 3 y 9: `DS_MERCHANT_AMOUNT`, `DS_MERCHANT_ORDER`,
+     `DS_MERCHANT_MERCHANTCODE`, `DS_MERCHANT_TERMINAL`, `DS_MERCHANT_CURRENCY`,
+     `DS_MERCHANT_TRANSACTIONTYPE`; sin datos de tarjeta;
+   - respuesta XML con `CODIGO` (`0` = petición correcta, **no** aprobación) y `OPERACION` con
+     `Ds_Response` (0000–0099 pagos, 900 devoluciones y confirmaciones, 400 anulaciones).
+
+   **El formato que implementa hoy `FEATURE_REDSYS_OPERATIONS` (3 campos en JSON) es
+   INCORRECTO: NO encenderlo.** Rehacer `operation()` en `src/connectors/redsys/index.js`
+   contra el Web Service XML (`trataPeticion`, `CODIGO` + `OPERACION/Ds_Response`) es
+   **trabajo de la PRÓXIMA SESIÓN**. Hasta entonces, confirmar/anular/devolver desde el panel
+   de Redsys.
+
 #### F2 — Ciclo de vida: confirmación (2), anulación (9), devolución (3) — APAGADO
 
 El canal de operaciones SIN titular de Redsys (endpoint, formato de petición y de respuesta) **no
@@ -2311,8 +2341,8 @@ está en los datos verificados** y su documentación estaba bloqueada → **apag
   `REDSYS_OPERATIONS_URL_TEST=<url de la doc oficial>` envía los mismos 3 campos firmados en JSON
   con tipo 2/9/3, el MISMO `Ds_Merchant_Order` de la preautorización e importe (devolución
   parcial = importe menor), verifica la firma de la respuesta y aplica 900 (confirmación y
-  devolución) / 400 (anulación). **Esa forma de petición/respuesta es una SUPOSICIÓN pendiente
-  de verificar**; probada solo contra un servidor local que la imita
+  devolución) / 400 (anulación). **Esa forma de petición/respuesta es INCORRECTA** (confirmado el
+  5 nov: el canal real es un Web Service XML, ver arriba); probada solo contra un servidor local que la imita
   (`tests/integration/redsysLifecycle.test.js`). Captura parcial declarada como NO soportada.
 - Orden DEFERRED respetado: refund sobre autorizado sin capturar no llega a Redsys.
 
@@ -2424,7 +2454,7 @@ PUC de Redsys (DECISIÓN PENDIENTE: pedirla a Redsys junto con el alta presencia
 | `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
 | `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
 | `FEATURE_REDSYS` | **(6 nov 2026)** `true` registra Redsys directo (TPV Virtual del comercio, redirección, solo pruebas). Se lee al arrancar → Manual Deploy. Runbook: `docs/redsys.md`. |
-| `FEATURE_REDSYS_OPERATIONS` + `REDSYS_OPERATIONS_URL_TEST` | **(6 nov 2026)** Confirmar/anular/devolver Redsys desde Monetiser. APAGADO: el canal de operaciones sin titular no está verificado; la URL la pone Marcos solo tras confirmarla en la documentación de Redsys. |
+| `FEATURE_REDSYS_OPERATIONS` + `REDSYS_OPERATIONS_URL_TEST` | **(6 nov 2026)** Confirmar/anular/devolver Redsys desde Monetiser. **NO ENCENDER**: el formato implementado (JSON) es incorrecto; el canal real es el Web Service XML `trataPeticion` (`…/sis/services/SerClsWSEntrada`). Rehacerlo: próxima sesión. |
 | `FEATURE_STRIPE` | **(5 nov 2026, bloque 2)** `true` registra Stripe como segundo PSP (cuenta Stripe de pruebas DEL COMERCIO, configurada en /admin → Merchants → Adquirentes). Se lee al arrancar: cambiarla exige Manual Deploy. Apagado por defecto. Runbook: `docs/stripe.md`. |
 | `DEMO_STORE_SECRET` | **(5 nov 2026, bloque 2)** Clave API de PRUEBAS (`ms_test_…`) del comercio de la tienda demo `/demo`. Solo se usa en el servidor. Sin ella, `/demo` se ve pero no cobra. `/demo` solo existe con `MONETISER_ENV=sandbox`. |
 | `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |

@@ -18,7 +18,7 @@ Todo en el **entorno de pruebas** de Redsys: no se mueve dinero real.
    - `FEATURE_REDSYS` = `true`
    - `SERVER_URL` = `https://orquestacion-def-test.onrender.com` (ya debería estar: es la base
      de la URL de notificación y de vuelta que Monetiser manda a Redsys).
-   - **NO** pongas `FEATURE_REDSYS_OPERATIONS` (ver §6).
+   - **NO** pongas `FEATURE_REDSYS_OPERATIONS` (ver §6: su formato actual es incorrecto).
 2. **Manual Deploy → Deploy latest commit**. En el log no debe salir `no montado`.
 
 ## 1. Datos del TPV de pruebas
@@ -67,8 +67,9 @@ Navegador → abre la `url`:
 3. Redsys te devuelve a la página de resultado de Monetiser: **"Pago completado"**.
 
 Si en vez de la página de pago Redsys muestra un error:
-- `SIS0042` (firma): avisa. La parte del 3DES (modo CBC, vector de ceros, relleno con ceros)
-  está pendiente de verificar contra Redsys real.
+- `SIS0042` (firma): avisa. El modo del 3DES (CBC, vector de ceros, relleno con ceros) no lo
+  especifica la documentación de Redsys ni trae un ejemplo válido: esta prueba es la que lo
+  confirma.
 - `SIS0051` (pedido repetido): crea otra sesión y repite.
 
 ## 5. Comprobar la notificación
@@ -84,15 +85,16 @@ Si en vez de la página de pago Redsys muestra un error:
 
 ## 6. Capturar, anular, devolver
 
-**Hoy, con Redsys, desde Monetiser están APAGADOS**: el canal de Redsys para operaciones sin
-titular (confirmación 2, anulación 9, devolución 3) no está en los datos verificados.
+**Hoy, con Redsys, desde Monetiser están APAGADOS.** Ya sabemos cuál es el canal de Redsys
+para operaciones sin titular (confirmación 2, anulación 9, devolución 3): el **Web Service
+XML** del Manual Web Service, método `trataPeticion`
+(`https://sis-t.redsys.es:25443/sis/services/SerClsWSEntrada` en pruebas). Lo que hay hoy en
+el código para eso es **incorrecto** (JSON) y se rehace en la próxima sesión.
 
 - Postman **15.5 Capturar** → esperado HOY `502` con `"detail": "not_supported"`. **No es un
   bug.**
 - Confirmar, anular o devolver: desde el **panel de Redsys** del comercio. La notificación de
   esas operaciones deja traza en Monetiser pero no cambia el estado del pago (decisión
   pendiente en el DEV-LOG).
-- Para encenderlo hace falta la URL y el formato del canal de operaciones de la documentación
-  oficial de Redsys → `FEATURE_REDSYS_OPERATIONS=true` + `REDSYS_OPERATIONS_URL_TEST=<url>` y
-  revisar el código (`src/connectors/redsys/index.js`, función `operation`) con esa
-  documentación delante.
+- **No pongas `FEATURE_REDSYS_OPERATIONS` en Render**: con el formato actual no funcionaría.
+  Se activará cuando esté rehecho contra el Web Service XML (próxima sesión).
