@@ -1423,7 +1423,7 @@ function buildDemoPolicy(merchantId, b = {}) {
   const domestic = String(b.domesticConnector || DEMO_PRESET_DEFAULTS.domesticConnector);
   const rest = String(b.restConnector || DEMO_PRESET_DEFAULTS.restConnector);
   for (const id of [domestic, rest]) {
-    if (!connectorRegistry.hasProvider(id)) return { error: `conector ${id} no registrado${id === 'stripe' ? ' (FEATURE_STRIPE apagado)' : ''}`, status: 409 };
+    if (!connectorRegistry.hasProvider(id)) return { error: `conector ${id} no registrado${id === 'stripe' ? ' (FEATURE_STRIPE apagado)' : id === 'redsys' ? ' (FEATURE_REDSYS apagado)' : ''}`, status: 409 };
   }
   return {
     policy: {

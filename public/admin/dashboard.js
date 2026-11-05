@@ -974,6 +974,12 @@
         ? 'Modo pruebas: CONFIGURADO (' + Object.keys(test.fields || {}).map(function (k) { return k + ' ' + test.fields[k]; }).join(' · ') + ')'
         : 'Modo pruebas: sin configurar';
       card.appendChild(st);
+      if (c.id === 'redsys') {
+        var rn = document.createElement('div');
+        rn.style.cssText = 'font-size:12px;margin-bottom:6px';
+        rn.textContent = 'URL de notificación (Monetiser la manda en cada pago): ' + location.origin + '/webhooks/redsys/' + mid + ' · merchantCode = FUC (9 cifras), terminal, secretKey = clave SHA-256 del TPV de PRUEBAS.';
+        card.appendChild(rn);
+      }
       if (c.id === 'stripe') {
         var wh = document.createElement('div');
         wh.style.cssText = 'font-size:12px;margin-bottom:6px';
@@ -1018,7 +1024,8 @@
     var mid = currentPspMerchant; if (!mid) return;
     var msg = document.getElementById('pspDemoPresetMsg');
     msg.textContent = 'Aplicando…';
-    api('/backoffice/routing/' + encodeURIComponent(mid) + '/demo-preset', { method: 'POST', body: JSON.stringify({}) })
+    var body = { domesticConnector: document.getElementById('pspPresetDomestic').value, restConnector: document.getElementById('pspPresetRest').value };
+    api('/backoffice/routing/' + encodeURIComponent(mid) + '/demo-preset', { method: 'POST', body: JSON.stringify(body) })
       .then(function () { msg.textContent = 'Aplicado ✓ (ver pestaña Reglas)'; })
       .catch(function (e) { msg.textContent = 'Error: ' + ((e.details && e.details.message) || e.message); });
   }

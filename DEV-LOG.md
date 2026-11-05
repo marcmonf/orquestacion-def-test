@@ -2279,6 +2279,18 @@ está en los datos verificados** y su documentación estaba bloqueada → **apag
   (`tests/integration/redsysLifecycle.test.js`). Captura parcial declarada como NO soportada.
 - Orden DEFERRED respetado: refund sobre autorizado sin capturar no llega a Redsys.
 
+#### F3 — Routing de demo e insights con Redsys
+
+- /admin → Merchants → **Adquirentes**: tarjeta de Redsys (FUC, terminal, clave; URL de
+  notificación) y el preset de routing con selectores: "EUR + ES → [Paylands | Redsys | Stripe];
+  resto → [Stripe | Paylands | Redsys]". Ej.: EUR+ES → Redsys, resto → Paylands; si Redsys no
+  tiene TPV configurado, el checkout va a Paylands ANTES de pedir la tarjeta.
+- Insights: genéricos por PSP (`processor`), Redsys sale en la comparativa como uno más. 3DS:
+  todo pago Redsys cuenta como 3DS (lo hace la página de Redsys). Coste real de Redsys: sin
+  ficha de tarifas en el catálogo de adquirentes → solo interchange (DECISIÓN PENDIENTE).
+- Chromium: /admin guardar TPV de Redsys, preset Redsys/Paylands y simulación
+  (`EUR ES → redsys · rule`, `EUR FR → payNoPain · default`).
+
 
 ## 7. Elementos de seguridad
 

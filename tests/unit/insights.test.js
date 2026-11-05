@@ -79,3 +79,13 @@ test('pipeline: un $match + un $group (cubierto por los índices createdAt / mer
   const p = insights.pipeline({ merchantId: 'x', createdAt: { $gte: new Date() } });
   expect(p.map((s) => Object.keys(s)[0])).toEqual(['$match', '$group']);
 });
+
+test('Redsys aparece en la comparativa por PSP como cualquier otro (insights genéricos por processor)', () => {
+  const r = insights.summarize([
+    { _id: { psp: 'redsys', status: 'authorized', declineCode: null, routingReason: 'rule', threeDS: true }, count: 3, amount: 7500 },
+    { _id: { psp: 'redsys', status: 'declined', declineCode: 'card_declined', routingReason: 'rule', threeDS: true }, count: 1, amount: 2500 },
+    { _id: { psp: 'payNoPain', status: 'captured', declineCode: null, routingReason: 'default', threeDS: true }, count: 2, amount: 5000 },
+  ]);
+  expect(r.byPsp.find((p) => p.psp === 'redsys')).toMatchObject({ payments: 4, approved: 3, declined: 1, approvalRatePct: 75, threeDSRatePct: 100 });
+  expect(r.declineReasons).toEqual([expect.objectContaining({ code: 'card_declined', count: 1 })]);
+});
