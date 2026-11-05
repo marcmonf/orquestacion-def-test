@@ -469,6 +469,140 @@ router.get('/billing/:period', requirePortalRole('merchant_admin'), async (req, 
 // solo lo nuestro). Multi-adquirente preparado para N; hoy Paylands en vivo.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ENLACES DE PAGO (nov 2026) — del PROPIO merchant
+//   GET  /portal/payment-links              (cualquier rol)
+//   POST /portal/payment-links              (merchant_operator o más)
+//   POST /portal/payment-links/:id/cancel   (merchant_operator o más)
+// Se crean en el modo del despliegue (producción → live; pruebas → test).
+// ═══════════════════════════════════════════════════════════════════════════
+const paymentLinks = require('../services/paymentLinkService');
+const { resolveBaseUrl } = require('../services/checkoutSessionService');
+const environment = require('../utils/environment');
+function portalLinkError(res, err) {
+  if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, ...(err.details ? { details: err.details } : {}) });
+  console.error('❌ [portal/payment-links]', err && err.message);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+router.get('/payment-links', async (req, res) => {
+  try {
+    const rows = await paymentLinks.list(req.portalUser.merchantId, {});
+    return res.json({ success: true, links: rows.map((l) => paymentLinks.toPublic(l, resolveBaseUrl(req))) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+router.post('/payment-links', requirePortalRole('merchant_operator'), async (req, res) => {
+  try {
+    const link = await paymentLinks.create(req.portalUser.merchantId, req.body || {}, { livemode: environment.isProduction(), createdBy: req.portalUser.email || 'portal' });
+    return res.status(201).json({ success: true, link: paymentLinks.toPublic(link, resolveBaseUrl(req)) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+router.post('/payment-links/:id/cancel', requirePortalRole('merchant_operator'), async (req, res) => {
+  try {
+    const link = await paymentLinks.cancel(req.portalUser.merchantId, String(req.params.id), { actor: req.portalUser.email || 'portal' });
+    if (!link) return res.status(404).json({ success: false, error: 'not_found' });
+    return res.json({ success: true, link: paymentLinks.toPublic(link, resolveBaseUrl(req)) });
+  } catch (err) { return portalLinkError(res, err); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CARD PRESENT (sesión 5 nov 2026, F5) — APAGADO con FEATURE_CARD_PRESENT
+//   GET  /portal/terminals                    terminales del comercio (o de su tienda)
+//   POST /portal/terminals                    { hierarchyNodeId, label, model?, serialNumber? } (admin)
+//   POST /portal/terminals/:id/disable        (admin)
+//   GET  /portal/reports/channels?from=&to=   cobros por canal (online, enlace, QR en tienda,
+//                                             tarjeta en tienda) y por tienda
+// ═══════════════════════════════════════════════════════════════════════════
+const Terminal = require('../models/Terminal');
+const HierarchyNodeModel = require('../models/HierarchyNode');
+const flagsCp = require('../utils/featureFlags');
+const { SUCCESSFUL_STATUSES: OK_STATUSES } = require('../utils/paymentStatus');
+function cardPresentGate(req, res, next) {
+  if (!flagsCp.cardPresent()) return res.status(404).json({ success: false, error: 'card_present_not_enabled' });
+  return next();
+}
+function publicTerminal(t) {
+  return { id: t.terminalId, storeId: t.hierarchyNodeId, label: t.label, model: t.model || null, serialNumber: t.serialNumber || null, status: t.status, connector: t.connector || null, createdAt: t.createdAt };
+}
+router.get('/terminals', cardPresentGate, async (req, res) => {
+  try {
+    const q = { merchantId: req.portalUser.merchantId };
+    if (req.portalUser.hierarchyNodeId) q.hierarchyNodeId = req.portalUser.hierarchyNodeId;
+    const rows = await Terminal.find(q).sort({ createdAt: -1 }).lean();
+    return res.json({ success: true, terminals: rows.map(publicTerminal) });
+  } catch (err) { console.error('❌ [portal/terminals]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.post('/terminals', cardPresentGate, requirePortalRole('merchant_admin'), async (req, res) => {
+  const b = req.body || {};
+  const label = typeof b.label === 'string' ? b.label.trim().slice(0, 60) : '';
+  const nodeId = typeof b.hierarchyNodeId === 'string' ? b.hierarchyNodeId : '';
+  if (!label || !nodeId) return res.status(400).json({ success: false, error: 'validation_error', details: ['label y hierarchyNodeId obligatorios'] });
+  try {
+    const node = await HierarchyNodeModel.findOne({ _id: nodeId, merchantId: req.portalUser.merchantId }).lean().catch(() => null);
+    if (!node) return res.status(404).json({ success: false, error: 'store_not_found' });
+    if (req.portalUser.hierarchyNodeId && String(req.portalUser.hierarchyNodeId) !== String(nodeId)) return res.status(403).json({ success: false, error: 'out_of_scope' });
+    const t = await Terminal.create({
+      terminalId: 'trm_' + require('crypto').randomBytes(10).toString('hex'),
+      merchantId: req.portalUser.merchantId, hierarchyNodeId: String(nodeId), label,
+      model: typeof b.model === 'string' ? b.model.slice(0, 60) : null,
+      serialNumber: typeof b.serialNumber === 'string' ? b.serialNumber.slice(0, 60) : null,
+      status: 'active', connector: null, createdBy: req.portalUser.email || null,
+    });
+    return res.status(201).json({ success: true, terminal: publicTerminal(t) });
+  } catch (err) { console.error('❌ [portal/terminals POST]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.post('/terminals/:id/disable', cardPresentGate, requirePortalRole('merchant_admin'), async (req, res) => {
+  try {
+    const q = { terminalId: String(req.params.id), merchantId: req.portalUser.merchantId };
+    if (req.portalUser.hierarchyNodeId) q.hierarchyNodeId = req.portalUser.hierarchyNodeId;
+    const t = await Terminal.findOneAndUpdate(q, { $set: { status: 'disabled', updatedAt: new Date() } }, { new: true });
+    if (!t) return res.status(404).json({ success: false, error: 'not_found' });
+    return res.json({ success: true, terminal: publicTerminal(t) });
+  } catch (err) { return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.get('/reports/channels', cardPresentGate, async (req, res) => {
+  const day = (v, d) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(v + 'T00:00:00Z') : d);
+  const to = day(req.query.to, new Date());
+  const from = day(req.query.from, new Date(to.getTime() - 30 * 86400000));
+  const toEnd = new Date(to.getTime() + (typeof req.query.to === 'string' ? 86400000 : 0));
+  try {
+    const q = { merchantId: req.portalUser.merchantId, createdAt: { $gte: from, $lt: toEnd } };
+    // Un usuario limitado a una tienda solo ve esa tienda.
+    if (req.portalUser.hierarchyNodeId) q.hierarchyNodeId = req.portalUser.hierarchyNodeId;
+    const rows = await Transaction.find(q).limit(50000).lean();
+    const byChannel = {}; const byStore = {};
+    let count = 0; let amount = 0;
+    for (const t of rows) {
+      if (!OK_STATUSES.includes(t.status)) continue;
+      const ch = t.channel || 'online';
+      const st = t.hierarchyNodeId || 'sin_tienda';
+      byChannel[ch] = byChannel[ch] || { count: 0, amount: 0 };
+      byChannel[ch].count++; byChannel[ch].amount += t.amount || 0;
+      byStore[st] = byStore[st] || { count: 0, amount: 0, channels: {} };
+      byStore[st].count++; byStore[st].amount += t.amount || 0;
+      byStore[st].channels[ch] = (byStore[st].channels[ch] || 0) + 1;
+      count++; amount += t.amount || 0;
+    }
+    return res.json({ success: true, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), totals: { count, amount }, byChannel, byStore, truncated: rows.length >= 50000 });
+  } catch (err) { console.error('❌ [portal/reports/channels]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+
+// La ficha lleva también la CUENTA del merchant en el PSP (credenciales
+// cifradas, multi-PSP nov 2026). El portal NUNCA las ve ni las toca: se quitan
+// de las respuestas y no se puede borrar/desactivar una ficha que las tenga
+// (eso lo gestiona Monetiser en /admin). Hallazgo de la revisión del 5 nov.
+function stripCredentials(doc) {
+  if (!doc) return doc;
+  const o = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  const has = Boolean(o.credentialsEnc && (o.credentialsEnc.test || o.credentialsEnc.live));
+  delete o.credentialsEnc;
+  delete o.credentialsMeta;
+  o.pspCredentialsConfigured = has;
+  return o;
+}
+function hasCredentials(doc) {
+  return Boolean(doc && doc.credentialsEnc && (doc.credentialsEnc.test || doc.credentialsEnc.live));
+}
+
 // GET /portal/acquirers — catálogo disponible + fichas del merchant
 router.get('/acquirers', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
@@ -476,7 +610,7 @@ router.get('/acquirers', requirePortalRole('merchant_admin'), async (req, res) =
       acquirerService.getCatalog(),
       acquirerService.getMerchantAcquirers(req.portalUser.merchantId),
     ]);
-    return res.json({ success: true, catalog: catalog.map(c => ({ code: c.code, name: c.name, active: c.active !== false })), acquirers: mine });
+    return res.json({ success: true, catalog: catalog.map(c => ({ code: c.code, name: c.name, active: c.active !== false })), acquirers: mine.map(stripCredentials) });
   } catch (err) { console.error('❌ [portal/acquirers]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
@@ -493,6 +627,10 @@ router.put('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, 
       set[k] = Math.round(n);
     }
     if (req.body.active !== undefined) set.active = !!req.body.active;
+    if (set.active === false) {
+      const cur = await MerchantAcquirer.findOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code }).lean();
+      if (hasCredentials(cur)) return res.status(409).json({ success: false, error: 'has_psp_credentials', message: 'Esta cuenta tiene credenciales de pago configuradas por Monetiser: pide a Monetiser que la desactive.' });
+    }
     if (req.body.isDefault === true) {
       set.isDefault = true;
       const others = await acquirerService.getMerchantAcquirers(req.portalUser.merchantId);
@@ -508,13 +646,15 @@ router.put('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, 
       { $set: set, $setOnInsert: { merchantId: req.portalUser.merchantId, acquirerCode: req.params.code } },
       { new: true, upsert: true }
     );
-    return res.json({ success: true, acquirer: doc });
+    return res.json({ success: true, acquirer: stripCredentials(doc) });
   } catch (err) { console.error('❌ [portal/acquirers PUT]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }
 });
 
 // DELETE /portal/acquirers/:code
 router.delete('/acquirers/:code', requirePortalRole('merchant_admin'), async (req, res) => {
   try {
+    const cur = await MerchantAcquirer.findOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code }).lean();
+    if (hasCredentials(cur)) return res.status(409).json({ success: false, error: 'has_psp_credentials', message: 'Esta cuenta tiene credenciales de pago configuradas por Monetiser: pide a Monetiser que la retire.' });
     await MerchantAcquirer.deleteOne({ merchantId: req.portalUser.merchantId, acquirerCode: req.params.code });
     return res.json({ success: true });
   } catch (err) { console.error('❌ [portal/acquirers DELETE]', err); return res.status(500).json({ success: false, error: 'internal_error' }); }

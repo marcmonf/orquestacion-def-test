@@ -102,7 +102,7 @@ function backofficeAuth(req, res, next) {
     // defecto): sin 2FA activa solo puede usar /backoffice/2fa/* para activarla.
     const flag = String(process.env.BACKOFFICE_2FA_REQUIRED || '').trim().toLowerCase();
     if ((flag === 'true' || flag === '1') && user.role === 'superadmin' && !(user.totp && user.totp.enabled)
-        && !String((req.baseUrl || '') + (req.path || '')).includes('/2fa')) {
+        && !/^\/backoffice\/2fa(\/|$)/.test(String((req.baseUrl || '') + (req.path || '')))) {
       return res.status(403).json({ success: false, error: 'two_factor_setup_required' });
     }
     return next();

@@ -272,6 +272,7 @@ Todas las respuestas de error tienen la misma forma:
 | 422 | `no_connector_available` | Ningún adquirente puede procesar ese pago (divisa, país o método). No se ha creado nada. |
 | 422 | `payment_method_not_available` | Ninguno de los `paymentMethods` pedidos está disponible (`details` dice por qué). |
 | 403 | `livemode_not_enabled` | Clave `ms_live_…` con el modo live todavía apagado en Monetiser. |
+| 400 | `invalid_idempotency_key` | La Idempotency-Key no cumple el formato o empieza por `live:` (reservado). |
 
 ## Probar en sandbox
 
@@ -315,6 +316,30 @@ Preparado pero apagado hasta verificarlo con Paylands: `saveCard: { customerRef 
 la sesión (el comprador decide con una casilla), tokens `pm_…` propios de Monetiser
 (`GET /v1/payment-tokens`) y cobro con `POST /v1/payments`. Hoy responden
 `saved_cards_not_enabled`. Te avisaremos cuando se active.
+
+## Novedades de noviembre 2026 (v2.15.0)
+
+### Enlaces de pago y QR
+
+Para cobrar sin carrito (una reserva, una factura, una clase): crea un enlace y compártelo.
+
+```bash
+curl -X POST "$MONETISER/v1/payment-links" \
+  -H "Authorization: Bearer $MONETISER_SECRET" -H "Content-Type: application/json" \
+  -d '{ "amount": 2500, "currency": "EUR", "concept": "Clase de yoga del martes", "reference": "YOGA-1" }'
+```
+
+Respuesta: `url` (la página que abre tu cliente) y `qrUrl` (el QR de esa página, en SVG;
+`…/qr.png` en PNG). El cliente paga en el checkout de siempre y tú recibes el **webhook de
+siempre**, con `data.paymentLinkId`. Por defecto es de **un solo pago** (nunca se cobra
+dos veces); `"reusable": true` admite varios. Opcional: `expiresAt`. Anular:
+`POST /v1/payment-links/{id}/cancel`. También desde el portal (pestaña "Enlaces de pago").
+
+### Producción: solo claves `ms_live_`
+
+En el servidor de producción solo cobran claves **`ms_live_…`** con la API v1. Las claves
+de pruebas (`ms_test_…` y las `ms_…` antiguas) y la API antigua (`/{merchantId}/payments/…`)
+no cobran allí (`no_connector_available`). Así un pago de pruebas nunca toca dinero real.
 
 ## Resumen de lo que NO hay que hacer
 

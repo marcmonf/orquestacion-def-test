@@ -41,6 +41,16 @@ Para generar valores aleatorios de 64 hex (en el ordenador de Marcos, terminal):
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+### Importante: en producción solo se cobra en modo LIVE (desde el 5 nov 2026)
+
+Con `PAYNOPAIN_ENV=production`, Monetiser **solo** manda a Paylands pagos de modo live:
+hace falta `FEATURE_LIVEMODE=true` y que cada comercio use una clave **`ms_live_…`**
+(/admin → Merchants → API Keys, casilla live / `{"livemode": true}`) con la **API v1**.
+Las claves de pruebas (`ms_test_…` y las `ms_…` antiguas) y la API antigua
+(`/{merchantId}/payments/...`) **no cobran** en ese despliegue (responden
+`no_connector_available` / `mode_mismatch`): así un pago de pruebas nunca toca dinero
+real. Es la consecuencia del hallazgo H1 de la revisión del 5 nov (DEV-LOG).
+
 ## 2. Recomendadas
 
 | Variable | Valor | Por qué |
@@ -62,3 +72,30 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 2. Rellenar los datos fiscales de la Sociedad y de cada comercio (/admin).
 3. Un pago real de importe mínimo con una tarjeta propia → capturar → reembolsar.
 4. Confirmar en el log de Render que no sale ningún `⚠️ [PRODUCCIÓN]` ni `⚠️ [CONFIG]`.
+
+## 5. Rotar la clave de cifrado (`CREDENTIALS_ENCRYPTION_KEY`)
+
+Lo cifrado (credenciales de adquirentes, secretos 2FA, tokens de tarjeta guardada)
+lleva dentro con qué clave se cifró. Se puede cambiar de clave **sin perder nada**:
+
+1. Genera una clave nueva (64 hex) con el comando del punto 1 y guárdala en tu gestor
+   de contraseñas.
+2. Render → Environment. **No borres** `CREDENTIALS_ENCRYPTION_KEY`. Añade:
+   - `CREDENTIALS_KEYS` = `k2026b:<la clave nueva>`
+     (formato `nombre:64hex`; varias separadas por coma; el nombre es libre, sin `:`).
+   - `CREDENTIALS_KEY_ACTIVE` = `k2026b`
+3. Manual Deploy. Desde ese momento lo NUEVO se cifra con `k2026b`; lo antiguo se sigue
+   abriendo con `CREDENTIALS_ENCRYPTION_KEY`.
+4. Postman, con el token de superadmin (`POST /backoffice/auth/login`):
+   - `GET  HOST/backoffice/security/encryption-status` → `byKey` muestra cuántos hay con
+     `legacy` (la antigua) y cuántos con `k2026b`.
+   - `POST HOST/backoffice/security/reencrypt` con cuerpo `{ "dryRun": true }` → simulación:
+     `failed` debe ser `0`.
+   - `POST HOST/backoffice/security/reencrypt` con cuerpo `{ "dryRun": false }` → recifra.
+   - `GET  HOST/backoffice/security/encryption-status` otra vez → `pendingReencrypt: 0`.
+5. Solo entonces, y si quieres retirar la antigua: borra `CREDENTIALS_ENCRYPTION_KEY`
+   **y** `ENCRYPTION_KEY` si existe (Manual Deploy). Si algo saliese con `failed > 0`, NO
+   la borres: avisa.
+
+Para la siguiente rotación: `CREDENTIALS_KEYS` = `k2026b:<…>,k2027a:<nueva>` y
+`CREDENTIALS_KEY_ACTIVE=k2027a`, y repetir 3–5 (quitando `k2026b` al final).

@@ -37,7 +37,7 @@ Valores que se usan abajo:
 
 ---
 
-## R1. Regresión: el pago con Paylands sigue EXACTAMENTE igual (lo más importante)
+## R1. Regresión: el pago con Paylands sigue EXACTAMENTE igual — ✅ HECHA Y OK (5 nov 2026)
 
 Repite la prueba que hiciste el 4 nov con la colección **Monetiser — API v1**:
 

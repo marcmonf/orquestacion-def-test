@@ -100,7 +100,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 // Solo el paymentId (y, si el titular marcó la casilla, su
                 // consentimiento para guardar la tarjeta). Nunca datos de tarjeta.
-                body: JSON.stringify(core.saveCardConsent && core.saveCardConsent() ? { paymentId, saveCard: true } : { paymentId }),
+                body: JSON.stringify(core.saveCardConsent && core.saveCardConsent() ? { paymentId, saveCard: true, saveCardNonce: core.saveCardNonce() } : { paymentId }),
               });
               const chargeData = await chargeRes.json();
 

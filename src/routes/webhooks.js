@@ -27,6 +27,7 @@ const logger       = require('../utils/logger');
 const adminAuth    = require('../middleware/adminAuth');
 const { ACQUIRER_TRANSITIONS } = require('../utils/paymentStatus');
 const paymentTokens = require('../services/paymentTokenService');
+const paymentLinks = require('../services/paymentLinkService');
 
 // Verificación del validation_hash y mapa de estados de Paylands: viven en el
 // conector (src/connectors/paylands/webhook.js) desde el framework multi-PSP
@@ -228,12 +229,22 @@ router.post('/paynopain', async (req, res) => {
 
   // ── 5b. Tarjeta guardada (F6, FEATURE_SAVED_CARDS): el token se activa solo
   //        cuando el PSP confirma el pago que lo creó; si no se aprueba, se descarta.
-  if (changed && paymentTokens.enabled()) {
+  // (revisión 5 nov, L5) La activación no depende de que el estado cambie: si el
+  // pago ya estaba autorizado/capturado, se activa igual (es idempotente).
+  if (paymentTokens.enabled() && (changed || (tx.storedCredential && tx.storedCredential.usage === 'first'))) {
     try {
-      if (tx.status === 'authorized') await paymentTokens.activateForPayment(tx.paymentId);
+      if (['authorized', 'approved', 'partially_captured', 'captured'].includes(tx.status)) await paymentTokens.activateForPayment(tx.paymentId);
       else if (['declined', 'cancelled'].includes(tx.status)) await paymentTokens.discardForPayment(tx.paymentId);
     } catch (e) {
       logger.warn('WEBHOOK_SAVED_CARD_UPDATE_FAIL', { component: 'webhooks', data: { error: e.message } });
+    }
+  }
+
+  // ── 5c. Enlace de pago: un pago aprobado cuenta en su enlace (y cierra el de
+  //        uso único). Solo si el pago viene de un enlace.
+  if (changed && tx.paymentLinkId && tx.status === 'authorized') {
+    try { await paymentLinks.onPaymentApproved(tx); } catch (e) {
+      logger.warn('WEBHOOK_PAYMENT_LINK_UPDATE_FAIL', { component: 'webhooks', data: { error: e.message } });
     }
   }
 
@@ -257,6 +268,7 @@ router.post('/paynopain', async (req, res) => {
             currency:          tx.currency,
             connectorUsed:     'payNoPain',
             livemode:          Boolean(tx.livemode),   // aditivo (F4 multi-PSP)
+            ...(tx.paymentLinkId ? { paymentLinkId: tx.paymentLinkId } : {}),   // aditivo (enlaces de pago)
             timestamp:         new Date().toISOString(),
           }
         }

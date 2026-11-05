@@ -46,6 +46,7 @@ const PAYLANDS = 'payNoPain';
 const FIELDS_PROVIDER = 'paylands_proxyfields';
 const health = require('../services/connectorHealth');
 const paymentTokens = require('../services/paymentTokenService');
+const accounts = require('../services/connectorAccountService');
 
 // ¿Este pago se enrutó a los campos de Paylands? Los pagos anteriores al
 // framework multi-PSP no tienen `routing` → Paylands (como siempre).
@@ -139,6 +140,7 @@ router.post('/charge', rateLimiter, async (req, res) => {
   const { merchantId } = req.params;
   const { paymentId, expiryMonth, expiryYear, cardHolder } = req.body || {};
   const saveCardConsent = (req.body || {}).saveCard === true;
+  const saveCardNonce = typeof (req.body || {}).saveCardNonce === 'string' ? req.body.saveCardNonce.slice(0, 64) : '';
 
   if (!paymentId || typeof paymentId !== 'string') {
     return res.status(400).json({ success: false, message: 'paymentId es obligatorio' });
@@ -190,6 +192,15 @@ router.post('/charge', rateLimiter, async (req, res) => {
   if (!routedHere(tx)) {
     await releaseReservation();
     return res.status(409).json({ success: false, message: 'wrong_fields_provider: este pago no se cobra con los campos de Paylands' });
+  }
+
+  // El modo del pago (test/live) tiene que coincidir con el entorno de Paylands
+  // de este despliegue (revisión 5 nov, H1/M2): nunca un pago de pruebas contra
+  // Paylands real ni al revés.
+  const modeOk = await accounts.resolveContext({ merchantId, connector: PAYLANDS, livemode: Boolean(tx.livemode) }).catch(() => null);
+  if (!modeOk) {
+    await releaseReservation();
+    return res.status(409).json({ success: false, message: 'mode_mismatch: el modo del pago no corresponde al entorno de Paylands de este servidor' });
   }
 
   let chargeStarted = false;
@@ -250,7 +261,14 @@ router.post('/charge', rateLimiter, async (req, res) => {
     // F6 (FEATURE_SAVED_CARDS): el titular marcó "guardar tarjeta" y el comercio
     // lo ofreció → token Monetiser 'pending' con el token del PSP CIFRADO. Se
     // activa cuando el webhook confirme el pago. Un fallo aquí nunca afecta al cobro.
-    if (saveCardConsent && paymentTokens.enabled() && tx.saveCardOffer && tx.saveCardOffer.customerRef
+    // El consentimiento tiene que venir del iFrame firmado que vio el comprador
+    // (nonce de un solo uso emitido al pintarlo): revisión 5 nov, M5.
+    const nonceOk = Boolean(saveCardNonce) && Boolean(tx.saveCardNonceHash)
+      && require('crypto').createHash('sha256').update(saveCardNonce).digest('hex') === tx.saveCardNonceHash;
+    if (saveCardConsent && !nonceOk) {
+      logger.warn('SAVED_CARD_CONSENT_REJECTED', { component: 'proxyPciRoutes', data: { paymentId } });
+    }
+    if (saveCardConsent && nonceOk && paymentTokens.enabled() && tx.saveCardOffer && tx.saveCardOffer.customerRef
         && (payment.status === 'requires_action' || payment.status === 'authorized')) {
       try {
         await paymentTokens.createPending({
@@ -261,7 +279,9 @@ router.post('/charge', rateLimiter, async (req, res) => {
             expYear: tokenResult.expiryYear ? String(tokenResult.expiryYear) : undefined },
           consent: { ip: req.ip, userAgent: req.headers['user-agent'] },
         });
-        await Transaction.updateOne({ paymentId, merchantId }, { $set: { storedCredential: { usage: 'first' } } });
+        await Transaction.updateOne({ paymentId, merchantId }, { $set: { storedCredential: { usage: 'first' }, saveCardNonceHash: null } });
+        // Aprobado sin 3DS: el webhook puede no cambiar ya el estado → se activa aquí (L5).
+        if (payment.status === 'authorized') await paymentTokens.activateForPayment(paymentId);
       } catch (e) {
         logger.warn('SAVED_CARD_CREATE_FAILED', { component: 'proxyPciRoutes', data: { paymentId, error: e.message } });
       }

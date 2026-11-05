@@ -401,6 +401,7 @@
     const core = {
       runtime: RUNTIME,
       saveCardConsent: () => RUNTIME.saveCardOffered === true && document.getElementById('save-card').checked === true,
+      saveCardNonce: () => RUNTIME.saveCardNonce || '',
       payBtn, statusMsg, showStatus, setLoading,
       isActive: (m) => activeMethod === m,
       navigate: (url) => { window.location.href = url; },

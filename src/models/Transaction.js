@@ -60,9 +60,30 @@ const transactionSchema = new mongoose.Schema({
   // los disponibles (hoy solo tarjeta). `method` sigue siendo el método usado.
   paymentMethods:     { type: [String], default: undefined },
 
+  // Canal (F5 card present, aditivo): 'online' (sin el campo = online),
+  // 'pay_link' (enlace de pago), 'pos_qr' (terminal de tienda con QR) o
+  // 'card_present' (tarjeta física en un terminal: armazón, apagado). Tienda y
+  // terminal para los informes unificados online + tienda.
+  channel:            { type: String, default: undefined },
+  hierarchyNodeId:    { type: String, default: undefined },
+  terminalId:         { type: String, default: undefined },
+  // Datos del pago presencial (NUNCA el PAN): modo de lectura, método de
+  // verificación del titular y referencia del terminal.
+  cardPresent:        {
+    entryMode:    { type: String },   // chip | contactless | magstripe
+    cvm:          { type: String },   // pin | signature | cdcvm | none
+    terminalTxId: { type: String },
+  },
+
+  // Enlace de pago del que viene este pago (pl_…), si viene de uno.
+  paymentLinkId:      { type: String, default: undefined },
+
   // ── Tarjeta guardada / recurrentes (F6, detrás de FEATURE_SAVED_CARDS) ────
   // Oferta de guardar la tarjeta en esta sesión (cliente del comercio).
   saveCardOffer:      { customerRef: { type: String } },
+  // Hash del nonce de consentimiento que el iFrame firmado recibe al pintarse
+  // (revisión 5 nov, M5): /proxy-pci/charge solo acepta saveCard con él.
+  saveCardNonceHash:  { type: String, default: undefined },
   // Quién inicia el pago: 'customer' (CIT, cliente delante) o 'merchant' (MIT).
   initiator:          { type: String, default: undefined },
   // Credencial guardada: 'first' (pago que la guarda) o 'subsequent' (pago con
@@ -123,6 +144,7 @@ transactionSchema.index({ issuerCountry: 1 });
 transactionSchema.index({ merchantReference: 1 });
 transactionSchema.index({ processorReference: 1 }); // ← para búsqueda rápida por webhook
 transactionSchema.index({ hostedCheckoutId: 1 });
+transactionSchema.index({ paymentLinkId: 1 }, { sparse: true });
 // Listados, analíticas y facturación filtran por merchant + fecha (+ estado):
 // con índices sueltos cada consulta recorría todo el histórico del merchant.
 transactionSchema.index({ merchantId: 1, createdAt: -1 });

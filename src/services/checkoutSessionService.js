@@ -83,6 +83,7 @@ function toCheckoutSession(tx, baseUrl, now = new Date()) {
     amount:        tx.amount,
     currency:      tx.currency,
     reference:     tx.merchantReference || null,
+    ...(tx.paymentLinkId ? { paymentLinkId: tx.paymentLinkId } : {}),
     paymentMethods: tx.paymentMethods && tx.paymentMethods.length ? tx.paymentMethods : ['card'],
     url:           baseUrl ? `${baseUrl}${path}` : path,
     returnUrl:     tx.returnUrl || null,
@@ -148,7 +149,8 @@ async function createCheckoutSession(merchantId, input) {
   if (idempotencyKey) {
     const prior = await Transaction.findOne({ merchantId, idempotencyKey }).lean();
     if (prior) {
-      if (!sameRequest(prior, input)) throw idempotencyConflict();
+      // Del mismo modo y una SESIÓN (no un cobro con token): si no, conflicto.
+      if (!sameRequest(prior, input) || Boolean(prior.livemode) !== livemode || !prior.hostedCheckoutId) throw idempotencyConflict();
       return { tx: prior, created: false };
     }
   }
@@ -187,6 +189,9 @@ async function createCheckoutSession(merchantId, input) {
     ...(livemode ? { livemode: true } : {}),
     ...(Array.isArray(input.paymentMethods) && input.paymentMethods.length ? { paymentMethods: input.paymentMethods } : {}),
     ...(input.saveCard && input.saveCard.customerRef ? { saveCardOffer: { customerRef: input.saveCard.customerRef }, initiator: 'customer' } : {}),
+    ...(input.paymentLinkId ? { paymentLinkId: input.paymentLinkId } : {}),
+    ...(input.channel ? { channel: input.channel } : {}),
+    ...(input.hierarchyNodeId ? { hierarchyNodeId: String(input.hierarchyNodeId) } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 
@@ -198,7 +203,7 @@ async function createCheckoutSession(merchantId, input) {
     if (idempotencyKey && isDuplicateKey(err)) {
       const prior = await Transaction.findOne({ merchantId, idempotencyKey }).lean();
       if (prior) {
-        if (!sameRequest(prior, input)) throw idempotencyConflict();
+        if (!sameRequest(prior, input) || Boolean(prior.livemode) !== livemode || !prior.hostedCheckoutId) throw idempotencyConflict();
         return { tx: prior, created: false };
       }
     }

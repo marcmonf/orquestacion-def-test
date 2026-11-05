@@ -64,6 +64,6 @@ describe('Proveedores de campos del checkout', () => {
     expect(html).not.toMatch(/<input[^>]+(cc-number|cardnumber|card-number|cvv|cvc)/i);
     const prov = fs.readFileSync(path.join(__dirname, '../../public/checkout/providers/paylands_proxyfields.js'), 'utf8');
     // Al servidor de Monetiser solo viaja el paymentId (nunca datos de tarjeta).
-    expect(prov).toMatch(/proxy-pci\/charge[\s\S]*body: JSON\.stringify\(core\.saveCardConsent && core\.saveCardConsent\(\) \? \{ paymentId, saveCard: true \} : \{ paymentId \}\)/);
+    expect(prov).toMatch(/proxy-pci\/charge[\s\S]*body: JSON\.stringify\(core\.saveCardConsent && core\.saveCardConsent\(\) \? \{ paymentId, saveCard: true, saveCardNonce: core\.saveCardNonce\(\) \} : \{ paymentId \}\)/);
   });
 });

@@ -21,8 +21,9 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.6.1",
     "morgan": "^1.10.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.3.1",
     "pdfkit": "^0.19.1",
+    "qrcode": "^1.5.4",
     "uuid": "^11.1.1",
     "xss-clean": "^0.1.1"
   },

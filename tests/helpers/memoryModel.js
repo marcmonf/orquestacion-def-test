@@ -36,6 +36,7 @@ function applySet(doc, set) {
 
 function matches(doc, query) {
   return Object.entries(query || {}).every(([k, v0]) => {
+    if (k === '$or') return Array.isArray(v0) && v0.some((q) => matches(doc, q));
     const docV = getPath(doc, k);
     const d = k.includes('.') ? { [k]: docV } : doc;
     const v = v0;
@@ -52,6 +53,7 @@ function matchOne(doc, k, v) {
           case '$regex': return new RegExp(operand, v.$options || '').test(String(doc[k] == null ? '' : doc[k]));
           case '$options': return true;   // lo consume $regex
           case '$ne':  return doc[k] !== operand;
+          case '$type': return operand === 'string' ? typeof doc[k] === 'string' : false;
           case '$in':  return Array.isArray(operand) && operand.includes(doc[k]);
           case '$nin': return Array.isArray(operand) && !operand.includes(doc[k]);
           case '$gte': return doc[k] >= operand;
@@ -131,9 +133,18 @@ module.exports = function makeMemoryModel(opts = {}) {
     //   - `await Model.findOne(q)`      → doc REAL (con .save())
     //   - `await Model.findOne(q).lean()` → copia plana (solo lectura)
     findOne(query = {}) {
-      const doc = store.find(d => matches(d, query)) || null;
+      let doc = store.find(d => matches(d, query)) || null;
       const thenable = {
         select() { return thenable; },
+        // sort({ campo: 1|-1 }) — elige el primero según ese orden.
+        sort(spec) {
+          const [k, dir] = Object.entries(spec || {})[0] || [];
+          if (k) {
+            const rows = store.filter(d => matches(d, query)).sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (dir < 0 ? -1 : 1));
+            doc = rows[0] || null;
+          }
+          return thenable;
+        },
         lean()   { return Promise.resolve(doc ? { ...doc } : null); },
         then(resolve, reject) { return Promise.resolve(doc).then(resolve, reject); },
       };

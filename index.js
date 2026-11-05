@@ -86,7 +86,7 @@ const corsMiddleware = cors({
 //    el navegador no deja usarla desde una web, así que un secreto puesto por
 //    error en el frontend falla a la primera en vez de quedar expuesto.
 app.use((req, res, next) => (
-  req.path.startsWith('/checkout/result/') || req.path.startsWith('/v1/')
+  req.path.startsWith('/checkout/result/') || req.path.startsWith('/v1/') || req.path.startsWith('/pay/')
     ? next()
     : corsMiddleware(req, res, next)
 ));
@@ -100,7 +100,12 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.get('/health', (req, res) => res.status(200).json({
   status: 'ok',
   db: mongoose.connection.readyState === 1 ? 'up' : 'down',
+  environment: require('./src/utils/environment').name(),
 }));
+
+/* ===== Readiness y estado público (F2, nov 2026) =====
+ * /health/ready (¿puede servir pagos?), /status (página pública) y /status.json. */
+app.use('/', require('./src/routes/status'));
 
 /* ===== Webhooks entrantes de PSPs — ANTES de sanitizadores y rate limit global =====
  * xss-clean y mongo-sanitize REESCRIBEN el body; cualquier cambio invalida el
@@ -153,6 +158,11 @@ const ensureRouter = (moduleExport, moduleName) => {
 const iframeRouter = ensureRouter(require('./src/routes/iframe'), 'iframe');
 app.use('/iframe', iframeRouter);
 app.use('/:merchantId/iframe', iframeRouter);
+
+// Enlaces de pago (nov 2026): página pública del enlace + QR → checkout de siempre.
+app.use('/pay', ensureRouter(require('./src/routes/payLinks'), 'payLinks'));
+// Terminal en tienda (app Android "Monetiser POS"): JWT de portal, nunca la clave ms_.
+app.use('/pos', ensureRouter(require('./src/routes/pos'), 'pos'));
 
 // Hosted Payment Page (HPP)
 app.use('/hpp', ensureRouter(require('./src/routes/hpp'), 'hpp'));
@@ -323,6 +333,7 @@ function configWarnings() {
     w.push('BACKOFFICE_JWT_SECRET y PORTAL_JWT_SECRET son IGUALES: deben ser distintos');
   }
   if (!process.env.PAYNOPAIN_SIGNATURE) w.push('PAYNOPAIN_SIGNATURE no definido → los webhooks de Paylands responden 500');
+  for (const m of require('./src/utils/environment').mismatches()) w.push(`ENTORNO INCOHERENTE: ${m}`);
   if (!process.env.HPP_SIGNING_SECRET) w.push('HPP_SIGNING_SECRET no definido → secreto aleatorio por proceso: tras un reinicio dejan de valer los enlaces del iFrame y de la vuelta del comprador');
   for (const msg of w) console.warn(`⚠️ [CONFIG] ${msg}`);
   // Con Paylands en producción, el checklist completo de dinero real (F7).
@@ -359,6 +370,8 @@ mongoose.connect(MONGO_URI, {
   server = app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
   // Reintentos persistentes de webhooks salientes (ver webhookDispatcher.js).
   webhookDispatcher.startWorker();
+  // Alertas por email (circuit breaker, webhooks atascados, pico de errores).
+  require('./src/services/alertService').start();
 })
 .catch(err => {
   console.error('❌ Error conectando a MongoDB:', err);
@@ -379,6 +392,7 @@ process.on('unhandledRejection', (reason) => {
 async function shutdown(signal) {
   console.log(`⏹️  ${signal} recibido: parada ordenada`);
   webhookDispatcher.stopWorker();
+  try { require('./src/services/alertService').stop(); } catch (_) { /* no-op */ }
   const force = setTimeout(() => process.exit(0), 10000);
   if (force.unref) force.unref();
   try {

@@ -181,7 +181,7 @@ async function resolveConnector(tx) {
   // antes: connector.op(data), sin segundo argumento.
   let ctx = null;
   try {
-    const acc = await accounts.resolveContext({ merchantId: tx.merchantId, connector: tx.processor, livemode: Boolean(tx.livemode) });
+    const acc = await accounts.resolveContext({ merchantId: tx.merchantId, connector: tx.processor, livemode: Boolean(tx.livemode), accountId: tx.connectorAccountId || null });
     if (acc && acc.source === 'merchant') ctx = { credentials: acc.credentials, livemode: Boolean(tx.livemode), accountId: acc.accountId };
   } catch (_) { ctx = null; }
   return { connector, ctx };
@@ -192,12 +192,18 @@ function callConnector(connector, op, data, ctx) {
 }
 
 // Esqueleto común: búsqueda aislada → replay → bloqueo → reserva → operación.
-async function runOperation({ type, paymentId, merchantId, idempotencyKey, reserveFields, body }) {
+// livemode: undefined = sin filtro (backoffice); false = solo pagos de pruebas
+// (API antigua y claves test); true = solo pagos reales. Revisión 5 nov, H2:
+// antes una credencial "solo test" de la API antigua podía reembolsar un pago live.
+async function runOperation({ type, paymentId, merchantId, idempotencyKey, reserveFields, body, livemode }) {
   if (!paymentId || !merchantId) return result(404, { success: false, message: 'Transaction not found' });
   if (!idempotencyKey) return result(400, { success: false, message: 'Missing Idempotency-Key header' });
 
   const exists = await Transaction.findOne({ paymentId, merchantId }).lean();
   if (!exists) return result(404, { success: false, message: 'Transaction not found' });
+  if (livemode !== undefined && Boolean(exists.livemode) !== Boolean(livemode)) {
+    return result(404, { success: false, message: 'Transaction not found' });
+  }
 
   const replay = await replayOperation(paymentId, type, idempotencyKey);
   if (replay) return replay;
@@ -226,9 +232,9 @@ async function runOperation({ type, paymentId, merchantId, idempotencyKey, reser
 }
 
 // ── CAPTURE ──────────────────────────────────────────────────────────────────
-async function capture({ paymentId, merchantId, idempotencyKey, amount: reqAmount, isFinal, references, operationReferences, actor }) {
+async function capture({ paymentId, merchantId, idempotencyKey, amount: reqAmount, isFinal, references, operationReferences, actor, livemode }) {
   return runOperation({
-    type: 'capture', paymentId, merchantId, idempotencyKey,
+    type: 'capture', paymentId, merchantId, idempotencyKey, livemode,
     body: async (tx) => {
       if (!CAPTURABLE_STATUSES.includes(tx.status)) {
         return { httpStatus: 409, body: { success: false, message: `Cannot capture payment in status '${tx.status}'` } };
@@ -278,9 +284,9 @@ async function capture({ paymentId, merchantId, idempotencyKey, amount: reqAmoun
 }
 
 // ── REFUND ───────────────────────────────────────────────────────────────────
-async function refund({ paymentId, merchantId, idempotencyKey, amount: reqAmount, currencyCode, reason, references, operationReferences, operatorId, actor }) {
+async function refund({ paymentId, merchantId, idempotencyKey, amount: reqAmount, currencyCode, reason, references, operationReferences, operatorId, actor, livemode }) {
   return runOperation({
-    type: 'refund', paymentId, merchantId, idempotencyKey,
+    type: 'refund', paymentId, merchantId, idempotencyKey, livemode,
     body: async (tx) => {
       if (!REFUNDABLE_STATUSES.includes(tx.status)) {
         return { httpStatus: 409, body: { success: false, message: `Cannot refund payment in status '${tx.status}'` } };
@@ -358,9 +364,9 @@ async function refund({ paymentId, merchantId, idempotencyKey, amount: reqAmount
 // ── CANCEL (void) ────────────────────────────────────────────────────────────
 // allowLocal: solo el backoffice. Anula en local un pago SIN orden en el
 // adquirente (checkout sin completar). Nunca un pago en curso o autorizado.
-async function cancel({ paymentId, merchantId, idempotencyKey, isFinal, operationReferences, allowLocal = false, reason, operatorId, actor }) {
+async function cancel({ paymentId, merchantId, idempotencyKey, isFinal, operationReferences, allowLocal = false, reason, operatorId, actor, livemode }) {
   return runOperation({
-    type: 'cancel', paymentId, merchantId, idempotencyKey,
+    type: 'cancel', paymentId, merchantId, idempotencyKey, livemode,
     body: async (tx) => {
       if (allowLocal && LOCAL_CANCEL_STATUSES.includes(tx.status) && !tx.processorReference) {
         const prevStatus = tx.status;

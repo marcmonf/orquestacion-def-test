@@ -160,7 +160,15 @@ async function decideSafe(params) {
   try {
     return await decide(params);
   } catch (err) {
-    return platformDefault({ ...params, error: err && err.message });
+    // Pagos reales: si el routing no puede decidir, NO se crea el pago
+    // (revisión 5 nov, M2). Pruebas: comportamiento anterior (Paylands).
+    if (params && params.livemode) {
+      return { connector: null, accountId: null, mode: 'live', channel: params.channel || 'checkout', reason: 'routing_error', reasons: [`routing no disponible: ${err && err.message}`], candidates: [], explain: [], fieldsProvider: null, decidedAt: new Date().toISOString() };
+    }
+    const fallback = platformDefault({ ...params, error: err && err.message });
+    // Ni siquiera el fallback puede ir a un entorno de otro modo.
+    const ok = await accounts.resolveContext({ merchantId: params.merchantId, connector: fallback.connector, livemode: false }).catch(() => null);
+    return ok ? fallback : { ...fallback, connector: null, accountId: null, fieldsProvider: null, reason: 'routing_error' };
   }
 }
 

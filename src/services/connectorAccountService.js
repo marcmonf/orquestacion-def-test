@@ -149,19 +149,27 @@ async function deleteCredentials({ merchantId, acquirerCode, mode, actor }) {
  * Contexto de credenciales para un conector, merchant y modo.
  * → { source:'platform'|'merchant', accountId, credentials } | null (sin credenciales)
  */
-async function resolveContext({ merchantId, connector, livemode = false }) {
+async function resolveContext({ merchantId, connector, livemode = false, accountId = null }) {
   if (!registry.hasProvider(connector)) return null;
   const provider = registry.getProvider(connector);
   const mode = modeOf(livemode);
   if (!provider.capabilities.perAccountCredentials) {
-    // Cuenta de plataforma: el conector usa sus variables de entorno. En live
-    // solo si el conector declara entorno live (F4).
-    if (livemode && !provider.capabilities.livemode) return null;
+    // Cuenta de plataforma: el conector usa sus variables de entorno, que
+    // apuntan a UN entorno del PSP por despliegue. Solo vale para pagos de ese
+    // mismo modo (revisión 5 nov, H1): con PAYNOPAIN_ENV=production, una clave
+    // de pruebas ya no puede cobrar tarjetas reales, y en sandbox una clave live
+    // no puede "cobrar" contra el entorno de pruebas.
+    const platformMode = typeof provider.platformMode === 'function' ? provider.platformMode() : 'test';
+    if (platformMode !== mode) return null;
     return { source: 'platform', accountId: 'platform', mode, credentials: null };
   }
   if (!canQuery(MerchantAcquirer)) return null;
   const docs = await MerchantAcquirer.find({ merchantId, acquirerCode: { $in: acquirerCodesFor(connector) } }).lean();
-  const doc = docs.find((d) => d.active !== false && d.credentialsEnc && d.credentialsEnc[mode]);
+  // Un pago ya hecho se opera SIEMPRE con la cuenta con la que se cobró
+  // (revisión 5 nov, L7): si esa cuenta ya no tiene credenciales, no se usa otra.
+  const doc = accountId && accountId !== 'platform'
+    ? docs.find((d) => String(d._id) === String(accountId) && d.credentialsEnc && d.credentialsEnc[mode])
+    : docs.find((d) => d.active !== false && d.credentialsEnc && d.credentialsEnc[mode]);
   if (!doc) return null;
   let credentials;
   try { credentials = JSON.parse(decryptSecret(doc.credentialsEnc[mode])); } catch (_) { return null; }

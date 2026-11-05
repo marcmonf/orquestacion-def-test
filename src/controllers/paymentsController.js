@@ -43,6 +43,7 @@ exports.capturePayment = async (req, res) => {
     const out = await lifecycle.capture({
       paymentId,
       merchantId:     req.merchantId,
+      livemode:       false,   // API antigua = solo modo test (revisión 5 nov, H2)
       idempotencyKey: req.idemKey,
       amount:         amountOfMoney?.amount ?? legacyAmount,
       isFinal,
@@ -70,6 +71,7 @@ exports.refundPayment = async (req, res) => {
     const out = await lifecycle.refund({
       paymentId,
       merchantId:     req.merchantId,
+      livemode:       false,   // API antigua = solo modo test (revisión 5 nov, H2)
       idempotencyKey: req.idemKey,
       amount:         amountOfMoney?.amount,
       currencyCode:   amountOfMoney?.currencyCode,
@@ -99,6 +101,7 @@ exports.cancelPayment = async (req, res) => {
     const out = await lifecycle.cancel({
       paymentId,
       merchantId:     req.merchantId,
+      livemode:       false,   // API antigua = solo modo test (revisión 5 nov, H2)
       idempotencyKey: req.idemKey,
       isFinal,
       operationReferences,

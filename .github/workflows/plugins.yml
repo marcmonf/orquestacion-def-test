@@ -1,0 +1,26 @@
+# Lint de PHP y tests de los plugins de tienda (plugins/). Sin secretos.
+name: Plugins (lint + tests)
+
+on:
+  push:
+    paths:
+      - 'plugins/**'
+      - '.github/workflows/plugins.yml'
+  pull_request:
+    paths:
+      - 'plugins/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint PHP
+        run: find plugins -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Tests
+        run: php plugins/tests/run.php

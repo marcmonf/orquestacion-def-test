@@ -1169,6 +1169,74 @@ router.put('/interchange/:scheme/:cardType/:region', requireRole('superadmin'), 
 // ─────────────────────────────────────────────────────────────────────────────
 const totpService = require('../services/backofficeTotpService');
 
+// Rotación de la clave de cifrado de credenciales (nov 2026). Solo superadmin.
+//   GET  /backoffice/security/encryption-status  → cuántos valores hay con cada clave
+//   POST /backoffice/security/reencrypt { dryRun } → recifra con la clave ACTIVA
+// Nunca devuelve valores. Runbook: docs/produccion.md §5.
+const encryptionService = require('../services/encryptionService');
+router.get('/security/encryption-status', requireRole('superadmin'), async (req, res) => {
+  try { return res.json({ success: true, ...(await encryptionService.status()) }); }
+  catch (err) {
+    if (err && err.code === 'encryption_not_configured') return res.status(503).json({ success: false, error: err.code, message: err.message });
+    console.error('❌ [backoffice/security/status]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+router.post('/security/reencrypt', requireRole('superadmin'), async (req, res) => {
+  const dryRun = (req.body || {}).dryRun !== false;   // por defecto, simulación
+  try { return res.json({ success: true, ...(await encryptionService.reencrypt({ dryRun })) }); }
+  catch (err) {
+    if (err && err.code === 'encryption_not_configured') return res.status(503).json({ success: false, error: err.code, message: err.message });
+    console.error('❌ [backoffice/security/reencrypt]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// Enlaces de pago (nov 2026): ver, crear y anular desde /admin (con alcance).
+const paymentLinkService = require('../services/paymentLinkService');
+const { resolveBaseUrl: boBaseUrl } = require('../services/checkoutSessionService');
+function inScope(req, merchantId) {
+  const sc = scopeOf(req.backofficeUser);
+  return sc.includes('all') || sc.includes(merchantId);
+}
+router.get('/payment-links', async (req, res) => {
+  try {
+    const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : null;
+    const PaymentLink = require('../models/PaymentLink');
+    const q = {};
+    if (merchantId) { if (!inScope(req, merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' }); q.merchantId = merchantId; }
+    else if (!scopeOf(req.backofficeUser).includes('all')) q.merchantId = { $in: scopeOf(req.backofficeUser) };
+    const rows = await PaymentLink.find(q).sort({ createdAt: -1 }).limit(200).lean();
+    return res.json({ success: true, links: rows.map((l) => ({ ...paymentLinkService.toPublic(l, boBaseUrl(req)), merchantId: l.merchantId, createdBy: l.createdBy || null })) });
+  } catch (err) { console.error('❌ [backoffice/payment-links]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' }); }
+});
+router.post('/merchants/:merchantId/payment-links', requireRole('operator'), async (req, res) => {
+  const merchantId = String(req.params.merchantId);
+  if (!inScope(req, merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+  try {
+    const exists = await Merchant.findOne({ merchantId }).lean();
+    if (!exists) return res.status(404).json({ success: false, error: 'merchant_not_found' });
+    const link = await paymentLinkService.create(merchantId, req.body || {}, { livemode: require('../utils/environment').isProduction(), createdBy: req.backofficeUser.email });
+    return res.status(201).json({ success: true, link: paymentLinkService.toPublic(link, boBaseUrl(req)) });
+  } catch (err) {
+    if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code, ...(err.details ? { details: err.details } : {}) });
+    console.error('❌ [backoffice/payment-links POST]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+router.post('/payment-links/:linkId/cancel', requireRole('operator'), async (req, res) => {
+  try {
+    const PaymentLink = require('../models/PaymentLink');
+    const doc = await PaymentLink.findOne({ linkId: String(req.params.linkId) }).lean();
+    if (!doc) return res.status(404).json({ success: false, error: 'not_found' });
+    if (!inScope(req, doc.merchantId)) return res.status(403).json({ success: false, error: 'merchant_out_of_scope' });
+    const link = await paymentLinkService.cancel(doc.merchantId, doc.linkId, { actor: req.backofficeUser.email });
+    return res.json({ success: true, link: paymentLinkService.toPublic(link, boBaseUrl(req)) });
+  } catch (err) {
+    if (err && err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.code });
+    console.error('❌ [backoffice/payment-links cancel]', err && err.message); return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // Checklist de variables para pasar a real (F7). Solo dice si cada una está
 // bien, nunca su valor. Guía: docs/produccion.md.
 router.get('/production-readiness', requireRole('superadmin'), (req, res) => {
@@ -1179,17 +1247,40 @@ function totpError(res, err) {
   console.error('❌ [backoffice/2fa]', err && err.message);
   return res.status(500).json({ success: false, error: 'internal_error' });
 }
+// Límite POR USUARIO en las rutas que comprueban códigos o contraseña (revisión
+// 5 nov, M4): 10 intentos / 15 min. Antes solo el límite global por IP.
+const rateLimit = require('express-rate-limit');
+const twoFactorLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RL_2FA_MAX) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `2fa:${req.backofficeUser && req.backofficeUser.userId}`,
+  message: { success: false, error: 'too_many_attempts' },
+});
+const { signBackofficeToken } = require('../middleware/backofficeAuth');
+// Token nuevo para la sesión que hace el cambio (las demás quedan cerradas).
+function freshToken(req, tokenVersion) {
+  const u = req.backofficeUser;
+  return signBackofficeToken({ userId: u.userId, email: u.email, name: u.name, role: u.role, merchantScope: u.merchantScope, tv: tokenVersion || 0 });
+}
 router.get('/2fa', async (req, res) => {
   try { return res.json({ success: true, ...(await totpService.status(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/setup', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId)) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/setup', twoFactorLimiter, async (req, res) => {
+  try { return res.json({ success: true, ...(await totpService.setup(req.backofficeUser.userId, (req.body || {}).password)) }); } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/enable', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/enable', twoFactorLimiter, async (req, res) => {
+  try {
+    const { enabled, tokenVersion } = await totpService.enable(req.backofficeUser.userId, String((req.body || {}).code || ''));
+    return res.json({ success: true, enabled, token: freshToken(req, tokenVersion) });
+  } catch (err) { return totpError(res, err); }
 });
-router.post('/2fa/disable', async (req, res) => {
-  try { return res.json({ success: true, ...(await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''))) }); } catch (err) { return totpError(res, err); }
+router.post('/2fa/disable', twoFactorLimiter, async (req, res) => {
+  try {
+    const { enabled, tokenVersion } = await totpService.disable(req.backofficeUser.userId, String((req.body || {}).code || ''), (req.body || {}).password);
+    return res.json({ success: true, enabled, token: freshToken(req, tokenVersion) });
+  } catch (err) { return totpError(res, err); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
