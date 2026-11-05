@@ -93,6 +93,10 @@ app.use((req, res, next) => (
 
 app.use(helmet());
 
+// Webhook entrante de Stripe (sesión 5 nov 2026): necesita el cuerpo CRUDO para
+// verificar la firma → express.raw ANTES de express.json (que ya no lo reparsea).
+app.use('/webhooks/stripe', express.raw({ type: '*/*', limit: '1mb' }), require('./src/routes/stripeWebhook'));
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -161,6 +165,9 @@ app.use('/:merchantId/iframe', iframeRouter);
 
 // Enlaces de pago (nov 2026): página pública del enlace + QR → checkout de siempre.
 app.use('/pay', ensureRouter(require('./src/routes/payLinks'), 'payLinks'));
+// Tienda de demostración (sesión 5 nov 2026, F2): solo con MONETISER_ENV=sandbox;
+// si no, 404. Su clave de pruebas (DEMO_STORE_SECRET) nunca sale del servidor.
+app.use('/demo', ensureRouter(require('./src/routes/demoStore'), 'demoStore'));
 // Terminal en tienda (app Android "Monetiser POS"): JWT de portal, nunca la clave ms_.
 app.use('/pos', ensureRouter(require('./src/routes/pos'), 'pos'));
 
@@ -232,6 +239,8 @@ app.use('/portal', ensureRouter(require('./src/routes/portalRoutes'), 'portalRou
 app.use('/:merchantId/payments/server', serverPaymentRoutes);
 app.use('/:merchantId/payments/hosted', hostedCheckoutRoutes);
 app.use('/:merchantId/proxy-pci', proxyPciRoutes);
+// Backend del proveedor de campos 'stripe_elements' (sesión 5 nov 2026, F1).
+app.use('/:merchantId/stripe', require('./src/routes/stripeCheckoutRoutes'));
 
 // Payments (router agregador existente)
 app.use('/payments', ensureRouter(require('./src/routes/payments'), 'payments'));
@@ -276,7 +285,16 @@ if (String(process.env.DOCS_ENABLED || 'true').toLowerCase() !== 'false') {
     );
     res.sendFile(path.join(__dirname, 'public/docs.html'));
   });
+
+  // Documentación para desarrolladores (sesión 5 nov 2026, F2). HTML estático
+  // GENERADO desde docs/integracion.md y openapi.yaml (scripts/build-developers.js).
+  app.get(['/developers', '/developers/'], (req, res) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+    res.sendFile(path.join(__dirname, 'public/developers/index.html'));
+  });
 }
+// Con DOCS_ENABLED=false, /developers tampoco se sirve por el estático general.
+app.use('/developers', (req, res, next) => (String(process.env.DOCS_ENABLED || 'true').toLowerCase() === 'false' ? res.status(404).send('Not found') : next()));
 
 // Página de pruebas que simula la web de un comercio (embebe el checkout en un
 // iFrame). Necesita su propia CSP: la CSP de una página manda también sobre

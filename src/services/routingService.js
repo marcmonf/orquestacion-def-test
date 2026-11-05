@@ -41,7 +41,9 @@ const { canQuery } = require('../utils/dbReady');
 // Proveedores de campos que el checkout de Monetiser sabe pintar hoy
 // (public/checkout/providers/). Un conector cuyo proveedor no esté aquí no
 // recibe checkouts (sí podría recibir S2S).
-const CHECKOUT_FIELDS_PROVIDERS = Object.freeze(['paylands_proxyfields']);
+// 'stripe_elements' (5 nov 2026): solo recibe pagos si el conector Stripe está
+// registrado (FEATURE_STRIPE) y el comercio tiene su cuenta Stripe configurada.
+const CHECKOUT_FIELDS_PROVIDERS = Object.freeze(['paylands_proxyfields', 'stripe_elements']);
 // Solo tests: proveedores de campos de conectores de prueba (nunca en producción).
 const testFieldsProviders = new Set();
 function checkoutFieldsProviders() {

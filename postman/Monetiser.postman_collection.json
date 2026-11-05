@@ -2,7 +2,7 @@
   "info": {
     "name": "Monetiser — API v1",
     "_postman_id": "b7e1c2d4-5f60-4a71-8b92-c3d4e5f60718",
-    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).\n\nv2.14.0 (nov 2026): peticiones 7-9 (métodos de pago, sesión con país, comprobación de tarjeta guardada desactivada). Las claves nuevas son ms_test_... (las ms_... antiguas siguen valiendo).\n\nv2.15.0 (5 nov 2026): peticiones 10-13 (enlaces de pago con QR). Ver docs/runbook-sesion-5nov.md §C.",
+    "description": "Integración sencilla de Monetiser (API v1). Guía: docs/integracion.md del repositorio.\n\nVariables de la colección:\n- host: https://orquestacion-def-test.onrender.com (sandbox)\n- secret: el SECRETO de tu API key (ms_...), de /admin → Merchants → API Keys. NUNCA lo compartas.\n- paymentId: se rellena solo al crear una sesión.\n\nFlujo: 1) Crear sesión → abre la `url` de la respuesta en el navegador (o en /test-checkout.html) y paga con\n4018810000100036 · 12/34 · 123. 2) Consultar el pago → `authorized`. 3) Capturar. 4) Devolver.\n\nLa tarjeta NUNCA se envía a la API: la escribe el comprador en el checkout (PCI DSS SAQ A).\n\nv2.14.0 (nov 2026): peticiones 7-9 (métodos de pago, sesión con país, comprobación de tarjeta guardada desactivada). Las claves nuevas son ms_test_... (las ms_... antiguas siguen valiendo).\n\nv2.15.0 (5 nov 2026): peticiones 10-13 (enlaces de pago con QR). Ver docs/runbook-sesion-5nov.md §C.\n\n(v2.16.0) Carpeta 14: Stripe como segundo PSP, routing de demostración e insights. Variables adminToken, portalToken y merchantId.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -30,6 +30,18 @@
     },
     {
       "key": "linkId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "portalToken",
+      "value": ""
+    },
+    {
+      "key": "merchantId",
       "value": ""
     }
   ],
@@ -433,6 +445,247 @@
           "raw": "{}"
         }
       }
+    },
+    {
+      "name": "14. Stripe, routing de demo e insights (v2.16.0)",
+      "description": "Runbook completo: docs/stripe.md. Variables nuevas: adminToken (token de POST /backoffice/auth/login de un superadmin), portalToken (token de POST /portal/auth/login), merchantId (el comercio de pruebas).",
+      "item": [
+        {
+          "name": "14.1 /admin: guardar cuenta Stripe de pruebas",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{host}}/backoffice/merchants/{{merchantId}}/connector-accounts/stripe/credentials",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "backoffice",
+                "merchants",
+                "{{merchantId}}",
+                "connector-accounts",
+                "stripe",
+                "credentials"
+              ]
+            },
+            "description": "Esperado 200 con account.credentials.test.configured = true y las claves enmascaradas. Más cómodo desde /admin → Merchants → Adquirentes. 400 si una clave no es de pruebas. 404 unknown_connector si falta FEATURE_STRIPE=true + deploy.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"test\",\n  \"credentials\": {\n    \"secretKey\": \"sk_test_PEGA_AQUI\",\n    \"publishableKey\": \"pk_test_PEGA_AQUI\",\n    \"webhookSecret\": \"whsec_PEGA_AQUI\"\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "14.2 /admin: aplicar routing de demostración",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{host}}/backoffice/routing/{{merchantId}}/demo-preset",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "backoffice",
+                "routing",
+                "{{merchantId}}",
+                "demo-preset"
+              ]
+            },
+            "description": "Esperado 200: EUR + ES → payNoPain; resto → stripe; fallback al otro antes de pedir la tarjeta.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "14.3 /admin: simular routing (EUR, FR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{host}}/backoffice/routing/{{merchantId}}/simulate",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "backoffice",
+                "routing",
+                "{{merchantId}}",
+                "simulate"
+              ]
+            },
+            "description": "Esperado decision.connector = \"stripe\" (con ES: \"payNoPain\").",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1250,\n  \"currency\": \"EUR\",\n  \"country\": \"FR\"\n}"
+            }
+          }
+        },
+        {
+          "name": "14.4 Crear sesión que va a Stripe (FR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{host}}/v1/checkout-sessions",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "v1",
+                "checkout-sessions"
+              ]
+            },
+            "description": "Esperado 201. Abre la url en el navegador: campo de tarjeta de Stripe. Tarjeta 4242 4242 4242 4242, fecha futura, CVC 123.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1250,\n  \"currency\": \"EUR\",\n  \"country\": \"FR\",\n  \"reference\": \"PRUEBA-STRIPE-1\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "if (b && b.id) { pm.collectionVariables.set('paymentId', b.id); console.log('Abre para pagar:', b.url); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14.5 Insights de orquestación (/admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{host}}/backoffice/insights?days=30&merchantId={{merchantId}}",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "backoffice",
+                "insights"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30"
+                },
+                {
+                  "key": "merchantId",
+                  "value": "{{merchantId}}"
+                }
+              ]
+            },
+            "description": "Esperado 200 con insights.totals, byPsp (payNoPain y stripe), declineReasons, routingReasons y costs.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "14.6 Insights de orquestación (portal)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{host}}/portal/insights?days=30",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "portal",
+                "insights"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30"
+                }
+              ]
+            },
+            "description": "Esperado 200, siempre del comercio del usuario del portal.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{portalToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

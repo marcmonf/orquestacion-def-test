@@ -339,7 +339,10 @@ router.post('/payments', savedCardsGate, async (req, res) => {
       { $set: { status, processorReference: r.processorReference || null, updatedAt: new Date() } });
     const saved = await sessions.findPayment(req.merchantId, tx.paymentId, req.livemode);
     const out = await sessions.toPayment(saved);
-    if (r.status === 'requires_action') out.nextAction = { type: 'redirect', url: r.action.url };
+    if (r.status === 'requires_action' && r.action && r.action.type === 'redirect') out.nextAction = { type: 'redirect', url: r.action.url };
+    // Confirmación con la librería del PSP en el navegador (Stripe.js): no hay
+    // URL a la que redirigir. Aditivo (5 nov 2026).
+    if (r.status === 'requires_action' && r.action && r.action.type === 'client_confirm') out.nextAction = { type: 'client_confirm' };
     if (r.error) out.error = { code: r.error.code, message: r.error.message };
     return res.status(201).json(out);
   } catch (err) {

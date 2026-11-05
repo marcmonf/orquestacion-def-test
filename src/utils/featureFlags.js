@@ -40,4 +40,8 @@ module.exports = {
   cardPresent: () => on('FEATURE_CARD_PRESENT'),
   // F6 — tarjeta guardada / cobros sin el cliente delante.
   savedCards: () => on('FEATURE_SAVED_CARDS'),
+  // Sesión 5 nov 2026 (F1): Stripe como segundo PSP real (cuenta Stripe de
+  // pruebas DEL COMERCIO). Se lee al ARRANCAR (registro de conectores): un
+  // cambio en Render necesita Manual Deploy.
+  stripe: () => on('FEATURE_STRIPE'),
 };

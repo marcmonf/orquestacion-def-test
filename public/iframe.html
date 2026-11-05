@@ -131,6 +131,17 @@
       display: block;
     }
 
+    /* Proveedor 'stripe_elements': el campo de tarjeta es un iFrame de Stripe */
+    #stripe-card-element {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      min-height: 44px;
+      background: #fff;
+    }
+    #stripe-card-element.error { border-color: #e53e3e; }
+
     .pci-badge {
       display: flex;
       align-items: center;
@@ -301,6 +312,19 @@
       </label>
     </div>
 
+    <!-- Proveedor 'stripe_elements': campo alojado de Stripe (Stripe.js) -->
+    <div id="stripe-form" style="display:none">
+      <div class="form-group">
+        <label for="stripe-card-holder">Titular</label>
+        <input type="text" id="stripe-card-holder" placeholder="Nombre en la tarjeta" autocomplete="cc-name">
+      </div>
+      <div class="form-group">
+        <label>Tarjeta</label>
+        <div id="stripe-card-element"></div>
+        <div class="pci-badge">Campo seguro de Stripe · PCI DSS</div>
+      </div>
+    </div>
+
     <button class="submit-btn" id="pay-btn" disabled>Cargando...</button>
 
     <div id="status-msg" class="status-message"></div>
@@ -317,7 +341,8 @@
     // pantalla de selección; y delega los campos en el PROVEEDOR DE CAMPOS del
     // PSP al que se enrutó el pago (módulo /checkout/providers/<id>.js, ruta
     // ABSOLUTA: este iFrame se sirve en /:merchantId/iframe sin barra final).
-    // Hoy el único proveedor es 'paylands_proxyfields' (ProxyFields de Paylands).
+    // Proveedores: 'paylands_proxyfields' (ProxyFields de Paylands) y
+    // 'stripe_elements' (Stripe Elements, FEATURE_STRIPE).
     // ═══════════════════════════════════════════════════════════════════════
     const RUNTIME = window.__MONETISER_RUNTIME__ || {};
     const amount     = RUNTIME.amount     || '';
@@ -363,13 +388,21 @@
     // Con un solo método (hoy: tarjeta) no se enseña nada: el checkout es el de
     // siempre. Con varios, botones; el elegido muestra su bloque de campos.
     let activeMethod = METHODS[0];
+    // Bloque de campos de tarjeta del proveedor (formId de su módulo). Con
+    // Paylands es 'proxy-pci-form', como siempre.
+    const CARD_FORMS = ['proxy-pci-form', 'stripe-form'];
+    let cardFormId = 'proxy-pci-form';
+    if (FIELDS_PROVIDER !== 'paylands_proxyfields') document.getElementById('proxy-pci-form').style.display = 'none';
     const selector = document.getElementById('method-selector');
     function selectMethod(m) {
       activeMethod = m;
       selector.querySelectorAll('button').forEach((b) => {
         b.setAttribute('aria-pressed', b.dataset.method === m ? 'true' : 'false');
       });
-      document.getElementById('proxy-pci-form').style.display = m === 'card' ? 'block' : 'none';
+      CARD_FORMS.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (m === 'card' && id === cardFormId) ? 'block' : 'none';
+      });
       statusMsg.className = 'status-message';
     }
     if (METHODS.length > 1) {
@@ -415,6 +448,7 @@
         showStatus('error', 'Método de pago no disponible. Recarga la página.');
         return;
       }
+      if (provider.formId && CARD_FORMS.includes(provider.formId)) cardFormId = provider.formId;
       selectMethod(activeMethod);
       provider.mount(core);
     }

@@ -341,6 +341,46 @@ En el servidor de producción solo cobran claves **`ms_live_…`** con la API v1
 de pruebas (`ms_test_…` y las `ms_…` antiguas) y la API antigua (`/{merchantId}/payments/…`)
 no cobran allí (`no_connector_available`). Así un pago de pruebas nunca toca dinero real.
 
+## Novedades de noviembre 2026 (v2.16.0)
+
+Nada cambia en tu integración: misma sesión, mismo `monetiser.js`, mismo webhook.
+
+### Segundo adquirente: Stripe (en pruebas)
+
+Monetiser puede enrutar un pago a **Stripe** (con la cuenta Stripe de tu comercio) además
+de Paylands, según las reglas de routing (p. ej. por divisa y `country`). Si un pago va a
+Stripe, el checkout enseña el campo de tarjeta de Stripe en lugar del de Paylands; la
+tarjeta sigue sin pasar nunca por tu servidor ni por el nuestro. Lo que cambia para ti:
+
+- el webhook `payment.updated` puede traer `"connectorUsed": "stripe"`;
+- capturar, devolver y anular funcionan igual. Con Stripe hay **una sola captura** por
+  pago: tras una captura parcial, el resto de la autorización se libera.
+
+Hoy Stripe está **apagado** salvo que Monetiser lo active para tu comercio.
+
+### Tarjetas de prueba
+
+| Adquirente | Tarjeta | Resultado |
+|---|---|---|
+| Paylands (sandbox) | la de "Probar en sandbox" de esta guía | autorizado tras el 3DS de pruebas |
+| Stripe (modo pruebas) | `4242 4242 4242 4242` | autorizado |
+| Stripe (modo pruebas) | `4000 0025 0000 3155` | pide 3DS; al completarlo, autorizado |
+
+Con Stripe: cualquier fecha futura y cualquier CVC de 3 cifras. Son las tarjetas que
+publica el ejemplo oficial de Stripe; la lista completa (incluida una de rechazo) está en
+su página de tarjetas de prueba.
+
+### Insights de orquestación
+
+En el portal, pestaña **Orquestación**: tasa de aprobación, motivos de rechazo
+normalizados, tasa de 3DS, coste real por transacción y por qué se enrutó cada pago,
+por adquirente. API: `GET /portal/insights?days=30`.
+
+### Documentación y tienda de demostración
+
+`/developers` reúne esta guía y los ejemplos de cada endpoint (curl, Node, PHP).
+`/demo` es una tienda inventada que cobra con Monetiser en el entorno de pruebas.
+
 ## Resumen de lo que NO hay que hacer
 
 - Poner el secreto `ms_...` en el navegador o en una app.

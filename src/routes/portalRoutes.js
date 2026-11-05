@@ -289,6 +289,21 @@ router.patch('/users/:userId', requirePortalRole('merchant_admin'), async (req, 
 // por req.portalUser.merchantId; una transacción de otro merchant → 404.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// GET /portal/insights?days=30 — insights de orquestación del PROPIO merchant
+// (5 nov 2026, F2). Solo lectura; el merchant SIEMPRE es el de la sesión.
+router.get('/insights', async (req, res) => {
+  // Un usuario limitado a un nodo de la jerarquía no ve los datos de todo el
+  // comercio (conservador: los insights son de comercio entero).
+  if (req.portalUser.hierarchyNodeId) return res.status(403).json({ success: false, error: 'insufficient_permissions', message: 'Insights solo para usuarios de todo el comercio.' });
+  try {
+    const insights = await require('../services/insightsService').compute({ merchantId: req.portalUser.merchantId, days: req.query.days });
+    return res.json({ success: true, insights });
+  } catch (err) {
+    console.error('❌ [portal/insights]', err && err.message);
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
 // GET /portal/transactions — listado paginado del PROPIO merchant
 router.get('/transactions', async (req, res) => {
   try {
@@ -565,10 +580,14 @@ router.get('/reports/channels', cardPresentGate, async (req, res) => {
   const from = day(req.query.from, new Date(to.getTime() - 30 * 86400000));
   const toEnd = new Date(to.getTime() + (typeof req.query.to === 'string' ? 86400000 : 0));
   try {
-    const q = { merchantId: req.portalUser.merchantId, createdAt: { $gte: from, $lt: toEnd } };
+    // Revisión de consultas (5 nov 2026, F3): el filtro de estado va EN la
+    // consulta (índice { merchantId, status, createdAt }) y solo se traen los 4
+    // campos que se usan. Antes se traían hasta 50.000 documentos completos y se
+    // filtraba el estado en memoria.
+    const q = { merchantId: req.portalUser.merchantId, status: { $in: OK_STATUSES }, createdAt: { $gte: from, $lt: toEnd } };
     // Un usuario limitado a una tienda solo ve esa tienda.
     if (req.portalUser.hierarchyNodeId) q.hierarchyNodeId = req.portalUser.hierarchyNodeId;
-    const rows = await Transaction.find(q).limit(50000).lean();
+    const rows = await Transaction.find(q).select({ status: 1, channel: 1, hierarchyNodeId: 1, amount: 1, _id: 0 }).limit(50000).lean();
     const byChannel = {}; const byStore = {};
     let count = 0; let amount = 0;
     for (const t of rows) {

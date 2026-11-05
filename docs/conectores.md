@@ -97,7 +97,7 @@ escribe credenciales en logs.
 
 | Operación | Entrada | Debe devolver |
 |---|---|---|
-| `createPayment` | `{ paymentId, merchantId, amount, currency, method, sourceToken }` | `{ status, processorReference, action?, error? }` con `status` ∈ `requires_action` · `authorized` · `captured` · `pending` · `declined` · `error`. `requires_action` lleva `action: { type:'redirect', url }` (3DS). |
+| `createPayment` | `{ paymentId, merchantId, amount, currency, method, sourceToken }` | `{ status, processorReference, action?, error? }` con `status` ∈ `requires_action` · `authorized` · `captured` · `pending` · `declined` · `error`. `requires_action` lleva `action: { type:'redirect', url }` (3DS por redirección, Paylands) o `action: { type:'client_confirm', clientSecret }` (la librería del PSP confirma en el navegador, Stripe.js). |
 | `capture` | `{ processorReference, amount? }` | `{ success, status?, capturedTotal?, error? }` |
 | `cancel` | `{ processorReference }` | `{ success, status?, error? }` |
 | `refund` | `{ processorReference, amount? }` | `{ success, status?, refundedTotal?, error? }` |
@@ -149,8 +149,11 @@ El checkout (`/:merchantId/iframe`) pinta los campos del proveedor que declara
 1. Añade un módulo de navegador en `public/checkout/providers/<id>.js` que
    registre `window.MonetiserCheckoutProviders['<id>'] = { mount(ctx), submit() }`
    (ver `public/checkout/providers/paylands_proxyfields.js`).
-2. Añade sus dominios a la CSP del iFrame (`src/routes/iframe.js`,
-   `CHECKOUT_PROVIDERS`).
+2. Declara el proveedor (script, dominios de la CSP del iFrame y datos de
+   arranque) en `src/utils/checkoutProviders.js` (`PROVIDERS`) y añade su id a
+   `CHECKOUT_FIELDS_PROVIDERS` de `src/services/routingService.js`. Si sus campos
+   van en un bloque propio de `public/iframe.html`, el módulo lo declara con
+   `formId` (Paylands: `proxy-pci-form`; Stripe: `stripe-form`).
 3. Un endpoint de cobro propio que reciba **el token, nunca la tarjeta** (como
    `src/routes/proxyPciRoutes.js` para Paylands) y llame a
    `getProvider('<id>').createPayment(...)`.
@@ -158,20 +161,36 @@ El checkout (`/:merchantId/iframe`) pinta los campos del proveedor que declara
 Mientras no exista ese módulo, el routing **no** enruta checkouts a ese conector
 (no tiene `fieldsProvider` disponible) y sigue usando Paylands.
 
+**Ejemplo completo: Stripe (5 nov 2026).** `src/connectors/stripe/` (conector),
+`public/checkout/providers/stripe_elements.js` (Stripe Elements),
+`src/routes/stripeCheckoutRoutes.js` (`/session` crea el PaymentIntent sin
+tarjeta; `/complete` CONSULTA Stripe, nunca se fía del navegador),
+`src/routes/stripeWebhook.js` (webhook por merchant) y
+`src/services/acquirerUpdateService.js` (misma máquina de estados y mismo
+webhook saliente que Paylands, reutilizable por el siguiente PSP). Tests:
+`tests/contract/stripe.contract.test.js` con el SDK oficial y la red simulada
+(`tests/helpers/fakeStripe.js`).
+
 ### 7. Webhook entrante
 
 Monta `POST /webhooks/<psp>` igual que `/webhooks/paynopain`
 (`src/routes/webhooks.js`): verifica la firma ANTES de usar el body, montado
 antes de los sanitizadores globales, máquina de estados
 (`ACQUIRER_TRANSITIONS`) para que un aviso tardío no haga retroceder un pago, y
-evento saliente solo si el estado cambió.
+evento saliente solo si el estado cambió. Lo más sencillo: verificar la firma
+con `verifyWebhook`/`parseWebhook` del conector y pasar el resultado a
+`acquirerUpdateService.applyUpdate(...)` (como `src/routes/stripeWebhook.js`). Si
+la firma va sobre el cuerpo crudo, monta la ruta con `express.raw` ANTES de
+`express.json` en `index.js`.
 
 ### 8. Cuenta del merchant
 
 Desde `/admin` → Merchants → Adquirentes (o
 `PUT /backoffice/merchants/:merchantId/connector-accounts/:connector`) se
 guardan las credenciales del merchant para ese PSP, cifradas. Nunca se
-devuelven en claro: la API enseña solo `••••` + últimos 4.
+devuelven en claro: la API enseña solo `••••` + últimos 4. Validaciones propias de las
+claves (prefijos, modo): `extensions.validateCredentials(values, mode)` del
+conector (devuelve un texto de error o `null`).
 
 ### 9. Documentar
 

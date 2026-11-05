@@ -112,6 +112,10 @@ async function saveCredentials({ merchantId, acquirerCode, mode, credentials, ac
       'Credenciales por merchant: pendiente de verificar con el PSP. No se guarda nada.', 409);
   }
   const clean = validateCredentials(provider, credentials);
+  // Validación propia del conector (p. ej. prefijos de las claves de Stripe).
+  const extra = provider.extensions && typeof provider.extensions.validateCredentials === 'function'
+    ? provider.extensions.validateCredentials(clean, mode) : null;
+  if (extra) throw fail('validation_error', extra);
   let enc;
   try { enc = encryptSecret(JSON.stringify(clean)); } catch (err) {
     throw fail(err.code || 'encryption_not_configured', 'Cifrado de credenciales no configurado (CREDENTIALS_ENCRYPTION_KEY).', 503);

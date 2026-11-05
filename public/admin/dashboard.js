@@ -900,6 +900,7 @@
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="contract">Tarifa</button>'+
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="keys">API Keys</button>'+
           '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="whsecret">Secreto webhook</button>'+
+          '<button class="btn-sm" data-id="'+esc(m.merchantId)+'" data-action="psp">Adquirentes</button>'+
         '</td></tr>';
     }).join('');
 
@@ -912,6 +913,7 @@
         if(action==='contract') openContractModal(id);
         if(action==='keys') openApiKeysModal(id);
         if(action==='whsecret') rotateWebhookSecret(id);
+        if(action==='psp') openPspModal(id);
       });
     });
   }
@@ -925,6 +927,117 @@
         window.prompt('Secreto de firma de webhooks de ' + mid + ' (cópialo ahora, no se vuelve a mostrar):', r.webhookSigningSecret || '');
       })
       .catch(function (e) { alert('Error: ' + e.message); });
+  }
+
+  // ── Adquirentes del merchant (sesión 5 nov 2026, F1 Stripe) ───────────────
+  // Credenciales por merchant y modo (solo pruebas en esta fase). Se guardan
+  // cifradas y NUNCA vuelven en claro: la pantalla solo enseña los 4 últimos.
+  var currentPspMerchant = null;
+  function openPspModal(mid) {
+    currentPspMerchant = mid;
+    document.getElementById('pspMerchantId').textContent = mid;
+    document.getElementById('pspDemoPresetMsg').textContent = '';
+    document.getElementById('pspSimOut').textContent = '';
+    document.getElementById('pspModal').classList.add('open');
+    loadPsp(mid);
+  }
+  function loadPsp(mid) {
+    var box = document.getElementById('pspList');
+    box.textContent = 'Cargando…';
+    Promise.all([api('/backoffice/connectors'), api('/backoffice/merchants/' + encodeURIComponent(mid) + '/connector-accounts')])
+      .then(function (rs) { renderPsp(mid, rs[0].connectors || [], rs[1].accounts || []); })
+      .catch(function (e) { box.textContent = 'Error: ' + e.message; });
+  }
+  function renderPsp(mid, connectors, accounts) {
+    var box = document.getElementById('pspList');
+    box.innerHTML = '';
+    connectors.filter(function (c) { return !c.capabilities.simulated && !c.capabilities.testOnly; }).forEach(function (c) {
+      var card = document.createElement('div');
+      card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px';
+      var h = document.createElement('div');
+      h.style.cssText = 'font-weight:600;margin-bottom:6px';
+      h.textContent = c.displayName + ' (' + c.id + ') · circuito ' + ((c.health && c.health.status) || '–') + ' · divisas ' + (c.capabilities.currencies || []).join(', ');
+      card.appendChild(h);
+      if (!c.capabilities.perAccountCredentials) {
+        var p = document.createElement('div');
+        p.style.cssText = 'font-size:12px;color:var(--text3)';
+        p.textContent = 'Cuenta de plataforma (variables de entorno en Render). No se configura por merchant.';
+        card.appendChild(p);
+        box.appendChild(card);
+        return;
+      }
+      var acc = accounts.filter(function (a) { return a.connector === c.id; })[0];
+      var test = acc && acc.credentials && acc.credentials.test;
+      var st = document.createElement('div');
+      st.style.cssText = 'font-size:12px;margin-bottom:6px';
+      st.textContent = test && test.configured
+        ? 'Modo pruebas: CONFIGURADO (' + Object.keys(test.fields || {}).map(function (k) { return k + ' ' + test.fields[k]; }).join(' · ') + ')'
+        : 'Modo pruebas: sin configurar';
+      card.appendChild(st);
+      if (c.id === 'stripe') {
+        var wh = document.createElement('div');
+        wh.style.cssText = 'font-size:12px;margin-bottom:6px';
+        wh.textContent = 'URL del webhook (pégala en Stripe → Webhooks): ' + location.origin + '/webhooks/stripe/' + mid;
+        card.appendChild(wh);
+      }
+      var inputs = {};
+      (c.capabilities.credentialFields || []).forEach(function (f) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
+        var l = document.createElement('label');
+        l.style.cssText = 'width:130px;font-size:12px';
+        l.textContent = f.name + (f.required ? ' *' : '');
+        var i = document.createElement('input');
+        i.type = f.secret ? 'password' : 'text';
+        i.autocomplete = 'off';
+        i.style.cssText = 'flex:1;font-family:monospace;font-size:12px';
+        i.dataset.field = f.name;
+        inputs[f.name] = i;
+        row.appendChild(l); row.appendChild(i);
+        card.appendChild(row);
+      });
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.textContent = 'Guardar credenciales de pruebas';
+      var msg = document.createElement('span');
+      msg.style.cssText = 'margin-left:8px;font-size:12px';
+      btn.addEventListener('click', function () {
+        var creds = {};
+        Object.keys(inputs).forEach(function (k) { var v = inputs[k].value.trim(); if (v) creds[k] = v; });
+        btn.disabled = true; msg.textContent = 'Guardando…';
+        api('/backoffice/merchants/' + encodeURIComponent(mid) + '/connector-accounts/' + encodeURIComponent(c.id) + '/credentials',
+          { method: 'PUT', body: JSON.stringify({ mode: 'test', credentials: creds }) })
+          .then(function () { btn.disabled = false; msg.textContent = 'Guardado ✓'; loadPsp(mid); })
+          .catch(function (e) { btn.disabled = false; msg.textContent = 'Error: ' + ((e.details && e.details.message) || e.message); });
+      });
+      card.appendChild(btn); card.appendChild(msg);
+      box.appendChild(card);
+    });
+  }
+  function applyDemoPreset() {
+    var mid = currentPspMerchant; if (!mid) return;
+    var msg = document.getElementById('pspDemoPresetMsg');
+    msg.textContent = 'Aplicando…';
+    api('/backoffice/routing/' + encodeURIComponent(mid) + '/demo-preset', { method: 'POST', body: JSON.stringify({}) })
+      .then(function () { msg.textContent = 'Aplicado ✓ (ver pestaña Reglas)'; })
+      .catch(function (e) { msg.textContent = 'Error: ' + ((e.details && e.details.message) || e.message); });
+  }
+  function simulatePsp() {
+    var mid = currentPspMerchant; if (!mid) return;
+    var out = document.getElementById('pspSimOut');
+    var body = {
+      amount: parseInt(document.getElementById('pspSimAmount').value, 10),
+      currency: document.getElementById('pspSimCurrency').value.trim().toUpperCase(),
+      country: document.getElementById('pspSimCountry').value.trim().toUpperCase() || undefined,
+    };
+    out.textContent = 'Simulando…';
+    api('/backoffice/routing/' + encodeURIComponent(mid) + '/simulate', { method: 'POST', body: JSON.stringify(body) })
+      .then(function (r) {
+        var d = r.decision || {};
+        out.textContent = 'Conector: ' + (d.connector || 'NINGUNO') + '  ·  motivo: ' + d.reason + '\n' +
+          (d.candidates || []).map(function (c) { return '- ' + c.connector + ': ' + (c.capable ? (c.healthy ? 'capaz y sano' : 'capaz, circuito abierto') : 'descartado') + (c.reasons && c.reasons.length ? ' (' + c.reasons.join('; ') + ')' : ''); }).join('\n');
+      })
+      .catch(function (e) { out.textContent = 'Error: ' + e.message; });
   }
 
   function openCreateMerchant() {
@@ -1430,16 +1543,51 @@
     document.getElementById('tabRules').style.display      = tab==='rules'?'block':'none';
     document.getElementById('tabBilling').style.display    = tab==='billing'?'block':'none';
     document.getElementById('tabLinks').style.display      = tab==='links'?'block':'none';
-    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling', links:'tabBtnLinks' };
+    document.getElementById('tabInsights').style.display   = tab==='insights'?'block':'none';
+    var map = { dashboard:'tabBtnDashboard', users:'tabBtnUsers', merchants:'tabBtnMerchants', rules:'tabBtnRules', billing:'tabBtnBilling', links:'tabBtnLinks', insights:'tabBtnInsights' };
     Object.keys(map).forEach(function(k){ var b = document.getElementById(map[k]); if (b) b.classList.toggle('active', k === tab); });
     if(tab==='users') loadUsers();
     if(tab==='merchants') loadMerchants();
     if(tab==='links') loadLinks();
+    if(tab==='insights') loadInsights();
     if(tab==='billing') {
       loadCompany();
       var bp = document.getElementById('billPeriod');
       if (bp && !bp.value) bp.value = lastClosedPeriod();
     }
+  }
+
+  /* ── ORQUESTACIÓN: insights (5 nov 2026) ── */
+  var ROUTING_REASON_LABEL = { rule: 'Regla del comercio', 'default': 'Conector por defecto', failover_pre_card: 'Failover antes de pedir la tarjeta', all_unhealthy_using_first_capable: 'Todos con incidencias: primero capaz', routing_error_platform_default: 'Routing no disponible: por defecto', sin_routing: 'Pago anterior al routing' };
+  function loadInsights() {
+    var out = document.getElementById('insOut');
+    var mid = document.getElementById('insMerchant').value.trim();
+    var days = document.getElementById('insDays').value;
+    out.textContent = 'Calculando…';
+    api('/backoffice/insights?days=' + encodeURIComponent(days) + (mid ? '&merchantId=' + encodeURIComponent(mid) : ''))
+      .then(function (r) { renderInsights(r.insights); })
+      .catch(function (e) { out.textContent = 'Error: ' + e.message; });
+  }
+  function renderInsights(ins) {
+    var out = document.getElementById('insOut');
+    var pct = function (v) { return v === null || v === undefined ? '—' : v + '%'; };
+    var eur = function (c) { return ((Number(c) || 0) / 100).toFixed(2) + ' €'; };
+    var t = ins.totals;
+    var costOf = function (psp) { return (ins.costs.byPsp || []).filter(function (c) { return c.psp === psp; })[0]; };
+    var kpi = function (n, l) { return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:150px"><div style="font-size:22px;font-weight:600">' + esc(n) + '</div><div style="color:var(--text3)">' + esc(l) + '</div></div>'; };
+    var table = function (head, rows, empty) {
+      return '<table class="users-table" style="margin:8px 0 18px"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td colspan="' + head.length + '" style="color:var(--text3)">' + esc(empty) + '</td></tr>') + '</tbody></table>';
+    };
+    out.innerHTML =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">' + kpi(pct(t.approvalRatePct), 'Tasa de aprobación') + kpi(String(t.payments), 'Pagos') + kpi(pct(t.threeDSRatePct), 'Con 3DS') + kpi(eur(t.approvedVolume), 'Volumen aprobado') + '</div>' +
+      '<h3 style="font-size:14px">Comparativa por PSP</h3>' +
+      table(['PSP', 'Pagos', 'Aprobación', 'Rechazos', 'Errores', '3DS', 'Coste real medio', 'Tasa efectiva'], ins.byPsp.map(function (p) { var c = costOf(p.psp); return [p.psp, p.payments, pct(p.approvalRatePct), p.declined, p.errors, pct(p.threeDSRatePct), c ? eur(c.avgCostPerTx) : '—', c ? c.effectiveRatePct + '%' : '—']; }), 'Sin pagos en el período.') +
+      '<h3 style="font-size:14px">Motivos de rechazo (normalizados)</h3>' +
+      table(['Código', 'Qué significa', 'Pagos', '%'], ins.declineReasons.map(function (d) { return [d.code, d.description, d.count, pct(d.sharePct)]; }), 'Sin rechazos.') +
+      '<h3 style="font-size:14px">Por qué se enrutó cada pago</h3>' +
+      table(['Motivo', 'Pagos'], ins.routingReasons.map(function (x) { return [ROUTING_REASON_LABEL[x.reason] || x.reason, x.count]; }), '—') +
+      '<div style="color:var(--amber);font-size:12px">Coste real: muestra de ' + (ins.costs.sampled || 0) + ' pagos aprobados (Interchange++ sin la fee de Monetiser). ' + esc(ins.costs.disclaimer || '') + '</div>';
   }
 
   /* ── ENLACES DE PAGO (nov 2026) ── */
@@ -1604,6 +1752,9 @@
     document.getElementById('saveMerchantBtn').addEventListener('click', saveMerchant);
     document.getElementById('createMerchantBtn').addEventListener('click', openCreateMerchant);
     document.getElementById('apiKeysModalClose').addEventListener('click',function(){document.getElementById('apiKeysModal').classList.remove('open');});
+    document.getElementById('pspModalClose').addEventListener('click',function(){document.getElementById('pspModal').classList.remove('open');});
+    document.getElementById('pspDemoPresetBtn').addEventListener('click', applyDemoPreset);
+    document.getElementById('pspSimBtn').addEventListener('click', simulatePsp);
     document.getElementById('createKeyBtn').addEventListener('click', createApiKeyForCurrentMerchant);
     document.getElementById('rulesLoadBtn').addEventListener('click', rulesLoadPolicy);
     document.getElementById('rulesSaveBtn').addEventListener('click', rulesSavePolicy);
@@ -1623,6 +1774,8 @@
     var tabBil = document.getElementById('tabBtnBilling');
     if(tabBil)  tabBil.addEventListener('click',function(){showTab('billing');});
     document.getElementById('tabBtnLinks').addEventListener('click',function(){showTab('links');});
+    document.getElementById('tabBtnInsights').addEventListener('click',function(){showTab('insights');});
+    document.getElementById('insLoadBtn').addEventListener('click', loadInsights);
     document.getElementById('linksReloadBtn').addEventListener('click', loadLinks);
     document.getElementById('saveCompanyBtn').addEventListener('click', saveCompany);
     document.getElementById('finalizeInvoiceBtn').addEventListener('click', finalizeInvoice);

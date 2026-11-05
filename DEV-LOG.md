@@ -7,7 +7,7 @@
 > Marcos lanza cada despliegue a mano desde el panel. **Un commit en `main` NO está
 > en producción.** Si algo "no funciona" en el servidor, lo primero a descartar es
 > que nadie haya desplegado todavía.
-> Última actualización: 5 noviembre 2026 (sesión del 5 nov en rama, sin fusionar: revisión, operación, enlaces de pago, POS Android, plugins, card present)
+> Última actualización: 5 noviembre 2026, bloque 2 (en rama, sin fusionar: Stripe como segundo PSP, /demo, /developers, insights, carga y caos)
 
 ---
 
@@ -2014,6 +2014,211 @@ pago en sandbox, D app en los PAX por USB, E plugins) + `docs/entornos.md` +
 
 ---
 
+### Sesión 5 nov 2026 (bloque 2) — Stripe como segundo PSP, escaparate y robustez
+
+Rama `claude/monetiser-multi-psp-framework-3dlfch` sobre main `62b0d5e`. Línea base al
+empezar: **582/582** tests + 31/31 de plugins. Marcos no estaba disponible: lo dudoso se
+hizo de la forma más conservadora y está en "DECISIONES PENDIENTES DE MARCOS" al final.
+
+**Red bloqueada desde el contenedor:** `docs.stripe.com`, `api.stripe.com`,
+`js.stripe.com` (además de las de sesiones anteriores). Fuentes usadas para Stripe: el SDK
+oficial `stripe-node` 23.0.1 de npm (tipos `.d.ts` y código), `@stripe/stripe-js` 10.1.0 de
+npm (tipos y cargador) y el ejemplo oficial `stripe-samples/accept-a-payment`
+(raw.githubusercontent.com). **Nada de Stripe se ha probado contra Stripe real.**
+
+**Resumen y SHAs** (rama `claude/monetiser-multi-psp-framework-3dlfch`):
+
+| Fase | Commit | Tests |
+|---|---|---|
+| F1 Stripe como segundo PSP | `c7c949c` | 632 |
+| F2 Escaparate (/demo, /developers, insights) | `eb1743a` | 650 |
+| F3 Robustez (carga, caos, consultas) | `a17b655` | 664 |
+| Cierre (openapi 2.16.0, docs, Postman, runbook) | ver PR | 664 |
+
+Línea base 582 → **664/664** (+82) y 31/31 de plugins. `tests/golden/paylandsWire.test.js`
+(peticiones a Paylands y al Proxy PCI) **idéntico y verde**. Arranque real con el comando de
+CLAUDE.md sin `no montado`, con y sin `FEATURE_STRIPE`. Chromium: checkout Stripe y Paylands,
+/admin (Adquirentes y Orquestación), portal (Orquestación), /demo (móvil y escritorio) y
+/developers.
+
+**Qué queda APAGADO y por qué:**
+- `FEATURE_STRIPE` (apagado): nada de Stripe se ha probado contra Stripe real (docs, API y
+  Stripe.js bloqueados desde el contenedor). Se enciende para la prueba del runbook.
+- Stripe en **modo live**: rechazado en código (claves `sk_live_`/`pk_live_` y modo live).
+- `/demo`: solo con `MONETISER_ENV=sandbox` explícito y `DEMO_STORE_SECRET` puesto.
+
+**DECISIONES PENDIENTES DE MARCOS** (lo dudoso se hizo de la forma más conservadora):
+1. **Stripe live**: cuándo y con qué cuenta (hoy prohibido en código).
+2. **Divisas de Stripe**: declaradas EUR, USD y GBP (2 decimales). Para cobrar USD/GBP hay que
+   añadirlas a `SUPPORTED_CURRENCIES` en Render. ¿Más divisas?
+3. **Comisión de Monetiser en el coste real de los insights**: no se incluye (solo
+   interchange + scheme fees + margen del adquirente). ¿Incluirla?
+4. **Scheme fees de Stripe**: no hay ficha de Stripe en el catálogo de adquirentes
+   (`acquirerDefaults.js`), así que su coste real sale solo con interchange. ¿Qué tarifas pactar/poner?
+5. **Orden "rechazado → autorizado"** de webhooks desordenados (regla existente de
+   `ACQUIRER_TRANSITIONS`): el comercio puede recibir `declined` y luego `authorized`. ¿Se
+   mantiene (el banco autorizó) o se congela el primer resultado?
+6. **Insights en el portal para usuarios limitados a una tienda**: hoy 403 (ven datos del
+   comercio entero). ¿Filtrar por su tienda?
+7. **Prueba de carga contra Render + Atlas reales**: cuándo y con qué plan (aquí sin Mongo).
+8. **Refund tras un timeout**: si Stripe no responde a una devolución, Monetiser la da por
+   fallida; antes de repetirla hay que mirar el panel de Stripe (igual que con Paylands).
+
+**Dominios bloqueados por la red en esta sesión:** `docs.stripe.com`, `api.stripe.com`,
+`js.stripe.com`, `fastdl.mongodb.org` (binarios de MongoDB). Accesibles y usados:
+`registry.npmjs.org` (stripe 23.0.1, @stripe/stripe-js 10.1.0) y
+`raw.githubusercontent.com` (stripe-samples/accept-a-payment). Los de sesiones anteriores
+siguen igual (docs.paylands.com, shopify.dev, …).
+
+Runbooks: `docs/stripe.md` (Stripe paso a paso) y `docs/runbook-sesion-5nov-b2.md` (todo lo
+de esta sesión, solo Postman web y navegador). openapi **2.16.0**, `docs/integracion.md`
+(v2.16.0), `/developers` regenerado, Postman carpeta 14.
+
+#### F1 — Stripe como segundo PSP real (`FEATURE_STRIPE`, apagado por defecto)
+
+Qué hay (todo detrás de `FEATURE_STRIPE=true`; con el flag apagado ni se registra):
+
+- `src/connectors/stripe/index.js`: conector sobre el contrato y con el SDK oficial. Cuenta
+  Stripe **del comercio** (`perAccountCredentials`), credenciales `secretKey`,
+  `publishableKey`, `webhookSecret` cifradas con el llavero existente
+  (`connectorAccountService`). **Solo modo pruebas**: rechaza claves `sk_live_`/`pk_live_`
+  y el modo live (validación propia `extensions.validateCredentials`). PaymentIntent con
+  `capture_method: 'manual'` (equivalente a DEFERRED), `allowed_payment_method_types:
+  ['card']`, metadata con nuestro `paymentId`, claves de idempotencia por operación,
+  `maxNetworkRetries: 0` (un fallo de red = resultado desconocido; el SDK aún reintenta UNA
+  vez una conexión cerrada antes de enviar, ver su código). capture total/parcial
+  (`amount_to_capture`), cancel, refund total/parcial (exige captura previa: si no, `conflict`
+  sin llamar a Stripe), retrieve, webhooks, errores del SDK → taxonomía propia. Divisas
+  declaradas: EUR, USD, GBP (conservador; ver decisiones).
+- Contrato (aditivo): `requires_action` admite `action: { type:'client_confirm',
+  clientSecret }` además de la redirección. `/v1/payments` responde `nextAction:
+  { type:'client_confirm' }` en ese caso (antes habría salido `url: undefined`).
+- Checkout: proveedor de campos `stripe_elements` (`public/checkout/providers/
+  stripe_elements.js`, ruta absoluta) siguiendo el ejemplo oficial: `Stripe(pk)` →
+  `elements().create('card')` → `confirmCardPayment(clientSecret, {payment_method:{card,
+  billing_details}})`. URL de Stripe.js `https://js.stripe.com/endive/stripe.js` (la del
+  cargador oficial 10.1.0). Bloque `#stripe-form` en `public/iframe.html`; el núcleo elige
+  el bloque por `formId` del proveedor (con Paylands es el de siempre).
+- Backend del proveedor (`src/routes/stripeCheckoutRoutes.js`, `/:merchantId/stripe`):
+  `/session` crea/recupera el PaymentIntent sin tarjeta; `/complete` **consulta Stripe** (no
+  se fía del navegador) y aplica el estado. Un PaymentIntent por pago (idempotencia): no
+  puede haber dos cobros de un mismo `paymentId`.
+- Webhook entrante por merchant `POST /webhooks/stripe/:merchantId` (`express.raw` antes de
+  `express.json`), firma con `stripe.webhooks.constructEvent` y el `whsec_` del comercio →
+  `src/services/acquirerUpdateService.js`: **misma** máquina de estados
+  (`ACQUIRER_TRANSITIONS`) y **mismo** webhook saliente `payment.updated` que Paylands
+  (`connectorUsed: 'stripe'`). El webhook de Paylands NO se ha tocado.
+- Routing: `stripe_elements` en `CHECKOUT_FIELDS_PROVIDERS`. Preset de demostración
+  `POST /backoffice/routing/:merchantId/demo-preset` (EUR + ES → Paylands; resto → Stripe;
+  fallback pre-captura al otro) que escribe la política del merchant por el mismo camino que
+  /admin → Reglas. Con el circuito de Paylands abierto, un pago EUR+ES va a Stripe ANTES de
+  pedir la tarjeta (`reason: failover_pre_card`). Sin cuenta Stripe del comercio, todo sigue
+  yendo a Paylands.
+- /admin → Merchants → **Adquirentes**: credenciales por PSP (enmascaradas), URL del webhook
+  de Stripe del comercio, botón del preset y simulador de routing.
+- Runbook: `docs/stripe.md` (cuenta de pruebas, dónde copiar cada clave y el `whsec_`, dónde
+  pegarlos, tarjetas de prueba del ejemplo oficial, capture/cancel/refund con Postman).
+
+Pruebas: `tests/contract/stripe.contract.test.js` (la MISMA suite de contrato que Paylands +
+detalles) con el SDK real y Stripe simulado (`tests/helpers/fakeStripe.js`: cliente HTTP del
+SDK, así se prueba la petición que el SDK construiría de verdad);
+`tests/integration/stripeCheckout.test.js` (admin → preset → routing → session → confirm →
+complete → webhook saliente; webhook firmado/manipulado/duplicado/desordenado/otro merchant);
+`tests/integration/stripeLifecycle.test.js` (capture/cancel/refund con el ciclo de vida
+REAL). `tests/golden/paylandsWire.test.js` idéntico y verde. Chromium (arnés con Stripe.js
+falso servido desde `js.stripe.com` interceptado): CSP real permite script/iframe/fetch de
+los dominios declarados; aprobado → "Pago completado"; rechazo → "Pago no completado";
+checkout de Paylands sin cambios (su bloque visible, el de Stripe oculto). /admin abierto en
+Chromium: guardar clave mala (400 con el motivo), guardar buena, preset y simulación OK.
+
+Pendiente de verificar contra Stripe real (runbook `docs/stripe.md`): todo el flujo; en
+particular los **dominios de la CSP** (`js.stripe.com`, `api.stripe.com`,
+`hooks.stripe.com`), el 3DS dentro del iFrame del checkout y los códigos de error reales.
+
+#### F2 — Escaparate: /demo, /developers e insights de orquestación
+
+- **`/demo`** (`src/routes/demoStore.js`, `public/demo/`): tienda **inventada** "Alfar Brisa"
+  (cerámica; nombre, logo SVG y productos ficticios). Catálogo de 4 piezas, carrito, país de
+  envío (decide el routing), pago con `monetiser.js` (checkout embebido) y enlace de pago con
+  QR. Su backend vive en el servidor y usa `DEMO_STORE_SECRET` (clave `ms_test_` de un
+  comercio; la pone Marcos en Render): el navegador solo manda SKUs y cantidades, el importe
+  lo calcula el servidor, el secreto no sale nunca. Solo con `MONETISER_ENV=sandbox`
+  **explícito** (sin la variable o en producción → 404). Clave live → 503. Límite 20
+  peticiones/min por IP en `/demo/api` (`DEMO_RATE_LIMIT_PER_MIN`). CSP propia con
+  `frame-src 'self' https:` (el 3DS navega dentro del checkout embebido).
+- **`/developers`**: HTML estático GENERADO por `scripts/build-developers.js` desde
+  `docs/integracion.md` (guía rápida, webhooks, estados, errores, pruebas) y `openapi.yaml`
+  (los 16 endpoints v1 con ejemplos curl / Node / PHP a partir del ejemplo de cada
+  operación) + enlace a `/docs`. `tests/unit/developersPage.test.js` falla si el HTML no
+  está regenerado. Sin JavaScript (`script-src 'none'`). Respeta `DOCS_ENABLED=false`.
+- **Insights** (`src/services/insightsService.js`): aprobación, motivos de rechazo
+  normalizados (taxonomía de errores; "motivo_no_informado" si el PSP no lo da), tasa de
+  3DS, coste real Interchange++ por PSP (costService + tarifas existentes, sin la fee de
+  Monetiser, muestra de 2.000 aprobados), comparativa por PSP y motivo de routing. Recuentos
+  agregados en Mongo (`$match` por `createdAt` [+ `merchantId`] + un `$group`, cubierto por
+  los índices existentes). Nuevos campos en Transaction: `threeDS`, `declineCode` (Paylands:
+  `threeDS` al pasar a `pending_3ds`; Stripe: `three_d_secure` del cargo y el código del
+  rechazo). Endpoints `GET /backoffice/insights` (alcance del usuario) y `GET /portal/insights`
+  (merchant de la sesión; usuarios limitados a un nodo → 403). Pestañas **Orquestación** en
+  /admin y en el portal. Pagos anteriores a hoy no tienen `threeDS`/`declineCode`: salen sin 3DS
+  y con motivo "no informado".
+- Chromium: /demo en móvil y escritorio (sin scroll horizontal, carrito, checkout embebido con
+  el importe calculado en servidor, enlace + QR cargado, secreto ausente del HTML),
+  /developers (escritorio y móvil), pestañas Orquestación de /admin y del portal.
+
+#### F3 — Robustez: carga, caos e índices
+
+**Carga** (`scripts/load/loadTest.js`, reejecutable: `node scripts/load/loadTest.js 5 1,10,50`).
+Rutas REALES (v1, checkout Paylands, checkout Stripe) en un proceso Node 22, contenedor de 4
+CPU; **base de datos en memoria** (no había MongoDB: `fastdl.mongodb.org` bloqueado) y PSPs
+simulados con **150 ms** de latencia; logger silenciado; limitadores subidos para medir la
+instancia. 5 s por escenario. Milisegundos:
+
+| Escenario | Concurrencia | Petición | rps | p50 | p95 | p99 |
+|---|---|---|---|---|---|---|
+| v1 crear sesión | 1 | POST /v1/checkout-sessions | 639 | 1.4 | 2.2 | 2.6 |
+| v1 crear sesión | 10 | POST /v1/checkout-sessions | 662 | 15.3 | 22.4 | 23.9 |
+| v1 crear sesión | 50 | POST /v1/checkout-sessions | 652 | 77.1 | 116.7 | 123.2 |
+| v1 consultar pago | 10 | GET /v1/payments/:id | 4346 | 2.1 | 3.8 | 4.7 |
+| v1 consultar pago | 50 | GET /v1/payments/:id | 3689 | 12.8 | 17.7 | 22.8 |
+| Checkout Paylands (ES) | 50 | POST /proxy-pci/charge | 304 | 155 | 163.7 | 170.1 |
+| Checkout Stripe (FR) | 50 | POST /stripe/session | 152 | 153.4 | 157.6 | 160.3 |
+| Checkout Stripe (FR) | 50 | POST /stripe/complete | 152 | 154 | 160.3 | 162.5 |
+
+Lectura: (1) **techo de CPU por instancia ≈ 650 sesiones/s** (≈1,5 ms de CPU por sesión:
+validación, auth, routing, creación); por encima solo crece la latencia. (2) Los pasos que
+llaman al PSP están dominados por el PSP (150 ms simulados + 2-10 ms propios) y escalan con la
+concurrencia (no bloquean el proceso): 50 checkouts en paralelo sin errores. (3) **En Render
+hay que sumar Mongo Atlas**: una sesión v1 hace ~6 consultas (clave API, idempotencia, política,
+cuenta del PSP, merchant, insert); con 2-5 ms cada una, p50 esperado ~15-30 ms a baja carga, y el
+techo lo pondrá el plan de Render/Atlas, no Node. Hay que repetir la prueba contra el servicio
+real (DECISIÓN PENDIENTE: cuándo y con qué plan). (4) El límite por comercio por defecto
+(`RL_PAYMENTS_MERCHANT_MAX=600`/min = 10/s) es hoy el techo real por comercio en la API v1.
+
+**Caos** (`tests/chaos/`): PSP con 5xx, timeout y red caída al iniciar el pago (Stripe) y al
+cobrar (Paylands) → el pago nunca se reintenta en el otro PSP; el circuito se abre a los 5
+fallos y los pagos NUEVOS van al otro PSP antes de pedir la tarjeta; doble clic en "Pagar" con
+Paylands lento → un solo cobro; sesiones Stripe simultáneas → un PaymentIntent; 20 órdenes
+aleatorias de webhooks duplicados/desordenados → el pago nunca retrocede y cada cambio sale una
+vez; webhook ×3 a la vez que `/complete` → un solo webhook saliente; refund antes que la
+autorización → no salta estados; capture+cancel concurrentes → uno gana (409 al otro) y Monetiser
+y Stripe coinciden; refunds parciales concurrentes → nunca más de lo capturado; misma
+Idempotency-Key en paralelo → un solo movimiento en Stripe; Mongo lento (300 ms) → se procesa;
+Mongo caído en el webhook → 500 (el PSP reintenta) y el reintento entra; Mongo caído leyendo la
+política → pago de pruebas con Paylands por defecto. **No rompió nada** del código nuevo.
+Comportamiento a tener en cuenta (no cambiado, es la regla de `ACQUIRER_TRANSITIONS`): si un
+"rechazado" llega ANTES que la autorización del mismo pago, el comercio recibe primero
+`declined` y después `authorized`.
+
+**Índices y consultas**: las consultas nuevas usan índices existentes (webhook de Stripe por
+`processorReference`; insights por `{merchantId, createdAt}` / `{createdAt}`; coste por
+`{merchantId, status, createdAt}`; clave API por `secretHash`). Arreglado: el informe por canal
+del portal (`GET /portal/reports/channels`) traía hasta 50.000 transacciones COMPLETAS y
+filtraba el estado en memoria → ahora filtra el estado en la consulta (índice
+`{merchantId, status, createdAt}`) y trae solo 4 campos. Sin explain contra Atlas real (no hay
+Mongo aquí): pendiente comprobar con `explain()` en Atlas.
+
+
 ## 7. Elementos de seguridad
 
 ### Implementados
@@ -2096,6 +2301,8 @@ pago en sandbox, D app en los PAX por USB, E plugins) + `docs/entornos.md` +
 | `HPP_SIGNING_SECRET` | **(26 sep 2026)** Secreto de plataforma para firmar la URL del iFrame. Sin él, uno aleatorio por proceso (vale con una sola instancia). **Recomendado definirlo.** |
 | `SUPPORTED_CURRENCIES` | **(26 sep 2026)** Divisas aceptadas en un pago (por defecto `EUR`). Solo añadir una divisa si hay un service de Paylands/adquirente en esa divisa. |
 | `MAX_PAYMENT_AMOUNT` | **(26 sep 2026)** Importe máximo por pago en céntimos (por defecto 100000000 = 1.000.000,00). |
+| `FEATURE_STRIPE` | **(5 nov 2026, bloque 2)** `true` registra Stripe como segundo PSP (cuenta Stripe de pruebas DEL COMERCIO, configurada en /admin → Merchants → Adquirentes). Se lee al arrancar: cambiarla exige Manual Deploy. Apagado por defecto. Runbook: `docs/stripe.md`. |
+| `DEMO_STORE_SECRET` | **(5 nov 2026, bloque 2)** Clave API de PRUEBAS (`ms_test_…`) del comercio de la tienda demo `/demo`. Solo se usa en el servidor. Sin ella, `/demo` se ve pero no cobra. `/demo` solo existe con `MONETISER_ENV=sandbox`. |
 | `ALLOW_DUMMY_CONNECTOR` | **(26 sep 2026)** `true` registra el conector simulado `dummyCard` fuera de development/test. **NO usar en producción.** |
 | `PAYNOPAIN_PCI_CLIENT_URL` | **(26 sep 2026)** URL de la librería ProxyFields (por defecto según `PAYNOPAIN_ENV`; la de producción debe confirmarse con Paylands). |
 | `RL_PAYMENTS_IP_MAX` / `RL_PAYMENTS_MERCHANT_MAX` | API de pagos: por IP antes de autenticar (300/min) y por merchant autenticado (600/min). |
@@ -2340,6 +2547,14 @@ GET /webhooks?paymentId=<id>           → Filtrar por pago
 
 ```
 POST /webhooks/paynopain               → Recibe notificación de Paylands (sin auth)
+POST /webhooks/stripe/:merchantId      → (5 nov b2, FEATURE_STRIPE) Webhook de Stripe del comercio (firma Stripe-Signature)
+POST /:merchantId/stripe/session       → (5 nov b2) Backend del checkout con Stripe: PaymentIntent + clientSecret
+POST /:merchantId/stripe/complete      → (5 nov b2) Consulta Stripe y aplica el estado
+GET  /backoffice/insights              → (5 nov b2) Insights de orquestación (alcance del usuario)
+POST /backoffice/routing/:merchantId/demo-preset → (5 nov b2) Routing de demo EUR+ES → Paylands; resto → Stripe
+GET  /portal/insights                  → (5 nov b2) Insights del propio comercio
+GET  /demo  ·  /demo/api/*             → (5 nov b2) Tienda demo, solo MONETISER_ENV=sandbox
+GET  /developers                       → (5 nov b2) Documentación para desarrolladores (generada)
 ```
 
 ### Testing

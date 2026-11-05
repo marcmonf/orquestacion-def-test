@@ -131,7 +131,7 @@ function renderShell() {
     ['resumen', 'Resumen'],
     ['transacciones', 'Transacciones'],
     ['enlaces', 'Enlaces de pago'],
-    ...(isAdmin() ? [['adquirentes', 'Adquirentes'], ['costes', 'Coste real'], ['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
+    ...(isAdmin() ? [['adquirentes', 'Adquirentes'], ['orquestacion', 'Orquestación'], ['costes', 'Coste real'], ['usuarios', 'Usuarios'], ['jerarquia', 'Jerarquía'], ['facturacion', 'Facturación']] : []),
   ];
   ROOT.innerHTML = `
     <header class="topbar">
@@ -171,6 +171,7 @@ function selectTab(tab) {
   if (tab === 'facturacion') return viewFacturacion();
   if (tab === 'adquirentes') return viewAdquirentes();
   if (tab === 'costes') return viewCostes();
+  if (tab === 'orquestacion') return viewOrquestacion();
   if (tab === 'enlaces') return viewEnlaces();
 }
 
@@ -642,6 +643,43 @@ async function viewCostes() {
       <table style="margin-top:10px"><thead><tr><th>Pago</th><th>Importe</th><th>Interchange</th><th>Scheme</th><th>Adquirente</th><th>Pasarela</th><th>Total</th><th>%</th></tr></thead>
       <tbody>${sample || '<tr><td colspan="8" class="muted">Sin transacciones en el período.</td></tr>'}</tbody></table>
     </div>`;
+}
+
+// ── Orquestación (insights, 5 nov 2026): aprobación, rechazos, 3DS, coste y routing por PSP ──
+const ROUTING_REASON_LABEL = { rule: 'Regla del comercio', default: 'Conector por defecto', failover_pre_card: 'Failover antes de pedir la tarjeta', all_unhealthy_using_first_capable: 'Todos con incidencias: primero capaz', routing_error_platform_default: 'Routing no disponible: por defecto', sin_routing: 'Pago anterior al routing' };
+async function viewOrquestacion(days) {
+  days = days || state.insightsDays || 30;
+  state.insightsDays = days;
+  view().innerHTML = `<div class="card">Calculando…</div>`;
+  const r = await api('/portal/insights?days=' + encodeURIComponent(days));
+  if (!r.ok) return view().innerHTML = `<div class="banner err">No se pudieron calcular los insights.</div>`;
+  const ins = r.body.insights;
+  const t = ins.totals;
+  const pct = (v) => (v === null || v === undefined ? '—' : v + '%');
+  const costOf = (psp) => (ins.costs.byPsp || []).find((c) => c.psp === psp);
+  const rows = ins.byPsp.map((p) => { const c = costOf(p.psp); return `<tr><td><strong>${esc(p.psp)}</strong></td><td>${p.payments}</td><td>${pct(p.approvalRatePct)}</td><td>${p.declined}</td><td>${p.errors}</td><td>${pct(p.threeDSRatePct)}</td><td>${c ? money(c.avgCostPerTx, 'EUR') + ' · ' + c.effectiveRatePct + '%' : '—'}</td></tr>`; }).join('');
+  const reasons = ins.declineReasons.map((d) => `<tr><td><code>${esc(d.code)}</code></td><td>${esc(d.description)}</td><td>${d.count}</td><td>${pct(d.sharePct)}</td></tr>`).join('');
+  const routing = ins.routingReasons.map((x) => `<tr><td>${esc(ROUTING_REASON_LABEL[x.reason] || x.reason)}</td><td>${x.count}</td></tr>`).join('');
+  view().innerHTML = `
+    <div class="row" style="margin-bottom:12px; gap:6px">
+      ${[7, 30, 90].map((d) => `<button class="${d === days ? '' : 'ghost'} small" data-days="${d}">${d} días</button>`).join('')}
+    </div>
+    <div class="kpis" style="margin-bottom:14px">
+      <div class="card kpi"><div class="n">${pct(t.approvalRatePct)}</div><div class="l">Tasa de aprobación</div></div>
+      <div class="card kpi"><div class="n">${t.payments}</div><div class="l">Pagos</div></div>
+      <div class="card kpi"><div class="n">${pct(t.threeDSRatePct)}</div><div class="l">Con 3DS</div></div>
+      <div class="card kpi"><div class="n">${money(t.approvedVolume, 'EUR')}</div><div class="l">Volumen aprobado</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px"><strong>Comparativa por PSP</strong>
+      <table style="margin-top:10px"><thead><tr><th>PSP</th><th>Pagos</th><th>Aprobación</th><th>Rechazos</th><th>Errores</th><th>3DS</th><th>Coste real medio</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="muted">Sin pagos en el período.</td></tr>'}</tbody></table></div>
+    <div class="card" style="margin-bottom:14px"><strong>Motivos de rechazo (normalizados)</strong>
+      <table style="margin-top:10px"><thead><tr><th>Código</th><th>Qué significa</th><th>Pagos</th><th>%</th></tr></thead>
+      <tbody>${reasons || '<tr><td colspan="4" class="muted">Sin rechazos.</td></tr>'}</tbody></table></div>
+    <div class="card" style="margin-bottom:14px"><strong>Por qué se enrutó cada pago</strong>
+      <table style="margin-top:10px"><thead><tr><th>Motivo</th><th>Pagos</th></tr></thead><tbody>${routing || '<tr><td colspan="2" class="muted">—</td></tr>'}</tbody></table></div>
+    <div class="banner" style="background:#fffbeb; color:#92400e">Coste real: muestra de ${ins.costs.sampled || 0} pagos aprobados. ${esc(ins.costs.disclaimer || '')}</div>`;
+  view().querySelectorAll('button[data-days]').forEach((b) => { b.onclick = () => viewOrquestacion(Number(b.dataset.days)); });
 }
 
 // ── Utilidades DOM ────────────────────────────────────────────────────────────
